@@ -1,0 +1,123 @@
+# Data directories
+data/
+neptune/
+datasets/
+raw_data/
+processed_data/
+
+# Model files
+models/
+*.pkl
+*.joblib
+*.h5
+*.pb
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Checkpoints and logs
+checkpoints/
+logs/
+runs/
+tensorboard_logs/
+wandb/
+mlruns/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.conda/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Configuration files with secrets
+.env.local
+.env.production
+config.json
+secrets.json
+credentials.json
+*.key
+*.pem
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Large files and outputs
+*.csv
+*.tsv
+*.json
+*.xml
+*.parquet
+*.feather
+*.hdf5
+*.h5
+*.npz
+*.npy
+*.mat
+
+# Plots and figures
+figures/
+plots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.svg
+
+# Experiment results
+results/
+outputs/
+experiments/
