@@ -1,203 +1,427 @@
-
-import math
-import random
+#%% 
+import math, random
 from typing import Dict, List, Tuple
 
 import torch
 
+
 # ----------- Utilities -----------
 
-def beta_sample(a: float, b: float) -> float:
-    return torch.distributions.Beta(torch.tensor(a), torch.tensor(b)).sample().item()
+def beta_sample(alpha: float, beta: float) -> float:
+    """Sample one value from Beta(alpha, beta)."""
+    return torch.distributions.Beta(torch.tensor(alpha), torch.tensor(beta)).sample().item()
 
 def bernoulli(p: float) -> int:
     return 1 if random.random() < p else 0
 
-def ts_argmax(alpha: torch.Tensor, beta: torch.Tensor) -> int:
-    """Standard Thompson Sampling argmax with Beta draws per arm."""
-    draws = torch.distributions.Beta(alpha, beta).sample()
+def ts_argmax(alphas: torch.Tensor, betas: torch.Tensor) -> int:
+    """Thompson Sampling argmax with Beta draws per arm.
+    Args:
+        alphas: tensor [K]
+        betas:  tensor [K]
+    """
+    draws = torch.distributions.Beta(alphas, betas).sample()  # [K]
     return int(torch.argmax(draws).item())
+
+def sample_bandit(K: int, min_gap: float = 0.08, min_best: float = 0.60) -> List[float]:
+    """Sample K payoffs from Beta(2,2) until there's a clear best arm."""
+    while True:
+        thetas = torch.distributions.Beta(torch.full((K,), 2.0), torch.full((K,), 2.0)).sample().tolist()
+        best, second = sorted(thetas, reverse=True)[:2]
+        if best - second >= min_gap and best >= min_best:
+            return thetas
+
+def sample_total_experience(N_max: int) -> int:
+    """Sample N_tot ~ DiscreteUniform{0..N_max}"""
+    N_tot = int(torch.randint(low=0, high=N_max + 1, size=(1,)).item())
+    return N_tot
+
+def sample_dirichlet_allocation(K: int, dirichlet_eta: float, N_tot: int) -> Tuple[int, torch.Tensor]:
+    """Draw N_by_arm ~ Multinomial(N_tot, w), w ~ Dir(eta).
+    Returns:
+        N_by_arm (LongTensor [K] summing to N_tot)
+    """
+    w = torch.distributions.Dirichlet(torch.full((K,), float(dirichlet_eta))).sample()
+    N_by_arm = torch.distributions.Multinomial(total_count=N_tot, probs=w).sample().to(torch.int64)
+    return N_tot, N_by_arm
+
+def sample_pre_episode_counts(N_by_arm: torch.Tensor, thetas: List[float]) -> Tuple[List[int], List[int]]:
+    """Sample S0,F0 with S0_k ~ Binomial(N_k, theta_k)."""
+    S0, F0 = [], []
+    for n_k, theta_k in zip(N_by_arm.tolist(), thetas):
+        s = int(torch.distributions.Binomial(total_count=int(n_k), probs=theta_k).sample().item()) if n_k > 0 else 0
+        S0.append(s)
+        F0.append(int(n_k) - s)
+    return S0, F0
+
+def allocate_prehistory_ts(
+    K: int,
+    N_tot: int,
+    thetas: List[float],
+    alpha0: float = 1.0,
+    beta0: float = 1.0,
+) -> Tuple[torch.Tensor, List[int], List[int]]:
+    """
+    TS-based pre-episode: simulate N_tot pulls before the observed tail.
+    Returns:
+      N_by_arm: LongTensor [K] counts of pre-episode pulls per arm
+      S0: list[int] successes per arm in the pre-episode
+      F0: list[int] failures per arm in the pre-episode
+    """
+    a = torch.full((K,), alpha0, dtype=torch.float32)
+    b = torch.full((K,), beta0,  dtype=torch.float32)
+    N_by_arm = torch.zeros(K, dtype=torch.long)
+    S0 = [0] * K
+
+    for _ in range(int(N_tot)):
+        arm = ts_argmax(a, b)
+        r = bernoulli(thetas[arm])
+        N_by_arm[arm] += 1
+        if r == 1:
+            S0[arm] += 1
+        # update the demonstrator's internal belief used during pre-history
+        a[arm] += r
+        b[arm] += 1 - r
+
+    F0 = [int(N_by_arm[k].item()) - S0[k] for k in range(K)]
+    return N_by_arm, S0, F0
+
+
+def prehistory_allocate_softmax(K, N_tot, thetas, N_max, tau_min=0.0, tau_max=6.0, p=1.0):
+    """Alternative to allocate_prehistory_ts but faster"""
+    t = float(N_tot) / max(1, N_max)
+    tau = tau_min + (tau_max - tau_min) * (t ** p)
+    logits = torch.tensor([math.log(t/(1-t)) for t in thetas], dtype=torch.float32)  # logit(theta)
+    probs = torch.softmax(tau * logits, dim=0)
+    N_by_arm = torch.distributions.Multinomial(total_count=int(N_tot), probs=probs).sample().to(torch.int64)
+    S0 = [int(torch.distributions.Binomial(total_count=int(n), probs=float(thetas[k])).sample().item())
+          if N_by_arm[k] > 0 else 0
+          for k, n in enumerate(N_by_arm.tolist())]
+    F0 = [int(n) - s for n, s in zip(N_by_arm.tolist(), S0)]
+    return N_by_arm, S0, F0
+
+
+
 
 # ----------- Simulator -----------
 
-def simulate_bandit(
+def simulate_bandit_episode_block(
+    *,
+    mode: str,                      # "demo" or "learner"
+    steps: int,                     # T_demo if demo, T_learner if learner
     K: int,
-    T_demo: int,
-    T_learner: int,
-    alpha0: float,
-    beta0: float,
-    kappa_tot: float,
-    dirichlet_eta: float,
-    tauD_unused: float,
-    demonstrator_id: int = 0,
+    thetas: List[float],
+    alphaD: torch.Tensor,           # [K] current demo internal shapes
+    betaD:  torch.Tensor,           # [K]
+    alphaL: torch.Tensor,           # [K] current learner evidence shapes
+    betaL:  torch.Tensor,           # [K]
+    bandit_id: int,
+    demonstrator_id: int,
 ) -> Dict:
     """
-    Simulate a single bandit episode with:
-    - true thetas ~ Beta(2,2), with enforced gap so there's a clear best
-    - demonstrator with pre-episode counts S0,F0 derived from kappa_tot and a Dirichlet allocation
-    - demonstrator acts for T_demo steps via TS; learner also acts for T_learner steps via TS (optional)
-    Returns a dict with events and ground truth labels for this bandit.
+    Run ONE episode block and return a dictionary with events and states.
+
+    - If mode=="demo": demo acts 'steps' times with TS on (alphaD,betaD).
+      Demo internal updates; learner ALSO updates on demo rewards.
+    - If mode=="learner": learner acts 'steps' times with TS on (alphaL,betaL).
+      Only learner updates.
     """
-    # Sample thetas until we get a clear best
-    while True:
-        thetas = torch.distributions.Beta(torch.tensor([2.0]*K), torch.tensor([2.0]*K)).sample().tolist()
-        best = max(thetas)
-        second = sorted(thetas, reverse=True)[1]
-        if best - second >= 0.08 and best >= 0.6:
-            break
-
-    # Allocation of experience across arms (Dirichlet -> proportions -> pseudo-counts -> integer N per arm)
-    w = torch.distributions.Dirichlet(torch.tensor([dirichlet_eta]*K)).sample().tolist()
-    Nk_real = [max(kappa_tot * wi, 0.0) for wi in w]
-    # Round to integers for simulation of pre-episode counts
-    Nk = [int(round(n)) for n in Nk_real]
-
-    # Pre-episode successes S0 ~ Binomial(Nk, theta), failures F0 = Nk - S0
-    S0 = [torch.distributions.Binomial(total_count=n, probs=t).sample().int().item() if n > 0 else 0
-          for n, t in zip(Nk, thetas)]
-    F0 = [n - s for n, s in zip(Nk, S0)]
-
-    # Start-of-tail Betas for demonstrator
-    alphaD = torch.tensor([alpha0 + s for s in S0], dtype=torch.float32)
-    betaD  = torch.tensor([beta0 + f for f in F0], dtype=torch.float32)
-
-    # Learner internal Beta (asocial baseline TS for the synthetic learner; we do not train on learner policy)
-    alphaL = torch.tensor([alpha0]*K, dtype=torch.float32)
-    betaL  = torch.tensor([beta0]*K, dtype=torch.float32)
-
-    # Event stream: (bandit_id, agent_id, action, reward)
-    # agent_id: 0.. is demonstrators, 99 -> learner
     events: List[Tuple[int,int,int,int]] = []
 
-    bandit_id = 0  # local within this function; outer driver will offset
+    alphaD_before = alphaD.tolist()
+    betaD_before  = betaD.tolist()
+    alphaL_before = alphaL.tolist()
+    betaL_before  = betaL.tolist()
 
-    # Demonstrator block
-    for _ in range(T_demo):
-        a = ts_argmax(alphaD, betaD)
-        r = bernoulli(thetas[a])
-        events.append((bandit_id, demonstrator_id, a, r))
-        # update demo
-        alphaD[a] += r
-        betaD[a]  += 1 - r
+    aD = alphaD.clone()
+    bD = betaD.clone()
+    aL = alphaL.clone()
+    bL = betaL.clone()
 
-    # Learner block (optional; include to diversify tokens)
-    for _ in range(T_learner):
-        a = ts_argmax(alphaL, betaL)
-        r = bernoulli(thetas[a])
-        events.append((bandit_id, 99, a, r))
-        # update learner (this is only for synthetic token variety)
-        alphaL[a] += r
-        betaL[a]  += 1 - r
+    if steps > 0:
+        if mode == "demo":
+            for _ in range(steps):
+                a = ts_argmax(aD, bD)
+                r = bernoulli(thetas[a])
+                events.append((bandit_id, demonstrator_id, a, r))
+                aD[a] += r
+                bD[a] += 1 - r
+                aL[a] += r     # learner sees demo reward
+                bL[a] += 1 - r
+        elif mode == "learner":
+            for _ in range(steps):
+                a = ts_argmax(aL, bL)
+                r = bernoulli(thetas[a])
+                events.append((bandit_id, 99, a, r))
+                aL[a] += r
+                bL[a] += 1 - r
+        else:
+            raise ValueError(f"mode must be 'demo' or 'learner', got {mode}")
 
     return {
-        "theta": thetas,
-        "S0": S0,
-        "F0": F0,
-        "events": events,
+        "mode": mode,
+        "steps": steps,
+        "bandit_id": bandit_id,
         "demonstrator_id": demonstrator_id,
+        "events": events,
+        "alphaD_before": alphaD_before,
+        "betaD_before":  betaD_before,
+        "alphaL_before": alphaL_before,
+        "betaL_before":  betaL_before,
+        "alphaD": aD.tolist(),
+        "betaD":  bD.tolist(),
+        "alphaL": aL.tolist(),
+        "betaL":  bL.tolist(),
     }
 
 
-def simulate_multi_bandit_episode(
-    K: int = 4,
+
+
+#%%
+def simulate_multi_episode_run(
+    K: int = 12,
     num_bandits: int = 3,
-    T_demo: int = 12,
-    T_learner: int = 12,
+    episodes_per_bandit: int = 1,
+    order: int = 0,                  # 0: demo -> learner; 1: learner -> demo
+    num_demonstrators: int = 1,
+    T_demo: int = 6,
+    T_learner: int = 6,
     alpha0: float = 1.0,
-    beta0: float = 1.0,
-    kappa_high: float = 30.0,
-    kappa_low: float = 4.0,
-    dirichlet_eta: float = 1.0,
-    two_demos: bool = False,
+    beta0: float  = 1.0,
+    N_max: int = 72,
 ) -> Dict:
     """
-    Create an episode containing sequences from multiple bandits with (optionally) the same demonstrator.
-    If two_demos=True, alternate demonstrator_id between 0 and 1 across bandits.
+    Build a multi-bandit run as a sequence of EPISODES (each is a demo- or learner-block).
+
+    Returns a structured dict with meta, demonstrators (their bandit blocks & N_tot),
+    per-bandit info (theta, S0/F0, N_by_arm), and per-episode records
+    (events, states_before/after).
     """
-    epi = {"bandits": []}
+    # 1) Sample bandits
+    bandit_thetas: List[List[float]] = [sample_bandit(K) for _ in range(num_bandits)]
+
+    # 2) Contiguous assignment of bandits to demonstrators
+    if not (1 <= num_demonstrators <= num_bandits):
+        raise ValueError("num_demonstrators must be in [1, num_bandits].")
+    if num_demonstrators == 1:
+        cuts = []
+    else:
+        cuts = sorted(random.sample(range(1, num_bandits), k=num_demonstrators - 1))
+    bounds = [0] + cuts + [num_bandits]
+
+    bandit_to_demo: Dict[int, int] = {}
+    demo_blocks: Dict[int, List[int]] = {}
+    for demo_id, (lo, hi) in enumerate(zip(bounds[:-1], bounds[1:])):
+        demo_blocks[demo_id] = list(range(lo, hi))
+        for b in range(lo, hi):
+            bandit_to_demo[b] = demo_id
+
+    # 3) N_tot per demonstrator (reused)
+    demo_N_tot: Dict[int, int] = {
+        d: int(torch.randint(low=0, high=N_max + 1, size=(1,)).item())
+        for d in range(num_demonstrators)
+    }
+
+    bandits_out: List[Dict] = []
+    episodes_out: List[Dict] = []
+    epi_idx = 0
+
+    # 4) Iterate bandits
     for b in range(num_bandits):
-        demonstrator_id = (b % 2) if two_demos else 0
-        # Keep same experience "trait" across bandits for same demonstrator
-        kappa_tot = kappa_high if (demonstrator_id == 0) else kappa_low
-        bandit = simulate_bandit(
-            K=K,
-            T_demo=T_demo,
-            T_learner=T_learner,
-            alpha0=alpha0,
-            beta0=beta0,
-            kappa_tot=kappa_tot,
-            dirichlet_eta=dirichlet_eta,
-            tauD_unused=4.0,
-            demonstrator_id=demonstrator_id,
-        )
-        # Offset bandit_id inside events
-        bandit["events"] = [(b, ag, a, r) for (_, ag, a, r) in bandit["events"]]
-        epi["bandits"].append(bandit)
-    return epi
+        demonstrator_id = bandit_to_demo[b]
+        thetas = bandit_thetas[b]
+        N_tot = demo_N_tot[demonstrator_id]
+
+        # --- TS pre-history for this demo on this bandit ---
+        N_by_arm, S0, F0 = allocate_prehistory_ts(K, N_tot, thetas, alpha0=alpha0, beta0=beta0)
+
+        # Start-of-tail states
+        alphaD = torch.tensor([alpha0 + s for s in S0], dtype=torch.float32)
+        betaD  = torch.tensor([beta0 + f for f in F0], dtype=torch.float32)
+        alphaL = torch.full((K,), alpha0, dtype=torch.float32)
+        betaL  = torch.full((K,), beta0,  dtype=torch.float32)
+
+        bandits_out.append({
+            "bandit_index": b,
+            "demonstrator_id": demonstrator_id,
+            "theta": thetas,
+            "N_tot": int(N_tot),
+            "N_by_arm": N_by_arm.tolist(),
+            "S0": S0,
+            "F0": F0,
+        })
+
+        # Repetitions for this bandit
+        for rep in range(episodes_per_bandit):
+            pair = [("demo", T_demo), ("learner", T_learner)] if order == 0 else [("learner", T_learner), ("demo", T_demo)]
+            for ep_mode, ep_steps in pair:
+                block = simulate_bandit_episode_block(
+                    mode=ep_mode, steps=ep_steps, K=K, thetas=thetas,
+                    alphaD=alphaD, betaD=betaD, alphaL=alphaL, betaL=betaL,
+                    bandit_id=b, demonstrator_id=demonstrator_id,
+                )
+
+                # update state tensors for the next episode in the pair (or next rep)
+                alphaD = torch.tensor(block["alphaD"], dtype=torch.float32)
+                betaD  = torch.tensor(block["betaD"],  dtype=torch.float32)
+                alphaL = torch.tensor(block["alphaL"], dtype=torch.float32)
+                betaL  = torch.tensor(block["betaL"],  dtype=torch.float32)
+
+                episodes_out.append({
+                    "episode_index": epi_idx,
+                    "bandit_index": b,
+                    "episode_type": ep_mode,          # "demo" or "learner"
+                    "demonstrator_id": demonstrator_id,
+                    "steps": ep_steps,
+                    "events": block["events"],
+                    "states_before": {
+                        "alphaD": block["alphaD_before"],
+                        "betaD":  block["betaD_before"],
+                        "alphaL": block["alphaL_before"],
+                        "betaL":  block["betaL_before"],
+                    },
+                    "states_after": {
+                        "alphaD": block["alphaD"],
+                        "betaD":  block["betaD"],
+                        "alphaL": block["alphaL"],
+                        "betaL":  block["betaL"],
+                    },
+                })
+                epi_idx += 1
+
+    return {
+        "meta": {
+            "K": K,
+            "num_bandits": num_bandits,
+            "episodes_per_bandit": episodes_per_bandit,
+            "order": order,  # 0 demo->learner, 1 learner->demo
+            "num_demonstrators": num_demonstrators,
+            "T_demo": T_demo,
+            "T_learner": T_learner,
+            "alpha0": alpha0,
+            "beta0": beta0,
+            "N_max": N_max,
+            "prehistory": "TS",   # document allocation mode
+        },
+        "demonstrators": [
+            {
+                "demonstrator_id": d,
+                "bandit_indices": demo_blocks[d],
+                "N_tot": int(demo_N_tot[d]),
+            }
+            for d in range(num_demonstrators)
+        ],
+        "bandits": bandits_out,    # per-bandit facts (theta, S0/F0, N_by_arm)
+        "episodes": episodes_out,  # chronological episode list with events and states
+    }
 
 
-def build_training_examples_from_episode(epi: Dict, max_context_bandits: int = 2) -> List[Dict]:
+
+
+# %%
+def build_training_examples_from_run(
+    run: Dict,
+    alpha0: float = 1.0,
+    beta0: float = 1.0,
+    max_context_bandits: int = 2,
+) -> List[Dict]:
     """
-    Turn a multi-bandit episode into training examples.
-    For each bandit c >= 0, build:
-      - context: up to 'max_context_bandits' previous bandits (their events), regardless of demonstrator.
-        (You can filter same-demonstrator-only if you prefer.)
-      - current: all events from current bandit (we'll later take a random prefix in the dataloader)
-      - labels: theta, alpha_demo0, beta_demo0 for the demonstrator of current bandit
+    Convert a multi-episode *run* (from simulate_multi_episode_run) into per-bandit training examples.
+    We reconstruct each bandit's full event stream by concatenating all of its episodes in
+    chronological order, then build context from up to 'max_context_bandits' prior bandits.
+
+    Tokens:
+      BANDIT_SEP  -> (bandit_id, -1, -1, -1)
+      NOCTX       -> (-1, -1, -1, -1)
+    Labels:
+      theta and start-of-tail shapes alpha_demo0/beta_demo0 for the current demonstrator.
     """
-    examples = []
-    for c, bandit in enumerate(epi["bandits"]):
-        ctx_bandits = epi["bandits"][max(0, c - max_context_bandits):c]
-        ctx_events = []
-        for cb, bdict in enumerate(ctx_bandits):
-            # Insert a bandit separator as (bandit_id, agent_id=-1, action=-1, reward=-1)
-            ctx_events.append((bdict["events"][0][0], -1, -1, -1))
-            ctx_events.extend(bdict["events"])
-        if len(ctx_events) == 0:
-            # Put a NOCTX special marker token
-            ctx_events = [(-1, -1, -1, -1)]
-        current_events = []
-        # Insert a bandit separator before current
-        current_events.append((bandid := bandit["events"][0][0], -1, -1, -1))
-        current_events.extend(bandit["events"])
+    examples: List[Dict] = []
+
+    # Per-bandit static info
+    bandit_infos: Dict[int, Dict] = {b["bandit_index"]: b for b in run["bandits"]}
+    # Chronological episodes
+    episodes: List[Dict] = run["episodes"]
+
+    # Reconstruct per-bandit event streams in chronological order
+    per_bandit_events: Dict[int, List[Tuple[int,int,int,int]]] = {idx: [] for idx in bandit_infos.keys()}
+    for E in episodes:
+        per_bandit_events[E["bandit_index"]].extend(E["events"])
+
+    bandit_indices = sorted(bandit_infos.keys())
+
+    for i, b_idx in enumerate(bandit_indices):
+        # ---- Context (prior bandits) ----
+        ctx_events: List[Tuple[int,int,int,int]] = []
+        prior_idxs = bandit_indices[max(0, i - max_context_bandits):i]
+        if not prior_idxs:
+            ctx_events.append((-1, -1, -1, -1))  # NOCTX
+        else:
+            for pb in prior_idxs:
+                ctx_events.append((pb, -1, -1, -1))           # BANDIT_SEP
+                ctx_events.extend(per_bandit_events[pb])
+
+        # ---- Current bandit ----
+        cur_events: List[Tuple[int,int,int,int]] = []
+        cur_events.append((b_idx, -1, -1, -1))                # BANDIT_SEP
+        cur_events.extend(per_bandit_events[b_idx])
+
+        # ---- Labels ----
+        binfo = bandit_infos[b_idx]
+        thetas = binfo["theta"]
+        S0, F0 = binfo["S0"], binfo["F0"]
         labels = {
-            "theta": bandit["theta"],
-            "alpha_demo0": [1.0 + s for s in bandit["S0"]],
-            "beta_demo0":  [1.0 + f for f in bandit["F0"]],
-            "demonstrator_id": bandit["demonstrator_id"],
-            "K": len(bandit["theta"]),
+            "theta": thetas,
+            "alpha_demo0": [alpha0 + s for s in S0],
+            "beta_demo0":  [beta0  + f for f in F0],
+            "demonstrator_id": binfo["demonstrator_id"],
+            "K": len(thetas),
+            "N_tot": binfo.get("N_tot", None),
+            "N_by_arm": binfo.get("N_by_arm", None),
         }
+
         examples.append({
             "context_events": ctx_events,
-            "current_events": current_events,
+            "current_events": cur_events,
             "labels": labels,
         })
-    return examples
 
+    return examples
 
 def generate_dataset(
     out_path: str,
     num_episodes: int = 2000,
     K: int = 4,
     num_bandits: int = 3,
+    episodes_per_bandit: int = 1,
+    order: int = 0,                # 0: demo->learner, 1: learner->demo
+    num_demonstrators: int = 1,
     T_demo: int = 12,
     T_learner: int = 12,
-    two_demos: bool = False,
+    alpha0: float = 1.0,
+    beta0: float = 1.0,
+    N_max: int = 40,
+    max_context_bandits: int = 2,
 ) -> None:
-    """
-    Generate a synthetic dataset and save as a torch file with a list of examples.
-    """
-    all_examples = []
+    all_examples: List[Dict] = []
     for _ in range(num_episodes):
-        epi = simulate_multi_bandit_episode(
+        run = simulate_multi_episode_run(
             K=K,
             num_bandits=num_bandits,
+            episodes_per_bandit=episodes_per_bandit,
+            order=order,
+            num_demonstrators=num_demonstrators,
             T_demo=T_demo,
             T_learner=T_learner,
-            two_demos=two_demos,
+            alpha0=alpha0,
+            beta0=beta0,
+            N_max=N_max,
         )
-        exs = build_training_examples_from_episode(epi)
+        exs = build_training_examples_from_run(
+            run, alpha0=alpha0, beta0=beta0, max_context_bandits=max_context_bandits
+        )
         all_examples.extend(exs)
+
     torch.save(all_examples, out_path)
     print(f"Saved {len(all_examples)} examples to {out_path}")
 
@@ -223,3 +447,5 @@ if __name__ == "__main__":
         T_learner=args.T_learner,
         two_demos=args.two_demos,
     )
+
+# %%
