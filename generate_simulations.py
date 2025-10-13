@@ -1,9 +1,7 @@
 #%% 
-import math, random
+import math, random, os, json
 from typing import Dict, List, Tuple
-
 import torch
-
 
 # ----------- Utilities -----------
 
@@ -100,7 +98,31 @@ def prehistory_allocate_softmax(K, N_tot, thetas, N_max, tau_min=0.0, tau_max=6.
     F0 = [int(n) - s for n, s in zip(N_by_arm.tolist(), S0)]
     return N_by_arm, S0, F0
 
-
+def _all_valid_combos():
+    combos = []
+    for num_bandits in (1, 2, 3):
+        for episodes_per_bandit in (1, 2):
+            for order in (0, 1):
+                for num_demonstrators in range(1, num_bandits + 1):
+                    combos.append(dict(
+                        num_bandits=num_bandits,
+                        episodes_per_bandit=episodes_per_bandit,
+                        order=order,
+                        num_demonstrators=num_demonstrators,
+                    ))
+    return combos  # length = 56
+#%%
+def _sample_combo_uniform():
+    nb = random.choice((1, 2, 3))
+    nd = random.randint(1, nb)           # enforce nd ≤ nb
+    epb = random.choice((1, 2))
+    ord_ = random.choice((0, 1))
+    return dict(
+        num_bandits=nb,
+        episodes_per_bandit=epb,
+        order=ord_,
+        num_demonstrators=nd,
+    )
 
 
 # ----------- Simulator -----------
@@ -316,32 +338,6 @@ def simulate_multi_episode_run(
     }
 
 #%%
-def _all_valid_combos():
-    combos = []
-    for num_bandits in (1, 2, 3):
-        for episodes_per_bandit in (1, 2):
-            for order in (0, 1):
-                for num_demonstrators in range(1, num_bandits + 1):
-                    combos.append(dict(
-                        num_bandits=num_bandits,
-                        episodes_per_bandit=episodes_per_bandit,
-                        order=order,
-                        num_demonstrators=num_demonstrators,
-                    ))
-    return combos  # length = 56
-#%%
-def _sample_combo_uniform():
-    nb = random.choice((1, 2, 3))
-    nd = random.randint(1, nb)           # enforce nd ≤ nb
-    epb = random.choice((1, 2))
-    ord_ = random.choice((0, 1))
-    return dict(
-        num_bandits=nb,
-        episodes_per_bandit=epb,
-        order=ord_,
-        num_demonstrators=nd,
-    )
-
 def build_training_examples_from_run(
     run: Dict,
     alpha0: float = 1.0,
@@ -398,9 +394,9 @@ def build_training_examples_from_run(
     return examples
 
 #%%
-def generate_dataset(
-    out_path: str,
-    num_episodes: int = 2000,
+def generate_dataset_streaming(
+    out_dir: str,
+    num_runs: int,
     *,
     # fixed knobs
     K: int = 12,
@@ -411,22 +407,78 @@ def generate_dataset(
     N_max: int = 72,
     max_context_bandits: int = 2,
     # coverage strategy
-    balanced: bool = True,   # True = enumerate all valid combos evenly; False = sample combos i.i.d.
-) -> None:
+    balanced: bool = True,         # grid vs random combos
+    # sharding
+    split: str = "train",
+    shard_size: int = 10000,       # ~1e4–2e4 is a good start
+    manifest_name: str = "manifest.json",
+) -> str:
     """
-    Generate a dataset of per-bandit training examples from many multi-episode runs.
+    Stream-generate examples and save shards:
+      out_dir/{split}-{00001..}.pt
+    Also writes a manifest JSON listing shard paths and sizes.
+    Returns manifest path.
     """
-    all_examples: List[Dict] = []
+    os.makedirs(out_dir, exist_ok=True)
+
+    def _all_valid_combos():
+        combos = []
+        for nb in (1, 2, 3):
+            for epb in (1, 2):
+                for ord_ in (0, 1):
+                    for nd in range(1, nb+1):
+                        combos.append(dict(
+                            num_bandits=nb,
+                            episodes_per_bandit=epb,
+                            order=ord_,
+                            num_demonstrators=nd,
+                        ))
+        return combos  # 56 combos total
+
+    def _sample_combo_uniform():
+        nb  = random.choice((1, 2, 3))
+        nd  = random.randint(1, nb)     # enforce nd ≤ nb
+        epb = random.choice((1, 2))
+        ord_= random.choice((0, 1))
+        return dict(
+            num_bandits=nb,
+            episodes_per_bandit=epb,
+            order=ord_,
+            num_demonstrators=nd,
+        )
 
     if balanced:
-        combos = _all_valid_combos()                    # 56 combos
-        reps = math.ceil(num_episodes / len(combos))
-        pool = combos * reps
+        grid = _all_valid_combos()
+        reps = math.ceil(num_runs / len(grid))
+        pool = (grid * reps)[:num_runs]
         random.shuffle(pool)
-        pool = pool[:num_episodes]
         combo_iter = pool
     else:
-        combo_iter = [_sample_combo_uniform() for _ in range(num_episodes)]
+        combo_iter = [_sample_combo_uniform() for _ in range(num_runs)]
+
+    shard_idx = 0
+    buf: List[Dict] = []
+    manifest = {
+        "split": split,
+        "meta": {
+            "K": K, "T_demo": T_demo, "T_learner": T_learner,
+            "alpha0": alpha0, "beta0": beta0, "N_max": N_max,
+            "max_context_bandits": max_context_bandits,
+            "coverage": "balanced" if balanced else "random",
+            "shard_size": shard_size,
+        },
+        "shards": []  # [{"path": "...", "num_examples": int}]
+    }
+
+    def _flush():
+        nonlocal shard_idx, buf
+        if not buf: return
+        shard_idx += 1
+        fname = f"{split}-{shard_idx:05d}.pt"
+        fpath = os.path.join(out_dir, fname)
+        torch.save(buf, fpath)
+        manifest["shards"].append({"path": fname, "num_examples": len(buf)})
+        buf = []
 
     for cfg in combo_iter:
         run = simulate_multi_episode_run(
@@ -444,33 +496,49 @@ def generate_dataset(
         exs = build_training_examples_from_run(
             run, alpha0=alpha0, beta0=beta0, max_context_bandits=max_context_bandits
         )
-        all_examples.extend(exs)
+        for ex in exs:
+            buf.append(ex)
+            if len(buf) >= shard_size:
+                _flush()
 
-    torch.save(all_examples, out_path)
-    print(f"Saved {len(all_examples)} examples to {out_path}")
+    _flush()  # write last partial shard
+
+    manifest_path = os.path.join(out_dir, manifest_name)
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"Wrote {len(manifest['shards'])} shards to {out_dir} (manifest: {manifest_path})")
+    return manifest_path
+
 
 
 #%%
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", type=str, default="data/train.pt")
-    parser.add_argument("--episodes", type=int, default=2000)
+    parser.add_argument("--out", type=str, default="data")
     parser.add_argument("--K", type=int, default=4)
+    parser.add_argument("--N_max", type=int, default=72)
+    parser.add_argument("--max_context_bandits", type=int, default=2)
+    parser.add_argument("--balanced", type=bool, default=True)
+    parser.add_argument("--num_train_runs", type=int, default=6000)
+    parser.add_argument("--num_valid_runs", type=int, default=400)
+    parser.add_argument("--num_test_runs", type=int, default=400)
     parser.add_argument("--num_bandits", type=int, default=3)
     parser.add_argument("--T_demo", type=int, default=12)
     parser.add_argument("--T_learner", type=int, default=12)
-    parser.add_argument("--two_demos", action="store_true")
+    parser.add_argument("--shard_size", type=int, default=12000)
     args = parser.parse_args()
 
-    generate_dataset(
-        out_path=args.out,
-        num_episodes=args.episodes,
-        K=args.K,
-        num_bandits=args.num_bandits,
-        T_demo=args.T_demo,
-        T_learner=args.T_learner,
-        two_demos=args.two_demos,
-    )
+    random.seed(42); torch.manual_seed(42)
+    train_manifest = generate_dataset_streaming(os.path.join(args.out, "train"), num_runs=args.num_train_runs, split="train",
+                                                K=args.K, T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)
 
-# %%
+    val_manifest   = generate_dataset_streaming(os.path.join(args.out, "val"),   num_runs=args.num_valid_runs,  split="val",
+                                                K=args.K,  T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)
+
+
+    test_manifest  = generate_dataset_streaming(os.path.join(args.out, "test"),  num_runs=args.num_test_runs,  split="test",
+                                                K=args.K,  T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)

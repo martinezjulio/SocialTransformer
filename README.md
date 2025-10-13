@@ -1,16 +1,82 @@
 
-# SBI Transformer for Social Bandits (starter)
+# SBI Transformer for Social Bandits
 
-This is a **starter** implementation for training a **Transformer** offline (simulation‑based inference, SBI) to infer a posterior over
-- the **demonstrator’s start‑of‑tail pseudo‑counts** *(pre‑episode latent history)* per arm, and
-- the **environment payoffs** \(\theta_{1:K}\) (via a Beta head),
-from **histories of observed actions and rewards** that may include **multiple prior bandits** (context) and a **current bandit** (prefix).
+## Data Generation
 
-At decision time you can **sample** a coherent latent world hypothesis and act with **Thompson Sampling** (TS).
+To Generate trainin/valid/test splits run 
+```
+python generate_simulations.py 
+```
 
-> ⚠️ This is intentionally minimalist and designed for you to extend. The key architectural choices (structured tokenization, causal masking, per‑arm heads) are in place.
+By default data will be saved in `data/` directory. 
 
----
+### Training examples format
+Training example format (from `build_training_examples_from_run`)
+
+Example:
+
+```
+{
+"context_events": [(-1,-1,-1,-1)],
+"current_events": [
+ (0,-1,-1,-1),            # BANDIT_SEP for bandit 0
+ (0, 0, 1, 1), ... ,      # demo events (agent_id=0)
+ (0,99, 1, 1), ...        # learner events (agent_id=99)
+],
+"labels": {
+ "theta": [... K floats ...],
+ "alpha_demo0": [... K floats ...],   # alpha0 + S0
+ "beta_demo0":  [... K floats ...],   # beta0  + F0
+ "demonstrator_id": 0,
+ "K": 12,
+ "N_tot": 54,
+ "N_by_arm": [ ..., K ints ... ]
+}
+}
+```
+
+Each **example** corresponds to one bandit in a multi-episode run. It has two token streams
+(context + current) and a label set the model learns to predict.
+
+Each event is a 4-tuple: `(bandit_id, agent_id, action, reward)`
+
+- `bandit_id` – local id of the bandit within the run (0..B-1)
+- `agent_id`  – local demonstrator id (0..D-1) or learner (= `99` in the simulator; remapped in the dataloader)
+- `action`    – arm index (0..K-1)
+- `reward`    – 0 or 1
+
+We insert structural tokens into the streams:
+- **NOCTX**: `(-1, -1, -1, -1)` → “no prior bandits”
+- **BANDIT_SEP**: `(b, -1, -1, -1)` → marks the start of bandit `b`’s block
+
+`context_events` is a list of blocks for prior bandits (up to `max_context_bandits`), each block begins with a
+`BANDIT_SEP` for that prior bandit id, followed by all its events. If there is no prior history,
+this list is the single **NOCTX** token.
+
+`current_events` is the entire event stream for the current bandit, starting with its own `BANDIT_SEP` and
+followed by all events for this bandit in chronological order (e.g., demo-then-learner).
+
+Other variables:
+- `theta` (length `K`) – the true payoff of each arm for current bandit
+- `alpha_demo0`, `beta_demo0` (length `K`) – the demonstrator’s latent history Beta shapes
+  for this bandit; with `alpha0`, `beta0` the global priors, i.e.:
+  - `S0[k] = alpha_demo0[k] - alpha0`   (pre-episode successes)
+  - `F0[k] = beta_demo0[k]  - beta0`    (pre-episode failures)
+- `demonstrator_id` – the local id of the demo assigned to this bandit
+- `K` – number of arms
+- `N_tot` – total pre-episode pulls for the demonstrator in this run (fixed per demo)
+- `N_by_arm` (length `K`) – integer pre-episode/latent pulls per arm (from the TS prehistory)
+  - i.e. : `sum(N_by_arm) == N_tot`
+
+> IDs are local to the run. A `demonstrator_id` of 0 in one run is *not* the same
+demonstrator as `demonstrator_id` 0 in another run.
+
+
+
+
+
+
+
 
 ## 0. What the model sees
 
