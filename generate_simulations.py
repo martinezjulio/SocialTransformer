@@ -315,61 +315,70 @@ def simulate_multi_episode_run(
         "episodes": episodes_out,  # chronological episode list with events and states
     }
 
+#%%
+def _all_valid_combos():
+    combos = []
+    for num_bandits in (1, 2, 3):
+        for episodes_per_bandit in (1, 2):
+            for order in (0, 1):
+                for num_demonstrators in range(1, num_bandits + 1):
+                    combos.append(dict(
+                        num_bandits=num_bandits,
+                        episodes_per_bandit=episodes_per_bandit,
+                        order=order,
+                        num_demonstrators=num_demonstrators,
+                    ))
+    return combos  # length = 56
+#%%
+def _sample_combo_uniform():
+    nb = random.choice((1, 2, 3))
+    nd = random.randint(1, nb)           # enforce nd ≤ nb
+    epb = random.choice((1, 2))
+    ord_ = random.choice((0, 1))
+    return dict(
+        num_bandits=nb,
+        episodes_per_bandit=epb,
+        order=ord_,
+        num_demonstrators=nd,
+    )
 
-
-
-# %%
 def build_training_examples_from_run(
     run: Dict,
     alpha0: float = 1.0,
     beta0: float = 1.0,
     max_context_bandits: int = 2,
 ) -> List[Dict]:
-    """
-    Convert a multi-episode *run* (from simulate_multi_episode_run) into per-bandit training examples.
-    We reconstruct each bandit's full event stream by concatenating all of its episodes in
-    chronological order, then build context from up to 'max_context_bandits' prior bandits.
-
-    Tokens:
-      BANDIT_SEP  -> (bandit_id, -1, -1, -1)
-      NOCTX       -> (-1, -1, -1, -1)
-    Labels:
-      theta and start-of-tail shapes alpha_demo0/beta_demo0 for the current demonstrator.
-    """
     examples: List[Dict] = []
 
-    # Per-bandit static info
-    bandit_infos: Dict[int, Dict] = {b["bandit_index"]: b for b in run["bandits"]}
-    # Chronological episodes
-    episodes: List[Dict] = run["episodes"]
+    bandit_infos = {b["bandit_index"]: b for b in run["bandits"]}
+    episodes = run["episodes"]
 
-    # Reconstruct per-bandit event streams in chronological order
-    per_bandit_events: Dict[int, List[Tuple[int,int,int,int]]] = {idx: [] for idx in bandit_infos.keys()}
+    # reconstruct per-bandit streams in chrono order
+    per_bandit_events = {idx: [] for idx in bandit_infos.keys()}
     for E in episodes:
         per_bandit_events[E["bandit_index"]].extend(E["events"])
 
     bandit_indices = sorted(bandit_infos.keys())
 
     for i, b_idx in enumerate(bandit_indices):
-        # ---- Context (prior bandits) ----
-        ctx_events: List[Tuple[int,int,int,int]] = []
+        # context: up to last N prior bandits
+        ctx_events = []
         prior_idxs = bandit_indices[max(0, i - max_context_bandits):i]
         if not prior_idxs:
             ctx_events.append((-1, -1, -1, -1))  # NOCTX
         else:
             for pb in prior_idxs:
-                ctx_events.append((pb, -1, -1, -1))           # BANDIT_SEP
+                ctx_events.append((pb, -1, -1, -1))       # BANDIT_SEP
                 ctx_events.extend(per_bandit_events[pb])
 
-        # ---- Current bandit ----
-        cur_events: List[Tuple[int,int,int,int]] = []
-        cur_events.append((b_idx, -1, -1, -1))                # BANDIT_SEP
+        # current bandit
+        cur_events = [(b_idx, -1, -1, -1)]                # BANDIT_SEP
         cur_events.extend(per_bandit_events[b_idx])
 
-        # ---- Labels ----
         binfo = bandit_infos[b_idx]
         thetas = binfo["theta"]
         S0, F0 = binfo["S0"], binfo["F0"]
+
         labels = {
             "theta": thetas,
             "alpha_demo0": [alpha0 + s for s in S0],
@@ -388,29 +397,44 @@ def build_training_examples_from_run(
 
     return examples
 
+#%%
 def generate_dataset(
     out_path: str,
     num_episodes: int = 2000,
-    K: int = 4,
-    num_bandits: int = 3,
-    episodes_per_bandit: int = 1,
-    order: int = 0,                # 0: demo->learner, 1: learner->demo
-    num_demonstrators: int = 1,
-    T_demo: int = 12,
-    T_learner: int = 12,
+    *,
+    # fixed knobs
+    K: int = 12,
+    T_demo: int = 6,
+    T_learner: int = 6,
     alpha0: float = 1.0,
     beta0: float = 1.0,
-    N_max: int = 40,
+    N_max: int = 72,
     max_context_bandits: int = 2,
+    # coverage strategy
+    balanced: bool = True,   # True = enumerate all valid combos evenly; False = sample combos i.i.d.
 ) -> None:
+    """
+    Generate a dataset of per-bandit training examples from many multi-episode runs.
+    """
     all_examples: List[Dict] = []
-    for _ in range(num_episodes):
+
+    if balanced:
+        combos = _all_valid_combos()                    # 56 combos
+        reps = math.ceil(num_episodes / len(combos))
+        pool = combos * reps
+        random.shuffle(pool)
+        pool = pool[:num_episodes]
+        combo_iter = pool
+    else:
+        combo_iter = [_sample_combo_uniform() for _ in range(num_episodes)]
+
+    for cfg in combo_iter:
         run = simulate_multi_episode_run(
             K=K,
-            num_bandits=num_bandits,
-            episodes_per_bandit=episodes_per_bandit,
-            order=order,
-            num_demonstrators=num_demonstrators,
+            num_bandits=cfg["num_bandits"],
+            episodes_per_bandit=cfg["episodes_per_bandit"],
+            order=cfg["order"],
+            num_demonstrators=cfg["num_demonstrators"],
             T_demo=T_demo,
             T_learner=T_learner,
             alpha0=alpha0,
@@ -426,6 +450,7 @@ def generate_dataset(
     print(f"Saved {len(all_examples)} examples to {out_path}")
 
 
+#%%
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
