@@ -125,7 +125,7 @@ def _sample_combo_uniform():
     )
 
 
-# ----------- Simulator -----------
+# ----------- Simulators -----------
 
 def simulate_bandit_episode_block(
     *,
@@ -195,9 +195,6 @@ def simulate_bandit_episode_block(
         "alphaL": aL.tolist(),
         "betaL":  bL.tolist(),
     }
-
-
-
 
 #%%
 def simulate_multi_episode_run(
@@ -392,6 +389,8 @@ def build_training_examples_from_run(
         })
 
     return examples
+
+# ------------ Dataset Generation ------------
 
 #%%
 def generate_dataset_streaming(

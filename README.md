@@ -69,7 +69,7 @@ Other variables:
   - i.e. : `sum(N_by_arm) == N_tot`
 
 > IDs are local to the run. A `demonstrator_id` of 0 in one run is *not* the same
-demonstrator as `demonstrator_id` 0 in another run.
+demonstrator as `demonstrator_id` 0 in another run. The same applies to bandits. 
 
 
 
