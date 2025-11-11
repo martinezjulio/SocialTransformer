@@ -21,7 +21,7 @@ def ts_argmax(alphas: torch.Tensor, betas: torch.Tensor) -> int:
     draws = torch.distributions.Beta(alphas, betas).sample()  # [K]
     return int(torch.argmax(draws).item())
 
-def sample_bandit(K: int, min_gap: float = 0.08, min_best: float = 0.60) -> List[float]:
+def sample_bandit(K: int, min_gap: float = 0.05, min_best: float = 0.70) -> List[float]:
     """Sample K payoffs from Beta(2,2) until there's a clear best arm."""
     while True:
         thetas = torch.distributions.Beta(torch.full((K,), 2.0), torch.full((K,), 2.0)).sample().tolist()
@@ -60,7 +60,7 @@ def allocate_prehistory_ts(
     beta0: float = 1.0,
 ) -> Tuple[torch.Tensor, List[int], List[int]]:
     """
-    TS-based pre-episode: simulate N_tot pulls before the observed tail.
+    Thompson Sampling-based pre-episode: simulate N_tot pulls before the observed tail.
     Returns:
       N_by_arm: LongTensor [K] counts of pre-episode pulls per arm
       S0: list[int] successes per arm in the pre-episode
@@ -97,33 +97,6 @@ def prehistory_allocate_softmax(K, N_tot, thetas, N_max, tau_min=0.0, tau_max=6.
           for k, n in enumerate(N_by_arm.tolist())]
     F0 = [int(n) - s for n, s in zip(N_by_arm.tolist(), S0)]
     return N_by_arm, S0, F0
-
-def _all_valid_combos():
-    combos = []
-    for num_bandits in (1, 2, 3):
-        for episodes_per_bandit in (1, 2):
-            for order in (0, 1):
-                for num_demonstrators in range(1, num_bandits + 1):
-                    combos.append(dict(
-                        num_bandits=num_bandits,
-                        episodes_per_bandit=episodes_per_bandit,
-                        order=order,
-                        num_demonstrators=num_demonstrators,
-                    ))
-    return combos  # length = 56
-#%%
-def _sample_combo_uniform():
-    nb = random.choice((1, 2, 3))
-    nd = random.randint(1, nb)           # enforce nd ≤ nb
-    epb = random.choice((1, 2))
-    ord_ = random.choice((0, 1))
-    return dict(
-        num_bandits=nb,
-        episodes_per_bandit=epb,
-        order=ord_,
-        num_demonstrators=nd,
-    )
-
 
 # ----------- Simulators -----------
 
@@ -203,6 +176,7 @@ def simulate_multi_episode_run(
     episodes_per_bandit: int = 1,
     order: int = 0,                  # 0: demo -> learner; 1: learner -> demo
     num_demonstrators: int = 1,
+    demos_per_bandit: int = 1,
     T_demo: int = 6,
     T_learner: int = 6,
     alpha0: float = 1.0,
@@ -247,50 +221,79 @@ def simulate_multi_episode_run(
 
     # 4) Iterate bandits
     for b in range(num_bandits):
-        demonstrator_id = bandit_to_demo[b]
         thetas = bandit_thetas[b]
-        N_tot = demo_N_tot[demonstrator_id]
-
-        # --- TS pre-history for this demo on this bandit ---
-        N_by_arm, S0, F0 = allocate_prehistory_ts(K, N_tot, thetas, alpha0=alpha0, beta0=beta0)
-
-        # Start-of-tail states
-        alphaD = torch.tensor([alpha0 + s for s in S0], dtype=torch.float32)
-        betaD  = torch.tensor([beta0 + f for f in F0], dtype=torch.float32)
-        alphaL = torch.full((K,), alpha0, dtype=torch.float32)
-        betaL  = torch.full((K,), beta0,  dtype=torch.float32)
-
+        
+        # Determine which demonstrators act on this bandit
+        if demos_per_bandit == 1:
+            # Original behavior: one demo handles all episodes
+            demonstrator_id = bandit_to_demo[b]
+            acting_demos = [demonstrator_id]
+        else:
+            # Multiple demos per bandit: use first demos_per_bandit demonstrators
+            acting_demos = list(range(min(demos_per_bandit, num_demonstrators)))
+        
+        # Pre-compute pre-histories for all acting demonstrators
+        demo_states = {}
+        for demo_id in acting_demos:
+            N_tot = demo_N_tot[demo_id]
+            N_by_arm, S0, F0 = allocate_prehistory_ts(K, N_tot, thetas, alpha0=alpha0, beta0=beta0)
+            demo_states[demo_id] = {
+                "N_tot": int(N_tot),
+                "N_by_arm": N_by_arm.tolist(),
+                "S0": S0,
+                "F0": F0,
+                "alphaD": torch.tensor([alpha0 + s for s in S0], dtype=torch.float32),
+                "betaD": torch.tensor([beta0 + f for f in F0], dtype=torch.float32),
+            }
+        
+        # Use first demonstrator's info for bandit metadata (for backwards compatibility)
+        primary_demo = acting_demos[0]
         bandits_out.append({
             "bandit_index": b,
-            "demonstrator_id": demonstrator_id,
+            "demonstrator_id": primary_demo,
             "theta": thetas,
-            "N_tot": int(N_tot),
-            "N_by_arm": N_by_arm.tolist(),
-            "S0": S0,
-            "F0": F0,
+            "N_tot": demo_states[primary_demo]["N_tot"],
+            "N_by_arm": demo_states[primary_demo]["N_by_arm"],
+            "S0": demo_states[primary_demo]["S0"],
+            "F0": demo_states[primary_demo]["F0"],
+            "acting_demonstrators": acting_demos,  # NEW: list of all demos acting on this bandit
         })
-
-        # Repetitions for this bandit
+        
+        # Initialize learner state (shared across all demos)
+        alphaL = torch.full((K,), alpha0, dtype=torch.float32)
+        betaL = torch.full((K,), beta0,  dtype=torch.float32)
+        
+        # Repetitions for this bandit, cycling through demonstrators
+        demo_cycle_idx = 0
         for rep in range(episodes_per_bandit):
+            # Select which demonstrator acts in this episode
+            current_demo_id = acting_demos[demo_cycle_idx % len(acting_demos)]
+            alphaD = demo_states[current_demo_id]["alphaD"].clone()
+            betaD = demo_states[current_demo_id]["betaD"].clone()
+            
             pair = [("demo", T_demo), ("learner", T_learner)] if order == 0 else [("learner", T_learner), ("demo", T_demo)]
             for ep_mode, ep_steps in pair:
                 block = simulate_bandit_episode_block(
                     mode=ep_mode, steps=ep_steps, K=K, thetas=thetas,
                     alphaD=alphaD, betaD=betaD, alphaL=alphaL, betaL=betaL,
-                    bandit_id=b, demonstrator_id=demonstrator_id,
+                    bandit_id=b, demonstrator_id=current_demo_id,
                 )
-
-                # update state tensors for the next episode in the pair (or next rep)
+                
+                # Update states
                 alphaD = torch.tensor(block["alphaD"], dtype=torch.float32)
                 betaD  = torch.tensor(block["betaD"],  dtype=torch.float32)
                 alphaL = torch.tensor(block["alphaL"], dtype=torch.float32)
                 betaL  = torch.tensor(block["betaL"],  dtype=torch.float32)
-
+                
+                # Store updated demo state back
+                demo_states[current_demo_id]["alphaD"] = alphaD
+                demo_states[current_demo_id]["betaD"] = betaD
+                
                 episodes_out.append({
                     "episode_index": epi_idx,
                     "bandit_index": b,
-                    "episode_type": ep_mode,          # "demo" or "learner"
-                    "demonstrator_id": demonstrator_id,
+                    "episode_type": ep_mode,
+                    "demonstrator_id": current_demo_id,
                     "steps": ep_steps,
                     "events": block["events"],
                     "states_before": {
@@ -307,6 +310,9 @@ def simulate_multi_episode_run(
                     },
                 })
                 epi_idx += 1
+            
+            # Move to next demonstrator for next episode
+            demo_cycle_idx += 1
 
     return {
         "meta": {
@@ -315,6 +321,7 @@ def simulate_multi_episode_run(
             "episodes_per_bandit": episodes_per_bandit,
             "order": order,  # 0 demo->learner, 1 learner->demo
             "num_demonstrators": num_demonstrators,
+            "demos_per_bandit": demos_per_bandit,
             "T_demo": T_demo,
             "T_learner": T_learner,
             "alpha0": alpha0,
@@ -399,14 +406,16 @@ def generate_dataset_streaming(
     *,
     # fixed knobs
     K: int = 12,
+    num_bandits: int = 3,
     T_demo: int = 6,
     T_learner: int = 6,
     alpha0: float = 1.0,
     beta0: float = 1.0,
     N_max: int = 72,
     max_context_bandits: int = 2,
-    # coverage strategy
-    balanced: bool = True,         # grid vs random combos
+    max_num_demos: int = 2,
+    max_demos_per_bandit: int = 2,
+    max_episodes_per_bandit: int = 2,
     # sharding
     split: str = "train",
     shard_size: int = 10000,       # ~1e4–2e4 is a good start
@@ -420,50 +429,46 @@ def generate_dataset_streaming(
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    def _all_valid_combos():
+    def _all_valid_combos(num_bandits=3, max_num_demos=2, max_demos_per_bandit=2, max_episodes_per_bandit=2):
         combos = []
-        for nb in (1, 2, 3):
-            for epb in (1, 2):
-                for ord_ in (0, 1):
-                    for nd in range(1, nb+1):
+        nb = num_bandits  # Use as fixed value, don't iterate
+        for epb in range(1, max_episodes_per_bandit + 1):
+            for nd in range(1, min(nb, max_num_demos) + 1):
+                for dpb in range(1, min(nd, epb, max_demos_per_bandit) + 1):
+                    for ord_ in (0, 1):
                         combos.append(dict(
                             num_bandits=nb,
                             episodes_per_bandit=epb,
                             order=ord_,
                             num_demonstrators=nd,
+                            demos_per_bandit=dpb,
                         ))
-        return combos  # 56 combos total
+        return combos
 
-    def _sample_combo_uniform():
-        nb  = random.choice((1, 2, 3))
-        nd  = random.randint(1, nb)     # enforce nd ≤ nb
-        epb = random.choice((1, 2))
-        ord_= random.choice((0, 1))
-        return dict(
-            num_bandits=nb,
-            episodes_per_bandit=epb,
-            order=ord_,
-            num_demonstrators=nd,
-        )
+    grid = _all_valid_combos(
+        num_bandits=num_bandits,
+        max_num_demos=max_num_demos,
+        max_demos_per_bandit=max_demos_per_bandit,
+        max_episodes_per_bandit=max_episodes_per_bandit
+    )
+    reps = math.ceil(num_runs / len(grid))
+    pool = (grid * reps)[:num_runs]
+    random.shuffle(pool)
+    combo_iter = pool
 
-    if balanced:
-        grid = _all_valid_combos()
-        reps = math.ceil(num_runs / len(grid))
-        pool = (grid * reps)[:num_runs]
-        random.shuffle(pool)
-        combo_iter = pool
-    else:
-        combo_iter = [_sample_combo_uniform() for _ in range(num_runs)]
 
     shard_idx = 0
     buf: List[Dict] = []
     manifest = {
         "split": split,
         "meta": {
-            "K": K, "T_demo": T_demo, "T_learner": T_learner,
+            "K": K, "num_bandits": num_bandits, "T_demo": T_demo, "T_learner": T_learner,
             "alpha0": alpha0, "beta0": beta0, "N_max": N_max,
             "max_context_bandits": max_context_bandits,
-            "coverage": "balanced" if balanced else "random",
+            "max_num_demos": max_num_demos,
+            "max_demos_per_bandit": max_demos_per_bandit,
+            "max_episodes_per_bandit": max_episodes_per_bandit,
+            "coverage": "exhaustive_grid",
             "shard_size": shard_size,
         },
         "shards": []  # [{"path": "...", "num_examples": int}]
@@ -486,6 +491,7 @@ def generate_dataset_streaming(
             episodes_per_bandit=cfg["episodes_per_bandit"],
             order=cfg["order"],
             num_demonstrators=cfg["num_demonstrators"],
+            demos_per_bandit=cfg["demos_per_bandit"],
             T_demo=T_demo,
             T_learner=T_learner,
             alpha0=alpha0,
@@ -515,28 +521,40 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=str, default="data")
-    parser.add_argument("--K", type=int, default=4)
+    parser.add_argument("--K", type=int, default=12)
     parser.add_argument("--N_max", type=int, default=72)
+    parser.add_argument("--num_bandits", type=int, default=3)
+    parser.add_argument("--max_num_demos", type=int, default=2)
     parser.add_argument("--max_context_bandits", type=int, default=2)
-    parser.add_argument("--balanced", type=bool, default=True)
     parser.add_argument("--num_train_runs", type=int, default=6000)
     parser.add_argument("--num_valid_runs", type=int, default=400)
     parser.add_argument("--num_test_runs", type=int, default=400)
-    parser.add_argument("--num_bandits", type=int, default=3)
-    parser.add_argument("--T_demo", type=int, default=12)
-    parser.add_argument("--T_learner", type=int, default=12)
+    parser.add_argument("--T_demo", type=int, default=6)
+    parser.add_argument("--T_learner", type=int, default=6)
     parser.add_argument("--shard_size", type=int, default=12000)
+    parser.add_argument("--max_demos_per_bandit", type=int, default=2)
+    parser.add_argument("--max_episodes_per_bandit", type=int, default=2)
+    
     args = parser.parse_args()
 
     random.seed(42); torch.manual_seed(42)
     train_manifest = generate_dataset_streaming(os.path.join(args.out, "train"), num_runs=args.num_train_runs, split="train",
-                                                K=args.K, T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
-                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)
+                                                K=args.K, num_bandits=args.num_bandits, T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, max_num_demos=args.max_num_demos,
+                                                max_demos_per_bandit=args.max_demos_per_bandit,
+                                                max_episodes_per_bandit=args.max_episodes_per_bandit,
+                                                shard_size=args.shard_size)
 
     val_manifest   = generate_dataset_streaming(os.path.join(args.out, "val"),   num_runs=args.num_valid_runs,  split="val",
-                                                K=args.K,  T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
-                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)
+                                                K=args.K, num_bandits=args.num_bandits, T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, max_num_demos=args.max_num_demos,
+                                                max_demos_per_bandit=args.max_demos_per_bandit,
+                                                max_episodes_per_bandit=args.max_episodes_per_bandit,
+                                                shard_size=args.shard_size)
 
     test_manifest  = generate_dataset_streaming(os.path.join(args.out, "test"),  num_runs=args.num_test_runs,  split="test",
-                                                K=args.K,  T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
-                                                max_context_bandits=args.max_context_bandits, balanced=args.balanced, shard_size=args.shard_size)
+                                                K=args.K, num_bandits=args.num_bandits, T_demo=args.T_demo, T_learner=args.T_learner, N_max=args.N_max,
+                                                max_context_bandits=args.max_context_bandits, max_num_demos=args.max_num_demos,
+                                                max_demos_per_bandit=args.max_demos_per_bandit,
+                                                max_episodes_per_bandit=args.max_episodes_per_bandit,
+                                                shard_size=args.shard_size)

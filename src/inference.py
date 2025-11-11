@@ -4,7 +4,7 @@ from typing import Dict, List, Tuple
 
 import torch
 
-from model import SBIPosteriorTransformer, thompson_sample_action
+from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from dataloader import SPECIAL
 
 def build_tokens_from_events(

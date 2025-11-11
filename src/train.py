@@ -8,8 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from dataloader import make_dataloader
-from model import SBIPosteriorTransformer
+from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch
+from models.BetaModel import SBIPosteriorTransformer
 
 
 def beta_nll_of_true_theta(alpha_pred: torch.Tensor, beta_pred: torch.Tensor, theta_true: torch.Tensor) -> torch.Tensor:
@@ -74,10 +74,10 @@ def train_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_path", type=str, default="data/train.pt")
-    parser.add_argument("--val_path", type=str, default="data/val.pt")
-    parser.add_argument("--num_arms", type=int, default=4)
-    parser.add_argument("--max_bandits", type=int, default=16)
+    parser.add_argument("--train_path", type=str, default="data/train/manifest.json")
+    parser.add_argument("--val_path", type=str, default="data/val/manifest.json")
+    parser.add_argument("--num_arms", type=int, default=12)
+    parser.add_argument("--max_bandits", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
@@ -86,12 +86,19 @@ def main():
 
     device = torch.device(args.device)
 
-    train_loader = make_dataloader(args.train_path, args.batch_size, args.num_arms, shuffle=True)
-    val_loader   = make_dataloader(args.val_path,   args.batch_size, args.num_arms, shuffle=False)
+    # Load training data
+    raw_train = ShardedExamplesDataset(args.train_path, cache_shards=2)
+    train_ds = BanditSequenceDataset(raw_train, num_arms=args.num_arms, num_agents_max=4)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_batch)
+
+    # Load validation data
+    raw_val = ShardedExamplesDataset(args.val_path, cache_shards=2)
+    val_ds = BanditSequenceDataset(raw_val, num_arms=args.num_arms, num_agents_max=4)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
     model = SBIPosteriorTransformer(
         num_arms=args.num_arms,
-        num_agents=3,       # 2 demonstrators + 1 learner (mapped)
+        num_agents=4,       # 1 learner (ID 0) + up to 3 demonstrators (IDs 1-3)
         max_bandits=args.max_bandits,
         d_model=256, nhead=8, num_layers=4, dim_feedforward=768, dropout=0.1,
     ).to(device)

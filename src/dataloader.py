@@ -1,14 +1,17 @@
-from typing import Dict, List, Tuple, Sequence, Optional
+from typing import Any, Dict, List, Tuple, Sequence, Optional
+import os
+import json
+import bisect
+from collections import OrderedDict
 import torch
 from torch.utils.data import Dataset, DataLoader
 
 # Special token channel for structure
 SPECIAL = {
     "NONE": 0,        # real events
-    "CTX_SEP": 1,     # (unused here—kept for compatibility)
-    "NOCTX": 2,       # (-1, -1, -1, -1)
-    "QUERY": 3,       # appended at the end for readout
-    "BANDIT_SEP": 4,  # (b, -1, -1, -1)
+    "NOCTX": 1,       # (-1, -1, -1, -1)
+    "QUERY": 2,       # appended at the end for readout
+    "BANDIT_SEP": 3,  # (b, -1, -1, -1)
 }
 
 LEARNER_RAW_ID = 99  # learner's agent_id in the simulator
@@ -28,9 +31,9 @@ def _remap_agent_ids_local(
 ) -> Tuple[List[Tuple[int,int,int,int]], int]:
     """
     Remap raw agent ids to a compact local space for this example:
-      - Demonstrators present in the example map to 0..D-1 (D <= num_agents_max-1)
-      - Learner (raw=99) maps to D (last index used)
-      - BANDIT_SEP/NOCTX rows get agent_id = 0 (they're structural)
+      - Learner (raw=99) maps to 0 (primary position)
+      - Demonstrators present in the example map to 1..D (D <= num_agents_max-1)
+      - BANDIT_SEP/NOCTX rows get agent_id = 0 (share with learner; distinguished by special_ids)
     Returns:
       remapped_events, num_agents_used (<= num_agents_max)
     """
@@ -43,13 +46,13 @@ def _remap_agent_ids_local(
             f"but num_agents_max={num_agents_max}. Increase num_agents_max and the model's num_agents."
         )
 
-    demo_map = {raw: i for i, raw in enumerate(demos)}
-    learner_index = D  # learner goes after demos
+    demo_map = {raw: i + 1 for i, raw in enumerate(demos)}  # demos start at 1
+    learner_index = 0  # learner is always at 0
 
     out: List[Tuple[int,int,int,int]] = []
     for (b, ag, a, r) in events:
         if ag == -1:
-            # BANDIT_SEP row—use agent_id=0 (arbitrary; it's a structural token)
+            # BANDIT_SEP row—use agent_id=0 (shares with learner; structural token)
             out.append((b, 0, a, r))
         elif ag == LEARNER_RAW_ID:
             out.append((b, learner_index, a, r))
@@ -268,135 +271,128 @@ def make_dataloader(
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_batch)
 
 
+# ---------- sharded dataset ----------
+
+class ShardedExamplesDataset(Dataset):
+    """
+    Lazily reads shards listed in a manifest.json produced by generate_dataset_streaming.
+    Keeps a small LRU cache of loaded shards.
+    """
+    def __init__(self, manifest_path: str, cache_shards: int = 2):
+        with open(manifest_path, "r") as f:
+            man = json.load(f)
+        self.root = os.path.dirname(manifest_path)
+        self.shards = man["shards"]
+        self.total = sum(s["num_examples"] for s in self.shards)
+        # prefix sums for fast index -> (shard, local)
+        self.prefix = []
+        c = 0
+        for s in self.shards:
+            self.prefix.append(c)
+            c += s["num_examples"]
+        self._cache = OrderedDict()
+        self._cap = max(1, cache_shards)
+
+    def __len__(self):
+        return self.total
+
+    def _load_shard(self, i: int):
+        if i in self._cache:
+            self._cache.move_to_end(i)
+            return self._cache[i]
+        path = os.path.join(self.root, self.shards[i]["path"])
+        data = torch.load(path, map_location="cpu")
+        self._cache[i] = data
+        self._cache.move_to_end(i)
+        if len(self._cache) > self._cap:
+            self._cache.popitem(last=False)
+        return data
+
+    def __getitem__(self, idx: int):
+        # find shard via prefix sums
+        i = bisect.bisect_right(self.prefix, idx) - 1
+        start = self.prefix[i]
+        local_idx = idx - start
+        shard = self._load_shard(i)
+        return shard[local_idx]
+
+
 if __name__ == "__main__":
-    import argparse, os, json, torch
-    from torch.utils.data import DataLoader
-    from collections import OrderedDict
-    import bisect
+    import argparse
 
     parser = argparse.ArgumentParser(description="Quick demo for bandit dataloader.")
-    src = parser.add_mutually_exclusive_group(required=True)
-    src.add_argument("--pt", type=str, help="Path to a .pt file containing a list of examples")
-    src.add_argument("--manifest", type=str, help="Path to a streaming manifest.json")
+    parser.add_argument("--manifest", type=str, default="data/train/manifest.json", help="Path to a streaming manifest.json")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-arms", type=int, default=12, help="K used for PAD index (should match dataset)")
     parser.add_argument("--num-agents-max", type=int, default=4, help="max demonstrators per run + learner")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle batches")
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--preview-batches", type=int, default=1)
+    parser.add_argument("--preview-batches", type=int, default=5)
     parser.add_argument("--alpha0", type=float, default=1.0)  # for label sanity check
     parser.add_argument("--beta0", type=float, default=1.0)
     args = parser.parse_args()
 
-    # --- optional: a tiny loader for streaming shards (manifest) ---
-    class ShardedExamplesDataset(torch.utils.data.Dataset):
-        """
-        Lazily reads shards listed in a manifest.json produced by generate_dataset_streaming.
-        Keeps a small LRU cache of loaded shards.
-        """
-        def __init__(self, manifest_path: str, cache_shards: int = 2):
-            with open(manifest_path, "r") as f:
-                man = json.load(f)
-            self.root = os.path.dirname(manifest_path)
-            self.shards = man["shards"]
-            self.total = sum(s["num_examples"] for s in self.shards)
-            # prefix sums for fast index -> (shard, local)
-            self.prefix = []
-            c = 0
-            for s in self.shards:
-                self.prefix.append(c)
-                c += s["num_examples"]
-            self._cache = OrderedDict()
-            self._cap = max(1, cache_shards)
-
-        def __len__(self):
-            return self.total
-
-        def _load_shard(self, i: int):
-            if i in self._cache:
-                self._cache.move_to_end(i)
-                return self._cache[i]
-            path = os.path.join(self.root, self.shards[i]["path"])
-            data = torch.load(path, map_location="cpu")
-            self._cache[i] = data
-            self._cache.move_to_end(i)
-            if len(self._cache) > self._cap:
-                self._cache.popitem(last=False)
-            return data
-
-        def __getitem__(self, idx: int):
-            # find shard via prefix sums
-            i = bisect.bisect_right(self.prefix, idx) - 1
-            start = self.prefix[i]
-            local_idx = idx - start
-            shard = self._load_shard(i)
-            return shard[local_idx]
-
     # --- build DataLoader ---
-    if args.pt:
-        # .pt path: load all examples into RAM (ok for small/medium)
-        print(f"Loading examples from {args.pt} ...")
-        loader = make_dataloader(
-            args.pt,
-            batch_size=args.batch_size,
-            num_arms=args.num_arms,
-            num_agents_max=args.num_agents_max,
-            shuffle=args.shuffle,
-        )
-    else:
-        # manifest: lazy shard loading
-        print(f"Loading shard manifest from {args.manifest} ...")
-        ds = ShardedExamplesDataset(args.manifest, cache_shards=2)
-        loader = DataLoader(
-            ds,
-            batch_size=args.batch_size,
-            shuffle=args.shuffle,
-            num_workers=args.num_workers,
-            collate_fn=collate_batch,
-            pin_memory=True,
-        )
+    print(f"Loading shard manifest from {args.manifest} ...")
+    raw_ds = ShardedExamplesDataset(args.manifest, cache_shards=2)
+    ds = BanditSequenceDataset(
+        raw_ds,
+        num_arms=args.num_arms,
+        num_agents_max=args.num_agents_max,
+    )
+    print(f"Dataset size: {len(ds)} examples")
+    
+    loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=args.shuffle,
+        num_workers=args.num_workers,
+        collate_fn=collate_batch,
+        pin_memory=True,
+    )
 
-    # --- iterate a few batches and pretty print ---
-    def _summarize_batch(b):
-        B, T = b["bandit_ids"].shape
-        print(f"\nBatch: B={B}, T={T}")
-        for k in ("bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask"):
-            print(f"  {k:>12}: {tuple(b[k].shape)}  dtype={b[k].dtype}")
+    n = 0
+    for batch in loader:
 
-        # preview the first sequence (unpadded length)
-        lengths = (~b["pad_mask"]).sum(dim=1).tolist()
+        # print the batch shape and keys of the batch
+        B, T = batch["bandit_ids"].shape
+        print(f"\nBatch: batch_size={B}, sequence_length={T}")
+        for k in batch.keys():
+            print(f"  {k:>12}: {tuple(batch[k].shape)}  dtype={batch[k].dtype}")
+
+        lengths = (~batch["pad_mask"]).sum(dim=1).tolist()
         i0 = 0
         L0 = lengths[i0]
-        print(f"\nFirst sequence length (no PAD): {L0}")
+        print(f"\nFirst example of batch sequence length (no PAD): {L0}")
+        
         preview = min(12, L0)
         cols = ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids"]
         rows = []
         for t in range(preview):
-            rows.append([int(b[c][i0, t].item()) for c in cols])
+            rows.append([int(batch[c][i0, t].item()) for c in cols])
         print("  t  bandit  agent  action  reward  special")
         for t, row in enumerate(rows):
             print(f"{t:>3}  " + "   ".join(f"{v:>5}" for v in row))
 
-        # label sanity for first item
-        K = b["y_theta"].shape[1]
+        K = batch["y_theta"].shape[1]
         alpha0, beta0 = args.alpha0, args.beta0
-        a0 = b["y_alpha_demo0"][i0].tolist()
-        b0 = b["y_beta_demo0"][i0].tolist()
-        # Check: (alpha_demo0 - alpha0) + (beta_demo0 - beta0) should be N_by_arm if present.
-        # We can't access N_by_arm from the collated batch; just print sums as a quick check.
+        a0 = batch["y_alpha_demo0"][i0].tolist()
+        b0 = batch["y_beta_demo0"][i0].tolist()
+        S0 = [a - alpha0 for a in a0]
+        F0 = [b - beta0 for b in b0]
+        print(f"\nDemonstrator Pre-episode successes and failures:")
+        print(f"S0: {S0}")
+        print(f"F0: {F0}")
         total_pseudo = sum((a - alpha0) + (bb - beta0) for a, bb in zip(a0, b0))
-        print(f"\nLabel check (item 0): sum((alpha_demo0-α0)+(beta_demo0-β0)) = {total_pseudo:.1f}")
+        print(f"N_tot = {total_pseudo:.1f}")
 
-        # show theta stats
-        theta0 = b["y_theta"][i0].tolist()
-        best = max(theta0); sec = sorted(theta0, reverse=True)[1]
-        print(f"  theta[0] best={best:.3f}  gap={best-sec:.3f}")
+        # Payoffs Ground Truth
+        theta = batch["y_theta"][i0].tolist()
+        theta_rounded = [round(t, 2) for t in theta]
+        print(f"\nBandit Thetas:\n{theta_rounded}\n")
 
-    n = 0
-    for batch in loader:
-        _summarize_batch(batch)
         n += 1
         if n >= args.preview_batches:
             break
 
-    print("\nDone. Try adjusting --batch-size, --shuffle, or point to --manifest to stream shards.")
+    print("\nDone. Try adjusting --batch-size or --shuffle.")
