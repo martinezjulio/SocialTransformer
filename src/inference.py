@@ -102,13 +102,64 @@ def posterior_sample_theta_and_counts(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, default="sbi_transformer.pt")
+    parser.add_argument("--checkpoint", type=str, default="sbi_transformer.pt",
+                        help="Path to checkpoint file (or state dict)")
+    parser.add_argument("--use_wandb", action="store_true",
+                        help="Load checkpoint from wandb artifact instead of local file")
+    parser.add_argument("--wandb_entity", type=str,
+                        help="wandb entity (required if --use_wandb)")
+    parser.add_argument("--wandb_project", type=str,
+                        help="wandb project (required if --use_wandb)")
+    parser.add_argument("--artifact_name", type=str, default="sbi-transformer-checkpoint",
+                        help="wandb artifact name")
+    parser.add_argument("--artifact_alias", type=str, default="best",
+                        help="wandb artifact alias (e.g., 'best', 'latest', 'epoch_5')")
     parser.add_argument("--K", type=int, default=4)
     parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
 
     model = SBIPosteriorTransformer(num_arms=args.K, num_agents=3, max_bandits=16)
-    model.load_state_dict(torch.load(args.checkpoint, map_location=args.device))
+    
+    if args.use_wandb:
+        # Load from wandb artifact
+        if not args.wandb_entity or not args.wandb_project:
+            parser.error("--wandb_entity and --wandb_project are required when --use_wandb is set")
+        
+        import wandb
+        import os
+        
+        api = wandb.Api()
+        artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.artifact_name}:{args.artifact_alias}"
+        print(f"Downloading artifact: {artifact_path}")
+        
+        artifact = api.artifact(artifact_path, type='model')
+        artifact_dir = artifact.download()
+        
+        # Get checkpoint file
+        checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
+        if not checkpoint_files:
+            raise FileNotFoundError(f"No .pt file found in artifact directory {artifact_dir}")
+        
+        checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
+        checkpoint = torch.load(checkpoint_path, map_location=args.device)
+        
+        # Load model state from checkpoint dict
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Loaded model from epoch {checkpoint['epoch']}, val loss: {checkpoint['val_stats']['loss']:.4f}")
+        else:
+            model.load_state_dict(checkpoint)
+    else:
+        # Load from local file
+        checkpoint = torch.load(args.checkpoint, map_location=args.device)
+        
+        # Handle both full checkpoint dicts and plain state dicts
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
+        else:
+            model.load_state_dict(checkpoint)
+        print(f"Loaded model from {args.checkpoint}")
 
     # Example: empty context, a few current events (bandit separators + some demo actions)
     events_context = []  # use NOCTX

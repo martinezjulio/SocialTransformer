@@ -206,13 +206,77 @@ We **train on simulations** generated from the same generative story you care ab
 
 ---
 
+## 11. Model Checkpoints with Weights & Biases Artifacts
+
+The training script now supports saving and versioning model checkpoints using **wandb artifacts**. This provides:
+- Automatic versioning and tracking of model checkpoints
+- Easy model sharing and collaboration
+- Metadata tracking (epoch, losses, hyperparameters)
+- Best model selection based on validation loss
+
+### Training with Artifacts
+
+```bash
+# Run with wandb artifacts (recommended)
+bash scripts/run_training.sh
+
+# Or run directly with custom options
+python src/train.py \
+    --use_wandb \
+    --wandb_project "social-belief-modeling" \
+    --wandb_entity "your-username" \
+    --checkpoint_dir "checkpoints" \
+    --save_every 5 \
+    --artifact_name "sbi-transformer-checkpoint"
+```
+
+### Checkpoint Types
+
+1. **Best Model** (`best_model.pt`): Saved when validation loss improves (alias: `best`)
+2. **Final Model** (`final_model.pt`): Saved at end of training (alias: `latest`)
+3. **Periodic** (`checkpoint_epoch_N.pt`): Saved every N epochs if `--save_every > 0`
+
+### Loading Checkpoints
+
+**From local file:**
+```python
+checkpoint = torch.load('checkpoints/best_model.pt')
+model.load_state_dict(checkpoint['model_state_dict'])
+```
+
+**From wandb artifact:**
+```bash
+# Load best model
+python src/load_checkpoint.py \
+    --source wandb \
+    --wandb_entity "your-username" \
+    --wandb_project "social-belief-modeling" \
+    --alias "best"
+```
+
+**In inference:**
+```bash
+python src/inference.py \
+    --use_wandb \
+    --wandb_entity "your-username" \
+    --wandb_project "social-belief-modeling" \
+    --artifact_alias "best" \
+    --K 12
+```
+
+See `WANDB_ARTIFACTS_GUIDE.md` for detailed documentation and examples.
+
+---
+
 ## Project files
 
 - `generate_simulations.py` — create synthetic episodes and build training examples.
 - `dataloader.py` — dataset + collate to structured token tensors with masks.
-- `model.py` — event embedder, causal transformer, per‑arm heads, TS helper.
-- `train.py` — losses and training loop.
+- `models/BetaModel.py` — event embedder, causal transformer, per‑arm heads, TS helper.
+- `train.py` — losses, training loop, and wandb artifacts integration.
 - `inference.py` — how to use a trained model to sample start‑of‑tail counts and a \(\theta\) vector for Thompson Sampling.
+- `load_checkpoint.py` — utility for loading checkpoints from local files or wandb artifacts.
+- `WANDB_ARTIFACTS_GUIDE.md` — comprehensive guide for using wandb artifacts with this project.
 
 ---
 
