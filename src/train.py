@@ -2,6 +2,8 @@
 import argparse
 from typing import Dict
 import math
+import os
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -31,6 +33,78 @@ def log_mse_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     MSE in log-space to compare positive parameters across scales.
     """
     return ((torch.log(pred + 1e-8) - torch.log(target + 1e-8)) ** 2).mean()
+
+
+def save_checkpoint(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    epoch: int,
+    train_stats: Dict[str, float],
+    val_stats: Dict[str, float],
+    checkpoint_dir: str,
+    checkpoint_name: str,
+    wandb_run=None,
+    artifact_name: str = "model-checkpoint",
+    is_best: bool = False,
+) -> str:
+    """
+    Save a checkpoint and optionally log it as a wandb artifact.
+    
+    Args:
+        model: The model to save
+        optimizer: The optimizer to save
+        epoch: Current epoch number
+        train_stats: Training statistics dict
+        val_stats: Validation statistics dict
+        checkpoint_dir: Directory to save checkpoints
+        checkpoint_name: Name of the checkpoint file (e.g., 'checkpoint_epoch_5.pt')
+        wandb_run: wandb run object (if None, only saves locally)
+        artifact_name: Name for the wandb artifact
+        is_best: Whether this is the best model so far
+        
+    Returns:
+        Path to the saved checkpoint
+    """
+    # Create checkpoint directory if it doesn't exist
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
+    
+    # Save checkpoint with all relevant information
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'train_stats': train_stats,
+        'val_stats': val_stats,
+    }
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Saved checkpoint to {checkpoint_path}")
+    
+    # Log to wandb artifacts if run is provided
+    if wandb_run is not None:
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type='model',
+            description=f'Model checkpoint at epoch {epoch}',
+            metadata={
+                'epoch': epoch,
+                'train_loss': train_stats['loss'],
+                'val_loss': val_stats['loss'],
+                'is_best': is_best,
+            }
+        )
+        artifact.add_file(checkpoint_path)
+        
+        # Add aliases for versioning
+        aliases = [f"epoch_{epoch}"]
+        if is_best:
+            aliases.append("best")
+        aliases.append("latest")
+        
+        wandb_run.log_artifact(artifact, aliases=aliases)
+        print(f"Logged checkpoint to wandb with aliases: {aliases}")
+    
+    return checkpoint_path
 
 
 def train_one_epoch(
@@ -87,6 +161,9 @@ def main():
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, default="social-belief-modeling", help="W&B project name")
     parser.add_argument("--wandb_entity", type=str, default="juliomartinez-individual", help="W&B user name or team name")
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
+    parser.add_argument("--save_every", type=int, default=0, help="Save checkpoint every N epochs (0 = only save best and final)")
+    parser.add_argument("--artifact_name", type=str, default="sbi-transformer-checkpoint", help="Name for wandb artifact")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -128,11 +205,14 @@ def main():
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
 
+    # Track best validation loss for checkpoint saving
+    best_val_loss = float('inf')
+
     for epoch in range(1, args.epochs + 1):
         stats = train_one_epoch(model, train_loader, optimizer, device)
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
         if run is not None:
-            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss']})
+            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss'], "epoch": epoch})
 
         # Simple eval (same losses on val set)
         model.eval()
@@ -149,12 +229,67 @@ def main():
                 val_tot["theta"]+= lt.item()
                 val_tot["demo"] += ld.item()
             n = len(val_loader)
-            print(f"     val | loss={val_tot['loss']/n:.4f}  theta={val_tot['theta']/n:.4f}  demo={val_tot['demo']/n:.4f}")
+            val_stats = {
+                "loss": val_tot['loss']/n,
+                "loss_theta": val_tot['theta']/n,
+                "loss_demo": val_tot['demo']/n,
+            }
+            print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}")
             if run is not None:
-                run.log({"val/loss_theta": val_tot['theta']/n, "val/loss_demo": val_tot['demo']/n, "val/loss": val_tot['loss']/n})
-
+                run.log({"val/loss_theta": val_stats['loss_theta'], "val/loss_demo": val_stats['loss_demo'], "val/loss": val_stats['loss'], "epoch": epoch})
+        
+        # Check if this is the best model so far
+        is_best = val_stats['loss'] < best_val_loss
+        if is_best:
+            best_val_loss = val_stats['loss']
+            print(f"     ✓ New best model! Val loss: {best_val_loss:.4f}")
+            
+            # Save best model checkpoint
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                train_stats=stats,
+                val_stats=val_stats,
+                checkpoint_dir=args.checkpoint_dir,
+                checkpoint_name="best_model.pt",
+                wandb_run=run,
+                artifact_name=args.artifact_name,
+                is_best=True,
+            )
+        
+        # Save periodic checkpoints if requested
+        if args.save_every > 0 and epoch % args.save_every == 0:
+            save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                train_stats=stats,
+                val_stats=val_stats,
+                checkpoint_dir=args.checkpoint_dir,
+                checkpoint_name=f"checkpoint_epoch_{epoch}.pt",
+                wandb_run=run,
+                artifact_name=args.artifact_name,
+                is_best=False,
+            )
+    
+    # Save final model
+    final_checkpoint_path = save_checkpoint(
+        model=model,
+        optimizer=optimizer,
+        epoch=args.epochs,
+        train_stats=stats,
+        val_stats=val_stats,
+        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_name="final_model.pt",
+        wandb_run=run,
+        artifact_name=args.artifact_name,
+        is_best=False,
+    )
+    
+    # Also save just the state dict for backward compatibility
     torch.save(model.state_dict(), "sbi_transformer.pt")
-    print("Saved model to sbi_transformer.pt")
+    print("Saved model state dict to sbi_transformer.pt")
 
 
 if __name__ == "__main__":

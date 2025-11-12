@@ -24,6 +24,11 @@ DEVICE="cpu"
 WANDB_PROJECT="social-belief-modeling"
 WANDB_ENTITY="juliomartinez-individual"
 
+# Checkpoint configuration
+CHECKPOINT_DIR="checkpoints"
+SAVE_EVERY=0  # Save only best and final (set to N to save every N epochs)
+ARTIFACT_NAME="sbi-transformer-checkpoint"
+
 # Print configuration
 echo "=================================="
 echo "Training Configuration"
@@ -43,6 +48,11 @@ echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
 echo "  Entity: $WANDB_ENTITY"
+echo ""
+echo "Checkpoints:"
+echo "  Directory: $CHECKPOINT_DIR"
+echo "  Save every: $SAVE_EVERY epochs"
+echo "  Artifact name: $ARTIFACT_NAME"
 echo "=================================="
 echo ""
 
@@ -72,7 +82,10 @@ python src/train.py \
     --device $DEVICE \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
-    --wandb_entity "$WANDB_ENTITY"
+    --wandb_entity "$WANDB_ENTITY" \
+    --checkpoint_dir "$CHECKPOINT_DIR" \
+    --save_every $SAVE_EVERY \
+    --artifact_name "$ARTIFACT_NAME"
 
 # Check if training was successful
 if [ $? -eq 0 ]; then
@@ -80,7 +93,16 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Training completed successfully!"
     echo "=================================="
-    echo "Model saved to: sbi_transformer.pt"
+    echo "Model state dict saved to: sbi_transformer.pt"
+    echo "Checkpoints saved to: $CHECKPOINT_DIR/"
+    echo "  - best_model.pt (best validation loss)"
+    echo "  - final_model.pt (final epoch)"
+    if [ "$SAVE_EVERY" -gt 0 ]; then
+        echo "  - checkpoint_epoch_N.pt (periodic checkpoints)"
+    fi
+    echo ""
+    echo "All checkpoints logged to wandb artifacts!"
+    echo "View at: https://wandb.ai/$WANDB_ENTITY/$WANDB_PROJECT/artifacts"
     echo ""
 else
     echo ""
