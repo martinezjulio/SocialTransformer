@@ -6,8 +6,35 @@
 source ~/anaconda3/bin/activate
 conda activate banditguider
 
+# Auto-increment dataset name
+BASE_DATA_DIR="data"
+
+# Find the highest existing dataset number (start at -1 so first dataset is 00)
+MAX_NUM=-1
+for dir in "$BASE_DATA_DIR"/demonstrations_data_*; do
+    if [ -d "$dir" ]; then
+        # Extract number from directory name (e.g., demonstrations_data_07 -> 07)
+        NUM=$(basename "$dir" | sed 's/demonstrations_data_//')
+        # Convert to integer and compare
+        if [ "$NUM" -eq "$NUM" ] 2>/dev/null; then  # Check if it's a valid number
+            if [ "$NUM" -gt "$MAX_NUM" ]; then
+                MAX_NUM=$NUM
+            fi
+        fi
+    fi
+done
+
+# Increment to get next dataset number
+NEXT_NUM=$((MAX_NUM + 1))
+DATASET_NAME=$(printf "demonstrations_data_%02d" $NEXT_NUM)
+OUT_DIR="${BASE_DATA_DIR}/${DATASET_NAME}"
+
+echo "=================================="
+echo "Auto-detected dataset name: $DATASET_NAME"
+echo "=================================="
+echo ""
+
 # Set parameters
-OUT_DIR="data"
 K=12
 N_MAX=72
 NUM_BANDITS=3
@@ -76,6 +103,38 @@ if [ $? -eq 0 ]; then
     echo "  - $OUT_DIR/val/"
     echo "  - $OUT_DIR/test/"
     ls -lh "$OUT_DIR"/train/*.pt 2>/dev/null | head -3
+    echo ""
+    
+    # Create metadata file with generation parameters
+    METADATA_FILE="${OUT_DIR}/dataset_metadata.json"
+    echo "Creating metadata file: $METADATA_FILE"
+    cat > "$METADATA_FILE" << EOF
+{
+  "dataset_name": "$DATASET_NAME",
+  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "parameters": {
+    "K": $K,
+    "N_max": $N_MAX,
+    "num_bandits": $NUM_BANDITS,
+    "max_num_demos": $MAX_NUM_DEMOS,
+    "max_context_bandits": $MAX_CONTEXT_BANDITS,
+    "num_train_runs": $NUM_TRAIN_RUNS,
+    "num_valid_runs": $NUM_VALID_RUNS,
+    "num_test_runs": $NUM_TEST_RUNS,
+    "T_demo": $T_DEMO,
+    "T_learner": $T_LEARNER,
+    "shard_size": $SHARD_SIZE,
+    "max_demos_per_bandit": $MAX_DEMOS_PER_BANDIT,
+    "max_episodes_per_bandit": $MAX_EPISODES_PER_BANDIT
+  },
+  "splits": {
+    "train": "$OUT_DIR/train/",
+    "val": "$OUT_DIR/val/",
+    "test": "$OUT_DIR/test/"
+  }
+}
+EOF
+    echo "✓ Metadata saved to $METADATA_FILE"
     echo ""
 else
     echo ""
