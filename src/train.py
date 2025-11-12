@@ -79,14 +79,14 @@ def main():
     parser.add_argument("--train_path", type=str, default="data/demonstrations_data_00/train/manifest.json")
     parser.add_argument("--val_path", type=str, default="data/demonstrations_data_00/val/manifest.json")
     parser.add_argument("--num_arms", type=int, default=12)
-    parser.add_argument("--max_bandits", type=int, default=64)
+    parser.add_argument("--max_bandits", type=int, default=3) # number of local bandits per context bandit, used for embedding range
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
-    parser.add_argument("--wandb_project", type=str, default="social-bandit-guider", help="W&B project name")
-    parser.add_argument("--wandb_entity", type=str, default=None, help="W&B entity (team) name")
+    parser.add_argument("--wandb_project", type=str, default="social-belief-modeling", help="W&B project name")
+    parser.add_argument("--wandb_entity", type=str, default="juliomartinez-individual", help="W&B user name or team name")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -103,7 +103,7 @@ def main():
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "num_arms": args.num_arms,
-                "max_bandits": args.max_bandits,
+                "max_bandits": args.max_bandits 
             },
         )
     else:
