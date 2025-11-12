@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader
 from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch
 from models.BetaModel import SBIPosteriorTransformer
 
+import wandb
+
 
 def beta_nll_of_true_theta(alpha_pred: torch.Tensor, beta_pred: torch.Tensor, theta_true: torch.Tensor) -> torch.Tensor:
     """
@@ -74,17 +76,38 @@ def train_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_path", type=str, default="data/train/manifest.json")
-    parser.add_argument("--val_path", type=str, default="data/val/manifest.json")
+    parser.add_argument("--train_path", type=str, default="data/demonstrations_data_00/train/manifest.json")
+    parser.add_argument("--val_path", type=str, default="data/demonstrations_data_00/val/manifest.json")
     parser.add_argument("--num_arms", type=int, default=12)
     parser.add_argument("--max_bandits", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb_project", type=str, default="social-bandit-guider", help="W&B project name")
+    parser.add_argument("--wandb_entity", type=str, default=None, help="W&B entity (team) name")
     args = parser.parse_args()
 
     device = torch.device(args.device)
+    
+    # Initialize wandb if requested
+    if args.use_wandb:
+        run = wandb.init(
+            entity=args.wandb_entity,
+            project=args.wandb_project,
+            config={
+                "learning_rate": args.lr,
+                "architecture": "SBIPosteriorTransformer",
+                "dataset": args.train_path,
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "num_arms": args.num_arms,
+                "max_bandits": args.max_bandits,
+            },
+        )
+    else:
+        run = None
 
     # Load training data
     raw_train = ShardedExamplesDataset(args.train_path, cache_shards=2)
@@ -108,6 +131,8 @@ def main():
     for epoch in range(1, args.epochs + 1):
         stats = train_one_epoch(model, train_loader, optimizer, device)
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
+        if run is not None:
+            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss']})
 
         # Simple eval (same losses on val set)
         model.eval()
@@ -124,7 +149,9 @@ def main():
                 val_tot["theta"]+= lt.item()
                 val_tot["demo"] += ld.item()
             n = len(val_loader)
-            print(f"           val | loss={val_tot['loss']/n:.4f}  theta={val_tot['theta']/n:.4f}  demo={val_tot['demo']/n:.4f}")
+            print(f"     val | loss={val_tot['loss']/n:.4f}  theta={val_tot['theta']/n:.4f}  demo={val_tot['demo']/n:.4f}")
+            if run is not None:
+                run.log({"val/loss_theta": val_tot['theta']/n, "val/loss_demo": val_tot['demo']/n, "val/loss": val_tot['loss']/n})
 
     torch.save(model.state_dict(), "sbi_transformer.pt")
     print("Saved model to sbi_transformer.pt")
