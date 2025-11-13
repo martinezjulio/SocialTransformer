@@ -183,6 +183,9 @@ def main():
                 "max_bandits": args.max_bandits 
             },
         )
+        # Append run ID to checkpoint directory for organization
+        args.checkpoint_dir = os.path.join(args.checkpoint_dir, run.id)
+        print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
     else:
         run = None
 
@@ -207,12 +210,16 @@ def main():
 
     # Track best validation loss for checkpoint saving
     best_val_loss = float('inf')
+    
+    # Track previous checkpoint paths for deletion
+    prev_best_checkpoint = None
+    prev_latest_checkpoint = None
 
     for epoch in range(1, args.epochs + 1):
         stats = train_one_epoch(model, train_loader, optimizer, device)
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
         if run is not None:
-            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss'], "epoch": epoch})
+            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss'], "epoch": epoch}) # logging to wandb
 
         # Simple eval (same losses on val set)
         model.eval()
@@ -244,36 +251,56 @@ def main():
             best_val_loss = val_stats['loss']
             print(f"     ✓ New best model! Val loss: {best_val_loss:.4f}")
             
+            # Delete previous best checkpoint if it exists
+            if prev_best_checkpoint is not None and os.path.exists(prev_best_checkpoint):
+                os.remove(prev_best_checkpoint)
+                print(f"     Deleted previous best checkpoint: {prev_best_checkpoint}")
+            
             # Save best model checkpoint
-            save_checkpoint(
+            checkpoint_name = f"epoch_{epoch:03d}_best.pt"
+            checkpoint_path = save_checkpoint(
                 model=model,
                 optimizer=optimizer,
                 epoch=epoch,
                 train_stats=stats,
                 val_stats=val_stats,
                 checkpoint_dir=args.checkpoint_dir,
-                checkpoint_name="best_model.pt",
+                checkpoint_name=checkpoint_name,
                 wandb_run=run,
                 artifact_name=args.artifact_name,
                 is_best=True,
             )
+            prev_best_checkpoint = checkpoint_path
         
         # Save periodic checkpoints if requested
         if args.save_every > 0 and epoch % args.save_every == 0:
-            save_checkpoint(
+            # Delete previous latest checkpoint if it exists
+            if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+                os.remove(prev_latest_checkpoint)
+                print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+            
+            checkpoint_name = f"epoch_{epoch:03d}_latest.pt"
+            checkpoint_path = save_checkpoint(
                 model=model,
                 optimizer=optimizer,
                 epoch=epoch,
                 train_stats=stats,
                 val_stats=val_stats,
                 checkpoint_dir=args.checkpoint_dir,
-                checkpoint_name=f"checkpoint_epoch_{epoch}.pt",
+                checkpoint_name=checkpoint_name,
                 wandb_run=run,
                 artifact_name=args.artifact_name,
                 is_best=False,
             )
+            prev_latest_checkpoint = checkpoint_path
     
-    # Save final model
+    # Save final model as latest checkpoint
+    # Delete previous latest checkpoint if it exists
+    if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+        os.remove(prev_latest_checkpoint)
+        print(f"Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+    
+    checkpoint_name = f"epoch_{args.epochs:03d}_latest.pt"
     final_checkpoint_path = save_checkpoint(
         model=model,
         optimizer=optimizer,
@@ -281,15 +308,11 @@ def main():
         train_stats=stats,
         val_stats=val_stats,
         checkpoint_dir=args.checkpoint_dir,
-        checkpoint_name="final_model.pt",
+        checkpoint_name=checkpoint_name,
         wandb_run=run,
         artifact_name=args.artifact_name,
         is_best=False,
     )
-    
-    # Also save just the state dict for backward compatibility
-    torch.save(model.state_dict(), "sbi_transformer.pt")
-    print("Saved model state dict to sbi_transformer.pt")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ WANDB_ENTITY="juliomartinez-individual"
 
 # Checkpoint configuration
 CHECKPOINT_DIR="checkpoints"
-SAVE_EVERY=0  # Save only best and final (set to N to save every N epochs)
+SAVE_EVERY=2  # Save only best and final (set to N to save every N epochs)
 ARTIFACT_NAME="sbi-transformer-checkpoint"
 
 # Print configuration
@@ -94,13 +94,14 @@ if [ $? -eq 0 ]; then
     echo "Training completed successfully!"
     echo "=================================="
     echo "Model state dict saved to: sbi_transformer.pt"
-    echo "Checkpoints saved to: $CHECKPOINT_DIR/"
+    echo "Checkpoints saved to: $CHECKPOINT_DIR/{run-id}/"
     echo "  - best_model.pt (best validation loss)"
     echo "  - final_model.pt (final epoch)"
     if [ "$SAVE_EVERY" -gt 0 ]; then
         echo "  - checkpoint_epoch_N.pt (periodic checkpoints)"
     fi
     echo ""
+    echo "Note: When using --use_wandb, checkpoints are organized by run ID"
     echo "All checkpoints logged to wandb artifacts!"
     echo "View at: https://wandb.ai/$WANDB_ENTITY/$WANDB_PROJECT/artifacts"
     echo ""
