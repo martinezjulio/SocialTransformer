@@ -1,11 +1,52 @@
 
 import argparse
+import glob
+import os
 from typing import Dict, List, Tuple
 
 import torch
 
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from dataloader import SPECIAL
+
+
+def find_checkpoint(checkpoint_dir: str, checkpoint_type: str) -> str:
+    """
+    Find the checkpoint file in the given directory based on type.
+    
+    Args:
+        checkpoint_dir: Directory to search for checkpoints
+        checkpoint_type: Either 'best' or 'latest'
+    
+    Returns:
+        Path to the checkpoint file
+    
+    Raises:
+        FileNotFoundError: If no matching checkpoint is found
+    """
+    pattern = f"epoch_*_{checkpoint_type}.pt"
+    search_path = os.path.join(checkpoint_dir, pattern)
+    matches = glob.glob(search_path)
+    
+    if not matches:
+        raise FileNotFoundError(
+            f"No {checkpoint_type} checkpoint found in {checkpoint_dir}. "
+            f"Looking for pattern: {pattern}"
+        )
+    
+    # If multiple matches, take the one with the highest epoch number
+    if len(matches) > 1:
+        # Extract epoch numbers and sort
+        def get_epoch(path):
+            filename = os.path.basename(path)
+            # epoch_XXX_best.pt or epoch_XXX_latest.pt
+            epoch_str = filename.split('_')[1]
+            return int(epoch_str)
+        
+        matches.sort(key=get_epoch, reverse=True)
+    
+    return matches[0]
+
 
 def build_tokens_from_events(
     events_context: List[Tuple[int,int,int,int]],
@@ -102,8 +143,10 @@ def posterior_sample_theta_and_counts(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, default="sbi_transformer.pt",
-                        help="Path to checkpoint file (or state dict)")
+    parser.add_argument("--checkpoint_dir", type=str, default="checkpoints",
+                        help="Directory containing checkpoints")
+    parser.add_argument("--checkpoint_type", type=str, default="best", choices=["best", "latest"],
+                        help="Type of checkpoint to load: 'best' or 'latest'")
     parser.add_argument("--use_wandb", action="store_true",
                         help="Load checkpoint from wandb artifact instead of local file")
     parser.add_argument("--wandb_entity", type=str,
@@ -126,7 +169,6 @@ def main():
             parser.error("--wandb_entity and --wandb_project are required when --use_wandb is set")
         
         import wandb
-        import os
         
         api = wandb.Api()
         artifact_path = f"{args.wandb_entity}/{args.wandb_project}/{args.artifact_name}:{args.artifact_alias}"
@@ -135,12 +177,10 @@ def main():
         artifact = api.artifact(artifact_path, type='model')
         artifact_dir = artifact.download()
         
-        # Get checkpoint file
-        checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
-        if not checkpoint_files:
-            raise FileNotFoundError(f"No .pt file found in artifact directory {artifact_dir}")
+        # Find checkpoint file based on type
+        checkpoint_path = find_checkpoint(artifact_dir, args.checkpoint_type)
+        print(f"Found checkpoint: {os.path.basename(checkpoint_path)}")
         
-        checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
         checkpoint = torch.load(checkpoint_path, map_location=args.device)
         
         # Load model state from checkpoint dict
@@ -151,15 +191,18 @@ def main():
             model.load_state_dict(checkpoint)
     else:
         # Load from local file
-        checkpoint = torch.load(args.checkpoint, map_location=args.device)
+        checkpoint_path = find_checkpoint(args.checkpoint_dir, args.checkpoint_type)
+        print(f"Found checkpoint: {checkpoint_path}")
+        
+        checkpoint = torch.load(checkpoint_path, map_location=args.device)
         
         # Handle both full checkpoint dicts and plain state dicts
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
-            print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
+            print(f"Loaded checkpoint from epoch {checkpoint['epoch']}, val loss: {checkpoint['val_stats']['loss']:.4f}")
         else:
             model.load_state_dict(checkpoint)
-        print(f"Loaded model from {args.checkpoint}")
+            print(f"Loaded model from {checkpoint_path}")
 
     # Example: empty context, a few current events (bandit separators + some demo actions)
     events_context = []  # use NOCTX
