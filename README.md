@@ -208,19 +208,28 @@ We **train on simulations** generated from the same generative story you care ab
 
 ## 11. Model Checkpoints with Weights & Biases Artifacts
 
-The training script now supports saving and versioning model checkpoints using **wandb artifacts**. This provides:
-- Automatic versioning and tracking of model checkpoints
-- Easy model sharing and collaboration
-- Metadata tracking (epoch, losses, hyperparameters)
-- Best model selection based on validation loss
+The training script automatically saves model checkpoints as **wandb artifacts**, providing version control, easy sharing, and automatic tracking of model metadata.
 
-### Training with Artifacts
+### Benefits
+
+- **Automatic versioning** of model checkpoints
+- **Best model tracking** based on validation loss
+- **Easy model sharing** and collaboration
+- **Metadata tracking**: epoch, losses, hyperparameters
+- **Reproducibility**: track exact model versions used in experiments
+
+### Quick Start
+
+**Training with artifacts (recommended):**
+```bash
+bash scripts/run_training.sh
+```
+
+This saves checkpoints to `checkpoints/` and logs them as wandb artifacts automatically.
+
+### Command-Line Options
 
 ```bash
-# Run with wandb artifacts (recommended)
-bash scripts/run_training.sh
-
-# Or run directly with custom options
 python src/train.py \
     --use_wandb \
     --wandb_project "social-belief-modeling" \
@@ -230,31 +239,130 @@ python src/train.py \
     --artifact_name "sbi-transformer-checkpoint"
 ```
 
+**New arguments:**
+- `--checkpoint_dir`: Directory for checkpoints (default: `checkpoints`)
+- `--save_every`: Save every N epochs, 0 = only best/final (default: `0`)
+- `--artifact_name`: Name for wandb artifact (default: `sbi-transformer-checkpoint`)
+
 ### Checkpoint Types
 
-1. **Best Model** (`best_model.pt`): Saved when validation loss improves (alias: `best`)
-2. **Final Model** (`final_model.pt`): Saved at end of training (alias: `latest`)
-3. **Periodic** (`checkpoint_epoch_N.pt`): Saved every N epochs if `--save_every > 0`
+1. **Best Model** (`best_model.pt`): Saved when validation loss improves
+   - wandb alias: `best`
+   - Automatically tracked throughout training
+
+2. **Final Model** (`final_model.pt`): Saved at end of training
+   - wandb alias: `latest`
+   - Contains model state from last epoch
+
+3. **Periodic Checkpoints** (`checkpoint_epoch_N.pt`): Saved every N epochs if `--save_every > 0`
+   - wandb alias: `epoch_N`
+   - Useful for analyzing training progression
+
+### Checkpoint Structure
+
+Each checkpoint contains:
+```python
+{
+    'epoch': int,                    # Training epoch number
+    'model_state_dict': dict,        # Model parameters
+    'optimizer_state_dict': dict,    # Optimizer state for resuming training
+    'train_stats': {                 # Training metrics
+        'loss': float,
+        'loss_theta': float,
+        'loss_demo': float
+    },
+    'val_stats': {                   # Validation metrics
+        'loss': float,
+        'loss_theta': float,
+        'loss_demo': float
+    }
+}
+```
 
 ### Loading Checkpoints
 
-**From local file:**
+**Method 1: From local file (Python)**
 ```python
+import torch
+from models.BetaModel import SBIPosteriorTransformer
+
+# Create model
+model = SBIPosteriorTransformer(
+    num_arms=12, num_agents=4, max_bandits=3,
+    d_model=256, nhead=8, num_layers=4, 
+    dim_feedforward=768, dropout=0.1
+)
+
+# Load checkpoint
 checkpoint = torch.load('checkpoints/best_model.pt')
 model.load_state_dict(checkpoint['model_state_dict'])
+
+print(f"Loaded model from epoch {checkpoint['epoch']}")
+print(f"Validation loss: {checkpoint['val_stats']['loss']:.4f}")
 ```
 
-**From wandb artifact:**
+**Method 2: From local file (utility script)**
+```bash
+python src/load_checkpoint.py \
+    --source file \
+    --checkpoint_path "checkpoints/best_model.pt"
+```
+
+**Method 3: From wandb artifact (command line)**
 ```bash
 # Load best model
 python src/load_checkpoint.py \
     --source wandb \
     --wandb_entity "your-username" \
     --wandb_project "social-belief-modeling" \
+    --artifact_name "sbi-transformer-checkpoint" \
     --alias "best"
+
+# Load model from specific epoch
+python src/load_checkpoint.py \
+    --source wandb \
+    --wandb_entity "your-username" \
+    --wandb_project "social-belief-modeling" \
+    --alias "epoch_5"
 ```
 
-**In inference:**
+**Method 4: From wandb artifact (Python API)**
+```python
+import wandb
+import torch
+from models.BetaModel import SBIPosteriorTransformer
+
+# Initialize wandb API
+api = wandb.Api()
+
+# Download artifact
+artifact_path = "your-username/social-belief-modeling/sbi-transformer-checkpoint:best"
+artifact = api.artifact(artifact_path, type='model')
+artifact_dir = artifact.download()
+
+# Load checkpoint
+import os
+checkpoint_file = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')][0]
+checkpoint_path = os.path.join(artifact_dir, checkpoint_file)
+checkpoint = torch.load(checkpoint_path)
+
+# Create and load model
+model = SBIPosteriorTransformer(
+    num_arms=12, num_agents=4, max_bandits=3,
+    d_model=256, nhead=8, num_layers=4, 
+    dim_feedforward=768, dropout=0.1
+)
+model.load_state_dict(checkpoint['model_state_dict'])
+```
+
+### Using Checkpoints in Inference
+
+**With local checkpoint:**
+```bash
+python src/inference.py --checkpoint checkpoints/best_model.pt --K 12
+```
+
+**With wandb artifact:**
 ```bash
 python src/inference.py \
     --use_wandb \
@@ -264,19 +372,133 @@ python src/inference.py \
     --K 12
 ```
 
-See `WANDB_ARTIFACTS_GUIDE.md` for detailed documentation and examples.
+### Viewing Artifacts in wandb UI
+
+1. Navigate to: `https://wandb.ai/your-username/social-belief-modeling`
+2. Click **"Artifacts"** in the left sidebar
+3. Select your artifact (e.g., `sbi-transformer-checkpoint`)
+4. View all versions with their metadata
+5. Use aliases to find:
+   - `best`: Best model by validation loss
+   - `latest`: Most recent model
+   - `epoch_N`: Model from epoch N
+
+### Artifact Aliases
+
+| Alias | Description | When Created |
+|-------|-------------|--------------|
+| `best` | Best model by validation loss | When val loss improves |
+| `latest` | Most recent checkpoint | Every checkpoint save |
+| `epoch_N` | Checkpoint from epoch N | Specific epoch |
+
+### Resuming Training
+
+Load checkpoint with optimizer state to continue training:
+
+```python
+import torch
+import torch.optim as optim
+from models.BetaModel import SBIPosteriorTransformer
+
+# Create model and optimizer
+model = SBIPosteriorTransformer(...)
+optimizer = optim.AdamW(model.parameters(), lr=1e-4)
+
+# Load checkpoint
+checkpoint = torch.load('checkpoints/best_model.pt')
+model.load_state_dict(checkpoint['model_state_dict'])
+optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+print(f"Resuming from epoch {checkpoint['epoch']}")
+# Continue training...
+```
+
+### Best Practices
+
+1. **Always enable wandb** for important training runs:
+   ```bash
+   python src/train.py --use_wandb ...
+   ```
+
+2. **Use meaningful artifact names** for different experiments:
+   ```bash
+   --artifact_name "sbi-transformer-large-lr1e3"
+   ```
+
+3. **Save periodic checkpoints** for long training runs:
+   ```bash
+   --save_every 10  # Save every 10 epochs
+   ```
+
+4. **Load the best model** for inference and evaluation:
+   ```python
+   artifact = api.artifact('entity/project/artifact-name:best')
+   ```
+
+5. **Check checkpoint metadata** before loading:
+   ```python
+   print(f"Epoch: {checkpoint['epoch']}")
+   print(f"Val loss: {checkpoint['val_stats']['loss']:.4f}")
+   ```
+
+### Troubleshooting
+
+**Issue: Checkpoints not appearing in wandb**
+
+Solution: Ensure `--use_wandb` flag is set and you're logged in:
+```bash
+wandb login
+```
+
+**Issue: Out of disk space**
+
+Solution: Reduce checkpoint frequency or delete old periodic checkpoints:
+```bash
+rm checkpoints/checkpoint_epoch_*.pt
+```
+
+**Issue: Can't download artifact**
+
+Solution: Verify artifact name and alias:
+```python
+api = wandb.Api()
+runs = api.runs("your-username/social-belief-modeling")
+for run in runs:
+    for artifact in run.logged_artifacts():
+        print(artifact.name, artifact.aliases)
+```
+
+### Backward Compatibility
+
+The training script still saves `sbi_transformer.pt` (state dict only) for backward compatibility. Both formats work:
+
+```python
+# Old way (still works)
+model.load_state_dict(torch.load('sbi_transformer.pt'))
+
+# New way (recommended - includes metadata)
+checkpoint = torch.load('checkpoints/best_model.pt')
+model.load_state_dict(checkpoint['model_state_dict'])
+```
+
+### Additional Resources
+
+- [wandb Artifacts Documentation](https://docs.wandb.ai/guides/artifacts)
+- [wandb Python API](https://docs.wandb.ai/ref/python)
+- [Model Versioning Best Practices](https://docs.wandb.ai/guides/models)
 
 ---
 
 ## Project files
 
-- `generate_simulations.py` — create synthetic episodes and build training examples.
-- `dataloader.py` — dataset + collate to structured token tensors with masks.
-- `models/BetaModel.py` — event embedder, causal transformer, per‑arm heads, TS helper.
-- `train.py` — losses, training loop, and wandb artifacts integration.
-- `inference.py` — how to use a trained model to sample start‑of‑tail counts and a \(\theta\) vector for Thompson Sampling.
-- `load_checkpoint.py` — utility for loading checkpoints from local files or wandb artifacts.
-- `WANDB_ARTIFACTS_GUIDE.md` — comprehensive guide for using wandb artifacts with this project.
+- `src/generate_simulations.py` — create synthetic episodes and build training examples
+- `src/dataloader.py` — dataset + collate to structured token tensors with masks
+- `src/models/BetaModel.py` — event embedder, causal transformer, per‑arm heads, TS helper
+- `src/train.py` — losses, training loop, and wandb artifacts integration
+- `src/inference.py` — use trained model to sample start‑of‑tail counts and \(\theta\) for Thompson Sampling
+- `src/load_checkpoint.py` — utility for loading checkpoints from local files or wandb artifacts
+- `scripts/run_training.sh` — convenient training script with wandb artifacts
+- `scripts/generate_simulation.sh` — data generation script
 
 ---
 
