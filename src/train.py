@@ -164,6 +164,15 @@ def main():
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--save_every", type=int, default=0, help="Save checkpoint every N epochs (0 = only save best and final)")
     parser.add_argument("--artifact_name", type=str, default="sbi-transformer-checkpoint", help="Name for wandb artifact")
+    
+    # Hyperparameters for sweep
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adam", "adamw", "sgd"], help="Optimizer type")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
+    parser.add_argument("--nhead", type=int, default=8, help="Number of attention heads")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of transformer layers")
+    parser.add_argument("--dim_feedforward", type=int, default=768, help="Dimension of feedforward network")
+    parser.add_argument("--d_model", type=int, default=256, help="Model dimension")
+    
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -175,12 +184,18 @@ def main():
             project=args.wandb_project,
             config={
                 "learning_rate": args.lr,
+                "optimizer": args.optimizer,
                 "architecture": "SBIPosteriorTransformer",
                 "dataset": args.train_path,
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "num_arms": args.num_arms,
-                "max_bandits": args.max_bandits 
+                "max_bandits": args.max_bandits,
+                "dropout": args.dropout,
+                "nhead": args.nhead,
+                "num_layers": args.num_layers,
+                "dim_feedforward": args.dim_feedforward,
+                "d_model": args.d_model,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -203,10 +218,22 @@ def main():
         num_arms=args.num_arms,
         num_agents=4,       # 1 learner (ID 0) + up to 3 demonstrators (IDs 1-3)
         max_bandits=args.max_bandits,
-        d_model=256, nhead=8, num_layers=4, dim_feedforward=768, dropout=0.1,
+        d_model=args.d_model,
+        nhead=args.nhead,
+        num_layers=args.num_layers,
+        dim_feedforward=args.dim_feedforward,
+        dropout=args.dropout,
     ).to(device)
 
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    # Configure optimizer based on type
+    if args.optimizer == "adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    elif args.optimizer == "adamw":
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    elif args.optimizer == "sgd":
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-2)
+    else:
+        raise ValueError(f"Unsupported optimizer: {args.optimizer}")
 
     # Track best validation loss for checkpoint saving
     best_val_loss = float('inf')
@@ -218,8 +245,6 @@ def main():
     for epoch in range(1, args.epochs + 1):
         stats = train_one_epoch(model, train_loader, optimizer, device)
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
-        if run is not None:
-            run.log({"train/loss_theta": stats['loss_theta'], "train/loss_demo": stats['loss_demo'], "train/loss": stats['loss'], "epoch": epoch}) # logging to wandb
 
         # Simple eval (same losses on val set)
         model.eval()
@@ -242,8 +267,18 @@ def main():
                 "loss_demo": val_tot['demo']/n,
             }
             print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}")
+            
+            # Log both train and val metrics together
             if run is not None:
-                run.log({"val/loss_theta": val_stats['loss_theta'], "val/loss_demo": val_stats['loss_demo'], "val/loss": val_stats['loss'], "epoch": epoch})
+                run.log({
+                    "train/loss": stats['loss'],
+                    "train/loss_theta": stats['loss_theta'],
+                    "train/loss_demo": stats['loss_demo'],
+                    "val/loss": val_stats['loss'],
+                    "val/loss_theta": val_stats['loss_theta'],
+                    "val/loss_demo": val_stats['loss_demo'],
+                    "epoch": epoch
+                })
         
         # Check if this is the best model so far
         is_best = val_stats['loss'] < best_val_loss

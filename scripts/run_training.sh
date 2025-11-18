@@ -20,6 +20,14 @@ LEARNING_RATE=3e-4
 EPOCHS=10
 DEVICE="cpu"
 
+# Transformer hyperparameters
+OPTIMIZER="adamw"
+DROPOUT=0.1
+NHEAD=8
+NUM_LAYERS=4
+DIM_FEEDFORWARD=768
+D_MODEL=256
+
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
 WANDB_ENTITY="juliomartinez-individual"
@@ -44,6 +52,14 @@ echo "  Batch size: $BATCH_SIZE"
 echo "  Learning rate: $LEARNING_RATE"
 echo "  Epochs: $EPOCHS"
 echo "  Device: $DEVICE"
+echo ""
+echo "Transformer Architecture:"
+echo "  Optimizer: $OPTIMIZER"
+echo "  Dropout: $DROPOUT"
+echo "  Attention heads: $NHEAD"
+echo "  Num layers: $NUM_LAYERS"
+echo "  FFN dimension: $DIM_FEEDFORWARD"
+echo "  Model dimension: $D_MODEL"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -80,6 +96,12 @@ python src/train.py \
     --lr $LEARNING_RATE \
     --epochs $EPOCHS \
     --device $DEVICE \
+    --optimizer $OPTIMIZER \
+    --dropout $DROPOUT \
+    --nhead $NHEAD \
+    --num_layers $NUM_LAYERS \
+    --dim_feedforward $DIM_FEEDFORWARD \
+    --d_model $D_MODEL \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \

@@ -165,7 +165,90 @@ python train.py --train_path data/train.pt --val_path data/val.pt --num_arms 4 -
 
 ---
 
-## 6. Inference / acting
+## 6. Hyperparameter Optimization with WandB Sweeps
+
+Use Bayesian optimization to find the best hyperparameters for your model. The sweep configuration is located at `src/Sweeps/BetaModelSweep.yaml`.
+
+### Optimized Hyperparameters
+
+- **optimizer**: adam, adamw, sgd
+- **learning_rate**: 1e-5, 1e-4, 3e-4, 1e-3, 3e-3
+- **batch_size**: 16, 32, 64
+- **dropout**: 0.0, 0.1, 0.2, 0.3
+- **nhead**: 4, 8, 16 (attention heads)
+- **num_layers**: 2, 4, 6, 8 (transformer layers)
+- **dim_feedforward**: 256, 512, 768, 1024
+- **d_model**: 128, 256, 512 (model dimension)
+
+The sweep optimizes for **val/loss** (validation loss) using Bayesian optimization.
+
+### Running a Sweep
+
+**Step 1: Initialize the sweep**
+```bash
+wandb sweep src/Sweeps/BetaModelSweep.yaml
+```
+
+This outputs a sweep ID (e.g., `juliomartinez-individual/social-belief-modeling/abc123xyz`)
+
+**Step 2: Start sweep agent(s)**
+```bash
+# Single agent
+wandb agent juliomartinez-individual/social-belief-modeling/abc123xyz
+
+# Run multiple agents in parallel (separate terminals) to speed up the sweep
+wandb agent juliomartinez-individual/social-belief-modeling/abc123xyz
+```
+
+Each agent will:
+1. Request hyperparameter configurations from the Bayesian optimizer
+2. Launch `src/train.py` with those hyperparameters
+3. Report validation loss back to the sweep controller
+4. Continue with the next configuration
+
+**Step 3: Monitor results**
+
+View sweep results in real-time at: `https://wandb.ai/your-entity/your-project/sweeps`
+
+The web UI shows:
+- **Best run** with lowest validation loss (highlighted at the top)
+- **Parallel coordinates plot** showing hyperparameter relationships
+- **Hyperparameter importance** analysis
+- **Real-time charts** for all runs
+
+**Step 4: Use the best model**
+
+After the sweep completes:
+- View the best hyperparameters in the wandb UI (top row in table view)
+- Download the best model checkpoint from wandb artifacts
+- Re-run training with the optimal hyperparameters
+
+### Tips
+
+- **Parallel execution**: Run multiple agents simultaneously to speed up the sweep
+- **Early stopping**: Stop agents at any time with Ctrl+C
+- **Resume**: Agents can be restarted and will continue the same sweep
+- **Limit runs**: Use `--count N` to limit each agent to N runs:
+  ```bash
+  wandb agent --count 5 <sweep-id>
+  ```
+
+### Single Run vs Sweep
+
+**For a single training run** (testing or using known hyperparameters):
+```bash
+bash scripts/run_training.sh
+```
+
+**For hyperparameter optimization** (finding best configuration):
+```bash
+wandb sweep src/Sweeps/BetaModelSweep.yaml
+wandb agent <sweep-id>
+```
+
+---
+
+## 7. Inference / acting
 
 ```
 python inference.py --checkpoint sbi_transformer.pt --K 4
@@ -175,7 +258,7 @@ python inference.py --checkpoint sbi_transformer.pt --K 4
 
 ---
 
-## 7. Handling multiple demonstrators and many contexts
+## 8. Handling multiple demonstrators and many contexts
 
 - We map `agent_id=99` → **learner** and `0/1` → **demonstrators**. Extend the embedding range if you have more.
 - **Bandit boundaries** are made explicit with `BANDIT_SEP` tokens; the actual bandit id carries no semantic meaning other than separating segments.
@@ -183,13 +266,13 @@ python inference.py --checkpoint sbi_transformer.pt --K 4
 
 ---
 
-## 8. Why this is “SBI”
+## 9. Why this is "SBI"
 
 We **train on simulations** generated from the same generative story you care about. The transformer learns an **amortized posterior** over the demonstrator’s latent start‑of‑tail pseudo‑counts and an auxiliary Beta over \(\theta\). You can add a **likelihood‑based** loss on demo actions to further align with the true policy (TS).
 
 ---
 
-## 9. Next steps / Extensions
+## 10. Next steps / Extensions
 
 - **Behavioral loss**: add differentiable Thompson Sampling action likelihood (MC with common random numbers) at demo steps.
 - **Hierarchical transfer**: add a context encoder for prior bandits that outputs a *hyperprior* over experience magnitude and allocation (conditioning on same demonstrator identity).
@@ -198,7 +281,7 @@ We **train on simulations** generated from the same generative story you care ab
 
 ---
 
-## 10. Caveats
+## 11. Caveats
 
 - This is a **starter**: defaults and losses are simple. You should tune loss weights, model size, and simulation priors to your use case.  
 - The theta head is supervised by simulated ground truth; if you want a fully **likelihood‑only** approach, drop that supervision and train only with action and reward likelihoods.  
@@ -206,7 +289,7 @@ We **train on simulations** generated from the same generative story you care ab
 
 ---
 
-## 11. Model Checkpoints with Weights & Biases Artifacts
+## 12. Model Checkpoints with Weights & Biases Artifacts
 
 The training script automatically saves model checkpoints as **wandb artifacts**, providing version control, easy sharing, and automatic tracking of model metadata.
 
