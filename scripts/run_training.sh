@@ -7,14 +7,12 @@ source ~/anaconda3/bin/activate
 conda activate banditguider
 
 # Set parameters
-DATASET_NAME="demonstrations_data_00"
+DATASET_NAME="demonstrations_data_01"
 BASE_DATA_DIR="data"
 TRAIN_PATH="${BASE_DATA_DIR}/${DATASET_NAME}/train/manifest.json"
 VAL_PATH="${BASE_DATA_DIR}/${DATASET_NAME}/val/manifest.json"
 
 # Model hyperparameters
-NUM_ARMS=12
-MAX_BANDITS=3
 BATCH_SIZE=32
 LEARNING_RATE=3e-4
 EPOCHS=10
@@ -27,6 +25,7 @@ NHEAD=8
 NUM_LAYERS=4
 DIM_FEEDFORWARD=768
 D_MODEL=256
+DEMO_LOSS_WEIGHT=0.5
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
@@ -46,12 +45,11 @@ echo "Train path: $TRAIN_PATH"
 echo "Val path: $VAL_PATH"
 echo ""
 echo "Model Hyperparameters:"
-echo "  Number of arms: $NUM_ARMS"
-echo "  Max bandits: $MAX_BANDITS"
 echo "  Batch size: $BATCH_SIZE"
 echo "  Learning rate: $LEARNING_RATE"
 echo "  Epochs: $EPOCHS"
 echo "  Device: $DEVICE"
+echo "  (num_arms, max_bandits auto-detected from manifest)"
 echo ""
 echo "Transformer Architecture:"
 echo "  Optimizer: $OPTIMIZER"
@@ -60,6 +58,7 @@ echo "  Attention heads: $NHEAD"
 echo "  Num layers: $NUM_LAYERS"
 echo "  FFN dimension: $DIM_FEEDFORWARD"
 echo "  Model dimension: $D_MODEL"
+echo "  Demo loss weight: $DEMO_LOSS_WEIGHT"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -90,8 +89,6 @@ echo "Starting training..."
 python src/train.py \
     --train_path "$TRAIN_PATH" \
     --val_path "$VAL_PATH" \
-    --num_arms $NUM_ARMS \
-    --max_bandits $MAX_BANDITS \
     --batch_size $BATCH_SIZE \
     --lr $LEARNING_RATE \
     --epochs $EPOCHS \
@@ -102,6 +99,7 @@ python src/train.py \
     --num_layers $NUM_LAYERS \
     --dim_feedforward $DIM_FEEDFORWARD \
     --d_model $D_MODEL \
+    --demo_loss_weight $DEMO_LOSS_WEIGHT \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \

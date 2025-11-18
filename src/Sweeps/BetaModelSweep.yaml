@@ -7,13 +7,9 @@ metric:
 parameters:
   # Fixed parameters
   train_path:
-    value: "data/demonstrations_data_00/train/manifest.json"
+    value: "data/demonstrations_data_01/train/manifest.json"
   val_path:
-    value: "data/demonstrations_data_00/val/manifest.json"
-  num_arms:
-    value: 12
-  max_bandits:
-    value: 3
+    value: "data/demonstrations_data_01/val/manifest.json"
   epochs:
     value: 10
   device:
@@ -40,6 +36,8 @@ parameters:
     values: [128, 256, 512]
   nhead:
     values: [4, 8, 16]
+  demo_loss_weight:
+    values: [0.5, 1.0]
 
 # Custom command to properly pass the --use_wandb flag
 command:

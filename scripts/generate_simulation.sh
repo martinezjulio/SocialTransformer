@@ -37,17 +37,17 @@ echo ""
 # Set parameters
 K=12
 N_MAX=72
-NUM_BANDITS=3
-MAX_NUM_DEMOS=1
-MAX_CONTEXT_BANDITS=2
+NUM_DEMONSTRATORS=2
+NUM_ROUNDS=3
+CHANGE_BANDITS_WITH_ROUNDS=true
+ORDER=1
 NUM_TRAIN_RUNS=6000
 NUM_VALID_RUNS=400
 NUM_TEST_RUNS=400
 T_DEMO=6
 T_LEARNER=6
 SHARD_SIZE=12000
-MAX_DEMOS_PER_BANDIT=1
-MAX_EPISODES_PER_BANDIT=1
+MAX_CONTEXT=144
 
 # Print configuration
 echo "=================================="
@@ -55,11 +55,10 @@ echo "Data Generation Configuration"
 echo "=================================="
 echo "Output directory: $OUT_DIR"
 echo "Number of arms (K): $K"
-echo "Number of bandits: $NUM_BANDITS"
-echo "Max demonstrators: $MAX_NUM_DEMOS"
-echo "Max demos per bandit: $MAX_DEMOS_PER_BANDIT"
-echo "Max episodes per bandit: $MAX_EPISODES_PER_BANDIT"
-echo "Max context bandits: $MAX_CONTEXT_BANDITS"
+echo "Number of demonstrators: $NUM_DEMONSTRATORS"
+echo "Number of rounds: $NUM_ROUNDS"
+echo "Change bandits with rounds: $CHANGE_BANDITS_WITH_ROUNDS"
+echo "Order: $ORDER (0=demo-first, 1=learner-first, 2=both)"
 echo "Training runs: $NUM_TRAIN_RUNS"
 echo "Validation runs: $NUM_VALID_RUNS"
 echo "Test runs: $NUM_TEST_RUNS"
@@ -67,12 +66,15 @@ echo "T_demo: $T_DEMO"
 echo "T_learner: $T_LEARNER"
 echo "N_max: $N_MAX"
 echo "Shard size: $SHARD_SIZE"
+echo "Max context length: $MAX_CONTEXT"
 echo "=================================="
 echo ""
 
-# Remove old data if exists (optional - comment out if you want to keep)
-# echo "Removing old data directory..."
-# rm -rf "$OUT_DIR"
+# Build command with flag handling
+CHANGE_BANDITS_FLAG=""
+if [ "$CHANGE_BANDITS_WITH_ROUNDS" = "true" ]; then
+    CHANGE_BANDITS_FLAG="--change_bandits_with_rounds"
+fi
 
 # Run generation script
 echo "Starting data generation..."
@@ -80,17 +82,16 @@ python src/generate_simulations.py \
     --out "$OUT_DIR" \
     --K $K \
     --N_max $N_MAX \
-    --num_bandits $NUM_BANDITS \
-    --max_num_demos $MAX_NUM_DEMOS \
-    --max_context_bandits $MAX_CONTEXT_BANDITS \
+    --num_demonstrators $NUM_DEMONSTRATORS \
+    --num_rounds $NUM_ROUNDS \
+    $CHANGE_BANDITS_FLAG \
+    --order $ORDER \
     --num_train_runs $NUM_TRAIN_RUNS \
     --num_valid_runs $NUM_VALID_RUNS \
     --num_test_runs $NUM_TEST_RUNS \
     --T_demo $T_DEMO \
     --T_learner $T_LEARNER \
-    --shard_size $SHARD_SIZE \
-    --max_demos_per_bandit $MAX_DEMOS_PER_BANDIT \
-    --max_episodes_per_bandit $MAX_EPISODES_PER_BANDIT
+    --shard_size $SHARD_SIZE
 
 # Check if generation was successful
 if [ $? -eq 0 ]; then
@@ -115,17 +116,17 @@ if [ $? -eq 0 ]; then
   "parameters": {
     "K": $K,
     "N_max": $N_MAX,
-    "num_bandits": $NUM_BANDITS,
-    "max_num_demos": $MAX_NUM_DEMOS,
-    "max_context_bandits": $MAX_CONTEXT_BANDITS,
+    "num_demonstrators": $NUM_DEMONSTRATORS,
+    "num_rounds": $NUM_ROUNDS,
+    "change_bandits_with_rounds": $CHANGE_BANDITS_WITH_ROUNDS,
+    "order": $ORDER,
     "num_train_runs": $NUM_TRAIN_RUNS,
     "num_valid_runs": $NUM_VALID_RUNS,
     "num_test_runs": $NUM_TEST_RUNS,
     "T_demo": $T_DEMO,
     "T_learner": $T_LEARNER,
     "shard_size": $SHARD_SIZE,
-    "max_demos_per_bandit": $MAX_DEMOS_PER_BANDIT,
-    "max_episodes_per_bandit": $MAX_EPISODES_PER_BANDIT
+    "max_context": $MAX_CONTEXT
   },
   "splits": {
     "train": "$OUT_DIR/train/",

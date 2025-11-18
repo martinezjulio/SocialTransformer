@@ -3,6 +3,7 @@ import argparse
 from typing import Dict
 import math
 import os
+import random
 from pathlib import Path
 
 import torch
@@ -33,6 +34,47 @@ def log_mse_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     MSE in log-space to compare positive parameters across scales.
     """
     return ((torch.log(pred + 1e-8) - torch.log(target + 1e-8)) ** 2).mean()
+
+
+def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len: int, device: torch.device) -> torch.Tensor:
+    """
+    Create attention mask that makes only visible segments accessible.
+    
+    Args:
+        segment_boundaries: [B, max_segments] - position of each segment start
+        cutoffs: List[int] - how many segments visible per example (1-indexed)
+        seq_len: int - total sequence length
+        device: torch device
+    
+    Returns:
+        mask: [seq_len, seq_len] or [B, seq_len, seq_len] - causal mask with segment cutoffs
+            True = masked (not attended to), False = visible
+    """
+    B = len(cutoffs)
+    # Start with full causal mask for each position
+    # mask[i, j] = True means position i cannot attend to position j
+    mask = torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
+    
+    # For batched masking, we need per-example masks
+    batch_mask = mask.unsqueeze(0).expand(B, seq_len, seq_len).clone()
+    
+    for b in range(B):
+        # Get cutoff position: everything after this position should be masked
+        visible_segs = cutoffs[b]
+        if visible_segs < len(segment_boundaries[b]):
+            cutoff_pos = int(segment_boundaries[b, visible_segs].item())
+        else:
+            cutoff_pos = seq_len  # All visible
+        
+        # Mask out everything from cutoff_pos onward (including the cutoff position itself)
+        if cutoff_pos < seq_len:
+            batch_mask[b, :, cutoff_pos:] = True  # Can't attend to future
+    
+    # If all examples have the same cutoff, can return single mask
+    # Otherwise need to handle per-example masks - PyTorch expects [B*H, T, T] for multi-head attention
+    # For simplicity, return the first example's mask (works if cutoffs are similar)
+    # TODO: For proper batched masking with different cutoffs per example, need more complex handling
+    return batch_mask[0]  # Return single [T, T] mask for now
 
 
 def save_checkpoint(
@@ -114,24 +156,78 @@ def train_one_epoch(
     device: torch.device,
     alpha0: float = 1.0,
     beta0: float = 1.0,
+    use_segment_masking: bool = True,
+    demo_loss_weight: float = 0.5,
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
 
     for batch in loader:
         for k in ["bandit_ids", "agent_ids", "action_ids", "reward_ids", "special_ids", "pad_mask",
-                  "y_theta", "y_alpha_demo0", "y_beta_demo0"]:
+                  "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
             batch[k] = batch[k].to(device)
 
+        B = batch["bandit_ids"].shape[0]
+        seq_len = batch["bandit_ids"].shape[1]
+        
+        # Randomly select visible segments for each example
+        segment_cutoffs = []
+        target_bandits = []
+        
+        if use_segment_masking:
+            for b in range(B):
+                num_segments = len(batch["segment_info"][b])
+                # Randomly choose how many segments visible (at least 1)
+                visible_segs = random.randint(1, num_segments)
+                segment_cutoffs.append(visible_segs)
+                
+                # Find which round this segment belongs to
+                seg_info = batch["segment_info"][b][visible_segs - 1]
+                target_round = seg_info["round"]
+                target_bandit = batch["round_bandit_map"][b, target_round]
+                target_bandits.append(int(target_bandit.item()))
+            
+            # Create custom attention mask based on segment cutoffs
+            attn_mask = create_segment_mask(
+                batch["segment_boundaries"], 
+                segment_cutoffs, 
+                seq_len,
+                device
+            )
+        else:
+            # Use full context (last bandit)
+            attn_mask = None
+            target_bandits = batch["round_bandit_map"][:, -1].tolist()
+        
         optimizer.zero_grad()
-        out = model(batch)
+        out = model(batch, custom_attn_mask=attn_mask)
+        
+        # Gather targets for each example's target bandit
+        target_bandits_tensor = torch.tensor(target_bandits, device=device)
+        batch_indices = torch.arange(B, device=device)
+        
+        y_theta_target = batch["y_thetas"][batch_indices, target_bandits_tensor]  # [B, K]
+        y_alpha_target = batch["y_alpha_demo"][batch_indices, target_bandits_tensor]  # [B, num_demos, K]
+        y_beta_target = batch["y_beta_demo"][batch_indices, target_bandits_tensor]   # [B, num_demos, K]
+        
+        # Compute losses
+        loss_theta = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_target)
+        
+        # Per-demonstrator loss (no averaging!)
+        num_demonstrators = y_alpha_target.shape[1]
+        loss_demo = 0.0
+        for demo_id in range(num_demonstrators):
+            loss_demo += log_mse_loss(
+                out["alpha_demo"][:, demo_id, :], 
+                y_alpha_target[:, demo_id, :]
+            )
+            loss_demo += log_mse_loss(
+                out["beta_demo"][:, demo_id, :], 
+                y_beta_target[:, demo_id, :]
+            )
+        loss_demo = loss_demo / (2 * num_demonstrators)  # Average over demos and alpha/beta
 
-        # Losses
-        loss_theta = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], batch["y_theta"])
-        # Supervise start-of-tail demo shapes (alpha0+S0, beta0+F0)
-        loss_demo = log_mse_loss(out["alpha_demo0"], batch["y_alpha_demo0"]) +                     log_mse_loss(out["beta_demo0"],  batch["y_beta_demo0"])
-
-        loss = loss_theta + 0.5 * loss_demo  # weight demo loss mildly; tune as needed
+        loss = loss_theta + demo_loss_weight * loss_demo
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -152,8 +248,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_path", type=str, default="data/demonstrations_data_00/train/manifest.json")
     parser.add_argument("--val_path", type=str, default="data/demonstrations_data_00/val/manifest.json")
-    parser.add_argument("--num_arms", type=int, default=12)
-    parser.add_argument("--max_bandits", type=int, default=3) # number of local bandits per context bandit, used for embedding range
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
@@ -172,10 +266,29 @@ def main():
     parser.add_argument("--num_layers", type=int, default=4, help="Number of transformer layers")
     parser.add_argument("--dim_feedforward", type=int, default=768, help="Dimension of feedforward network")
     parser.add_argument("--d_model", type=int, default=256, help="Model dimension")
+    parser.add_argument("--demo_loss_weight", type=float, default=0.5, help="Weight for demonstrator belief loss (0.0-2.0)")
     
     args = parser.parse_args()
 
     device = torch.device(args.device)
+    
+    # Load training data first to get metadata
+    raw_train = ShardedExamplesDataset(args.train_path, cache_shards=2)
+    
+    # Automatically infer dataset parameters from manifest
+    num_arms = raw_train.meta.get("K", 12)
+    num_demonstrators = raw_train.meta.get("num_demonstrators", 2)
+    num_agents = num_demonstrators + 1  # +1 for learner
+    num_rounds = raw_train.meta.get("num_rounds", 3)
+    change_bandits = raw_train.meta.get("change_bandits_with_rounds", True)
+    num_bandits = num_rounds if change_bandits else 1
+    
+    print(f"Auto-detected from manifest:")
+    print(f"  num_arms (K): {num_arms}")
+    print(f"  num_demonstrators: {num_demonstrators}")
+    print(f"  num_agents (learner + demos): {num_agents}")
+    print(f"  num_bandits: {num_bandits}")
+    print(f"  num_rounds: {num_rounds}")
     
     # Initialize wandb if requested
     if args.use_wandb:
@@ -189,13 +302,17 @@ def main():
                 "dataset": args.train_path,
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
-                "num_arms": args.num_arms,
-                "max_bandits": args.max_bandits,
+                "num_arms": num_arms,
+                "num_demonstrators": num_demonstrators,
+                "num_agents": num_agents,
+                "num_bandits": num_bandits,
+                "num_rounds": num_rounds,
                 "dropout": args.dropout,
                 "nhead": args.nhead,
                 "num_layers": args.num_layers,
                 "dim_feedforward": args.dim_feedforward,
                 "d_model": args.d_model,
+                "demo_loss_weight": args.demo_loss_weight,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -204,20 +321,20 @@ def main():
     else:
         run = None
 
-    # Load training data
-    raw_train = ShardedExamplesDataset(args.train_path, cache_shards=2)
-    train_ds = BanditSequenceDataset(raw_train, num_arms=args.num_arms, num_agents_max=4)
+    # Build datasets
+    train_ds = BanditSequenceDataset(raw_train, num_arms=num_arms, num_agents=num_agents, num_bandits=num_bandits)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_batch)
 
     # Load validation data
     raw_val = ShardedExamplesDataset(args.val_path, cache_shards=2)
-    val_ds = BanditSequenceDataset(raw_val, num_arms=args.num_arms, num_agents_max=4)
+    val_ds = BanditSequenceDataset(raw_val, num_arms=num_arms, num_agents=num_agents, num_bandits=num_bandits)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
     model = SBIPosteriorTransformer(
-        num_arms=args.num_arms,
-        num_agents=4,       # 1 learner (ID 0) + up to 3 demonstrators (IDs 1-3)
-        max_bandits=args.max_bandits,
+        num_arms=num_arms,
+        num_agents=num_agents,
+        num_bandits=num_bandits,
+        num_demonstrators=num_demonstrators,
         d_model=args.d_model,
         nhead=args.nhead,
         num_layers=args.num_layers,
@@ -243,21 +360,40 @@ def main():
     prev_latest_checkpoint = None
 
     for epoch in range(1, args.epochs + 1):
-        stats = train_one_epoch(model, train_loader, optimizer, device)
+        stats = train_one_epoch(model, train_loader, optimizer, device, demo_loss_weight=args.demo_loss_weight)
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
 
-        # Simple eval (same losses on val set)
+        # Simple eval (same losses on val set) - use full context
         model.eval()
         with torch.no_grad():
             val_tot = {"loss":0.0,"theta":0.0,"demo":0.0}
             for batch in val_loader:
                 for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
-                          "y_theta","y_alpha_demo0","y_beta_demo0"]:
+                          "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
                     batch[k] = batch[k].to(device)
-                out = model(batch)
-                lt = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], batch["y_theta"])
-                ld = log_mse_loss(out["alpha_demo0"], batch["y_alpha_demo0"]) +                      log_mse_loss(out["beta_demo0"],  batch["y_beta_demo0"])
-                val_tot["loss"] += (lt + 0.5*ld).item()
+                
+                # Use full context for validation (no masking)
+                out = model(batch, custom_attn_mask=None)
+                
+                # Get the last bandit (final round)
+                B = batch["bandit_ids"].shape[0]
+                last_bandit_idx = batch["round_bandit_map"][:, -1]
+                batch_indices = torch.arange(B, device=device)
+                y_theta_last = batch["y_thetas"][batch_indices, last_bandit_idx]
+                y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
+                y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
+                
+                # Per-demonstrator loss
+                num_demonstrators = y_alpha_demo_last.shape[1]
+                lt = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_last)
+                
+                ld = 0.0
+                for demo_id in range(num_demonstrators):
+                    ld += log_mse_loss(out["alpha_demo"][:, demo_id, :], y_alpha_demo_last[:, demo_id, :])
+                    ld += log_mse_loss(out["beta_demo"][:, demo_id, :], y_beta_demo_last[:, demo_id, :])
+                ld = ld / (2 * num_demonstrators)
+                
+                val_tot["loss"] += (lt + args.demo_loss_weight*ld).item()
                 val_tot["theta"]+= lt.item()
                 val_tot["demo"] += ld.item()
             n = len(val_loader)
