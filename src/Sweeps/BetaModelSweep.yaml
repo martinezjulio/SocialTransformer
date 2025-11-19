@@ -6,10 +6,8 @@ metric:
 
 parameters:
   # Fixed parameters
-  train_path:
-    value: "data/demonstrations_data_01/train/manifest.json"
-  val_path:
-    value: "data/demonstrations_data_01/val/manifest.json"
+  dataset_path:
+    value: "data/demonstrations_data_01"
   epochs:
     value: 10
   device:
@@ -38,6 +36,8 @@ parameters:
     values: [4, 8, 16]
   demo_loss_weight:
     values: [0.5, 1.0]
+  demo_belief_loss:
+    values: ["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
 
 # Custom command to properly pass the --use_wandb flag
 command:

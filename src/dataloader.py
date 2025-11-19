@@ -91,11 +91,15 @@ class BanditSequenceDataset(Dataset):
         num_arms: int,
         num_bandits: int = 64,
         num_agents: int = 4,
+        normalize_beliefs: bool = False,
+        normalizer=None,
     ):
         self.examples = examples
         self.num_arms = num_arms
         self.num_bandits = num_bandits
         self.num_agents = num_agents
+        self.normalize_beliefs = normalize_beliefs
+        self.normalizer = normalizer
 
     def __len__(self):
         return len(self.examples)
@@ -167,8 +171,16 @@ class BanditSequenceDataset(Dataset):
             y_thetas[b_idx] = torch.tensor(bandit_info["theta"], dtype=torch.float32)
             for demo_id in range(num_demonstrators):
                 demo_beliefs = bandit_info["demonstrators"][demo_id]
-                y_alpha_demo[b_idx, demo_id] = torch.tensor(demo_beliefs["alpha0"], dtype=torch.float32)
-                y_beta_demo[b_idx, demo_id] = torch.tensor(demo_beliefs["beta0"], dtype=torch.float32)
+                alpha_raw = torch.tensor(demo_beliefs["alpha0"], dtype=torch.float32)
+                beta_raw = torch.tensor(demo_beliefs["beta0"], dtype=torch.float32)
+                
+                # Apply normalization if requested
+                if self.normalize_beliefs and self.normalizer is not None:
+                    y_alpha_demo[b_idx, demo_id] = self.normalizer.normalize_alpha(alpha_raw)
+                    y_beta_demo[b_idx, demo_id] = self.normalizer.normalize_beta(beta_raw)
+                else:
+                    y_alpha_demo[b_idx, demo_id] = alpha_raw
+                    y_beta_demo[b_idx, demo_id] = beta_raw
 
         return {
             "bandit_ids": torch.tensor(bandit_ids, dtype=torch.long),
@@ -273,6 +285,8 @@ def make_dataloader(
     num_agents: int = 4,
     num_bandits: int = 64,
     shuffle: bool = True,
+    normalize_beliefs: bool = False,
+    normalizer=None,
 ) -> DataLoader:
     """
     If 'examples_or_path' is a path to a .pt list, loads it; otherwise assumes it is already a list-like of examples.
@@ -283,7 +297,8 @@ def make_dataloader(
         examples = examples_or_path
 
     ds = BanditSequenceDataset(
-        examples, num_arms=num_arms, num_bandits=num_bandits, num_agents=num_agents
+        examples, num_arms=num_arms, num_bandits=num_bandits, num_agents=num_agents,
+        normalize_beliefs=normalize_beliefs, normalizer=normalizer
     )
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_batch)
 
