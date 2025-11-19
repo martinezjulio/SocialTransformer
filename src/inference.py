@@ -25,15 +25,6 @@ from load_checkpoint import load_checkpoint_from_file
 from transforms import BeliefNormalizer
 
 
-# Constants
-LEARNER_RAW_ID = 99
-SPECIAL = {
-    "NONE": 0,
-    "QUERY": 1,
-    "BANDIT_SEP": 2,
-}
-
-
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     """
     Load experiment data and filter for relevant rows.
@@ -254,7 +245,8 @@ def convert_session_to_model_format(
 def encode_events_to_tensors(
     events: List[Tuple[int, int, int, int]],
     num_arms: int,
-    num_bandits: int
+    num_bandits: int,
+    SPECIAL: Dict[str, int]
 ) -> Dict[str, torch.Tensor]:
     """
     Encode events to tensor format for model input.
@@ -263,6 +255,7 @@ def encode_events_to_tensors(
         events: List of (bandit_id, agent_id, action, reward) tuples
         num_arms: Number of bandit arms
         num_bandits: Number of unique bandits
+        SPECIAL: Dictionary of special token IDs
         
     Returns:
         Dictionary of tensors
@@ -332,7 +325,8 @@ def run_inference_on_session(
     alpha0: float,
     beta0: float,
     num_arms: int = 12,
-    learner_steps: int = 6
+    learner_steps: int = 6,
+    SPECIAL: Dict[str, int] = None
 ) -> pd.DataFrame:
     """
     Run inference on a single session, generating hybrid data.
@@ -345,6 +339,7 @@ def run_inference_on_session(
         beta0: Prior beta parameter
         num_arms: Number of bandit arms
         learner_steps: Number of steps per learner segment
+        SPECIAL: Dictionary of special token IDs
         
     Returns:
         DataFrame with original demos + simulated learner segments
@@ -402,7 +397,8 @@ def run_inference_on_session(
             tensors = encode_events_to_tensors(
                 model_input['events'],
                 num_arms,
-                len(model_input['bandits_info'])
+                len(model_input['bandits_info']),
+                SPECIAL
             )
             
             # Add padding mask (no padding for single sequence)
@@ -479,53 +475,11 @@ def run_inference_on_session(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Run model inference on human experiment data to generate hybrid predictions"
-    )
-    parser.add_argument(
-        "--experiment_data_path",
-        type=str,
-        required=True,
-        help="Path to experiment CSV file"
-    )
-    parser.add_argument(
-        "--checkpoint_path",
-        type=str,
-        required=True,
-        help="Path to model checkpoint file"
-    )
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        default="data/model_predictions/hybrid_model_predictions.csv",
-        help="Path to output CSV file (default: data/model_predictions/hybrid_model_predictions.csv)"
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cpu",
-        choices=["cpu", "cuda"],
-        help="Device to run inference on (default: cpu)"
-    )
-    parser.add_argument(
-        "--num_arms",
-        type=int,
-        default=12,
-        help="Number of bandit arms (default: 12)"
-    )
-    parser.add_argument(
-        "--num_agents",
-        type=int,
-        default=4,
-        help="Maximum number of agents (learner + demonstrators) (default: 4)"
-    )
-    parser.add_argument(
-        "--learner_steps",
-        type=int,
-        default=6,
-        help="Number of steps per learner segment (default: 6)"
-    )
-    
+    parser = argparse.ArgumentParser(description="Run model inference on human experiment data to generate hybrid predictions")
+    parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
+    parser.add_argument("--checkpoint_path",type=str, required=True,help="Path to model checkpoint file")
+    parser.add_argument("--output_path",type=str,default="data/model_predictions/hybrid_model_predictions.csv",help="Path to output CSV file")
+    parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
     args = parser.parse_args()
     
     # Set device
@@ -543,81 +497,38 @@ def main():
         print("  2. The game column contains 'watch' or 'play' values")
         return
     
-    # Load model checkpoint first to get the correct configuration
+    # Load model checkpoint
     print(f"\nLoading model checkpoint from {args.checkpoint_path}...")
     checkpoint = torch.load(args.checkpoint_path, map_location='cpu')
     
-    # Determine number of demonstrators and bandits from data
-    num_demonstrators = 2  # Typically novice + expert
-    num_bandits = df.groupby('session_id')['zone_global_index'].nunique().max()
+    # Extract model configuration from checkpoint
+    if 'model_config' not in checkpoint:
+        raise ValueError(
+            f"Checkpoint at {args.checkpoint_path} does not contain 'model_config'. "
+            "This checkpoint was saved with an older version of the training script. "
+            "Please retrain your model to generate a checkpoint with the required configuration."
+        )
     
-    print(f"Detected {num_bandits} unique bandits across all sessions")
+    model_config = checkpoint['model_config']
     
-    # Try to load model configuration from checkpoint
-    if 'model_config' in checkpoint:
-        print("Found model_config in checkpoint, using saved hyperparameters")
-        model_config = checkpoint['model_config']
-        
-        # Override with detected values from data where necessary
-        model_config['num_bandits'] = num_bandits
-        model_config['num_demonstrators'] = num_demonstrators
-        
-        print(f"Model configuration from checkpoint:")
-        print(f"  d_model: {model_config['d_model']}")
-        print(f"  num_layers: {model_config['num_layers']}")
-        print(f"  dim_feedforward: {model_config['dim_feedforward']}")
-        print(f"  nhead: {model_config['nhead']}")
-        print(f"  num_agents: {model_config['num_agents']}")
-        print(f"  dropout: {model_config['dropout']}")
-    else:
-        # Fallback: infer from state_dict for older checkpoints
-        print("Warning: model_config not found in checkpoint, inferring from state_dict")
-        state_dict = checkpoint['model_state_dict']
-        
-        # Infer dimensions from state dict
-        agent_emb_shape = state_dict['embed.agent_emb.weight'].shape
-        num_agents_inferred = agent_emb_shape[0]
-        d_model_inferred = agent_emb_shape[1]
-        
-        # Infer num_layers by counting encoder layers
-        num_layers_inferred = 0
-        for key in state_dict.keys():
-            if 'backbone.encoder.layers.' in key:
-                layer_num = int(key.split('backbone.encoder.layers.')[1].split('.')[0])
-                num_layers_inferred = max(num_layers_inferred, layer_num + 1)
-        
-        # Infer dim_feedforward from linear1 weight
-        if 'backbone.encoder.layers.0.linear1.weight' in state_dict:
-            dim_feedforward_inferred = state_dict['backbone.encoder.layers.0.linear1.weight'].shape[0]
-        else:
-            dim_feedforward_inferred = 2048  # default
-        
-        # Infer nhead from attention weights
-        if 'backbone.encoder.layers.0.self_attn.in_proj_weight' in state_dict:
-            in_proj_weight_shape = state_dict['backbone.encoder.layers.0.self_attn.in_proj_weight'].shape
-            # in_proj_weight has shape [3*d_model, d_model] for Q, K, V
-            nhead_inferred = 8  # default, hard to infer accurately
-        else:
-            nhead_inferred = 8
-        
-        model_config = {
-            'num_arms': args.num_arms,
-            'num_agents': num_agents_inferred,
-            'num_bandits': num_bandits,
-            'num_demonstrators': num_demonstrators,
-            'd_model': d_model_inferred,
-            'nhead': nhead_inferred,
-            'num_layers': num_layers_inferred,
-            'dim_feedforward': dim_feedforward_inferred,
-            'dropout': 0.1,  # Can't infer dropout, use default
-        }
-        
-        print(f"Inferred model configuration:")
-        print(f"  d_model: {d_model_inferred}")
-        print(f"  num_layers: {num_layers_inferred}")
-        print(f"  dim_feedforward: {dim_feedforward_inferred}")
-        print(f"  nhead: {nhead_inferred} (using default)")
-        print(f"  num_agents: {num_agents_inferred}")
+    print(f"Loaded model configuration from checkpoint:")
+    print(f"  num_arms: {model_config['num_arms']}")
+    print(f"  num_agents: {model_config['num_agents']}")
+    print(f"  num_bandits: {model_config['num_bandits']}")
+    print(f"  num_demonstrators: {model_config['num_demonstrators']}")
+    print(f"  d_model: {model_config['d_model']}")
+    print(f"  nhead: {model_config['nhead']}")
+    print(f"  num_layers: {model_config['num_layers']}")
+    print(f"  dim_feedforward: {model_config['dim_feedforward']}")
+    print(f"  dropout: {model_config['dropout']}")
+    print(f"  T_demo: {model_config['T_demo']}")
+    print(f"  T_learner: {model_config['T_learner']}")
+    
+    # Extract constants from checkpoint to ensure consistency with training
+    SPECIAL = model_config.get('SPECIAL', {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2})
+    LEARNER_RAW_ID = model_config.get('LEARNER_RAW_ID', 99)
+    print(f"  SPECIAL tokens: {SPECIAL}")
+    print(f"  LEARNER_RAW_ID: {LEARNER_RAW_ID}")
     
     # Create model with configuration
     model = SBIPosteriorTransformer(
@@ -655,8 +566,9 @@ def main():
             device,
             alpha0,
             beta0,
-            args.num_arms,
-            args.learner_steps
+            model_config['num_arms'],
+            model_config['T_learner'],
+            SPECIAL
         )
         
         all_results.append(result_df)

@@ -13,11 +13,6 @@ CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoin
 OUTPUT_PATH="data/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cpu"  # Options: cuda, cpu
 
-# Model configuration
-NUM_ARMS=12
-NUM_AGENTS=4
-LEARNER_STEPS=6
-
 # Print configuration
 echo "=================================="
 echo "Inference Configuration"
@@ -27,10 +22,8 @@ echo "Checkpoint: $CHECKPOINT_PATH"
 echo "Output path: $OUTPUT_PATH"
 echo "Device: $DEVICE"
 echo ""
-echo "Model Configuration:"
-echo "  Number of arms: $NUM_ARMS"
-echo "  Max agents: $NUM_AGENTS"
-echo "  Learner steps: $LEARNER_STEPS"
+echo "Note: Model configuration (num_arms, num_agents, T_learner, etc.)"
+echo "      will be loaded automatically from the checkpoint."
 echo "=================================="
 echo ""
 
@@ -57,10 +50,7 @@ python src/inference.py \
     --experiment_data_path "$EXPERIMENT_DATA_PATH" \
     --checkpoint_path "$CHECKPOINT_PATH" \
     --output_path "$OUTPUT_PATH" \
-    --device $DEVICE \
-    --num_arms $NUM_ARMS \
-    --num_agents $NUM_AGENTS \
-    --learner_steps $LEARNER_STEPS
+    --device $DEVICE
 
 # Check if inference was successful
 if [ $? -eq 0 ]; then
