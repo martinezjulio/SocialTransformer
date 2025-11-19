@@ -7,14 +7,14 @@ source ~/anaconda3/bin/activate
 conda activate banditguider
 
 # Set parameters
-DATASET_NAME="demonstrations_data_01"
+DATASET_NAME="demonstrations_data_00"
 BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
 BATCH_SIZE=32
 LEARNING_RATE=3e-4
-EPOCHS=10
+EPOCHS=30
 DEVICE="cpu"
 
 # Transformer hyperparameters
@@ -35,6 +35,11 @@ WANDB_ENTITY="juliomartinez-individual"
 CHECKPOINT_DIR="checkpoints"
 SAVE_EVERY=2  # Save only best and final (set to N to save every N epochs)
 ARTIFACT_NAME="sbi-transformer-checkpoint"
+
+# Learning rate scheduler
+USE_SCHEDULER=true  # Use cosine annealing with warmup
+WARMUP_EPOCHS=2
+MIN_LR_RATIO=0.0
 
 # Print configuration
 echo "=================================="
@@ -68,6 +73,11 @@ echo "Checkpoints:"
 echo "  Directory: $CHECKPOINT_DIR"
 echo "  Save every: $SAVE_EVERY epochs"
 echo "  Artifact name: $ARTIFACT_NAME"
+echo ""
+echo "Learning Rate Scheduler:"
+echo "  Use scheduler: $USE_SCHEDULER"
+echo "  Warmup epochs: $WARMUP_EPOCHS"
+echo "  Min LR ratio: $MIN_LR_RATIO"
 echo "=================================="
 echo ""
 
@@ -94,6 +104,12 @@ if [ ! -f "$VAL_MANIFEST" ]; then
     exit 1
 fi
 
+# Build scheduler flag
+SCHEDULER_FLAG=""
+if [ "$USE_SCHEDULER" = "true" ]; then
+    SCHEDULER_FLAG="--use_scheduler"
+fi
+
 # Run training
 echo "Starting training..."
 python src/train.py \
@@ -115,7 +131,10 @@ python src/train.py \
     --wandb_entity "$WANDB_ENTITY" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --save_every $SAVE_EVERY \
-    --artifact_name "$ARTIFACT_NAME"
+    --artifact_name "$ARTIFACT_NAME" \
+    $SCHEDULER_FLAG \
+    --warmup_epochs $WARMUP_EPOCHS \
+    --min_lr_ratio $MIN_LR_RATIO
 
 # Check if training was successful
 if [ $? -eq 0 ]; then

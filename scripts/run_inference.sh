@@ -8,7 +8,8 @@ conda activate banditguider
 
 # Set parameters
 EXPERIMENT_DATA_PATH="data/experiment_data/transfer_bandits_choice_textbox/pilot_C/preprocessed_data.csv"
-CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/gn7eag5p/epoch_007_best.pt"  # UPDATE THIS with your checkpoint path
+#CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/clcmq5qx/epoch_014_best.pt" 
+CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/3t18jmf8/epoch_011_best.pt"  
 OUTPUT_PATH="data/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cpu"  # Options: cuda, cpu
 

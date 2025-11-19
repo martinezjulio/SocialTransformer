@@ -7,15 +7,20 @@ metric:
 parameters:
   # Fixed parameters
   dataset_path:
-    value: "data/demonstrations_data_01"
+    value: "data/demonstrations_data_00"
   epochs:
-    value: 10
+    value: 20
   device:
     value: "cpu"
   wandb_project:
     value: "social-belief-modeling"
   wandb_entity:
     value: "juliomartinez-individual"
+  # LR Scheduler warmup parameters
+  warmup_epochs:
+    value: 2
+  min_lr_ratio:
+    value: 0.0
   # Hyperparameters to optimize
   optimizer:
     values: ["adam", "adamw", "sgd"]
@@ -39,10 +44,11 @@ parameters:
   demo_belief_loss:
     values: ["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
 
-# Custom command to properly pass the --use_wandb flag
+# Custom command to properly pass flags
 command:
   - ${env}
   - python
   - ${program}
   - ${args}
   - --use_wandb
+  - --use_scheduler
