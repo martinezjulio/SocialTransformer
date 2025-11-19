@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
-from load_checkpoint import load_checkpoint_from_file
+from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
 
 
@@ -477,9 +477,18 @@ def run_inference_on_session(
 def main():
     parser = argparse.ArgumentParser(description="Run model inference on human experiment data to generate hybrid predictions")
     parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
-    parser.add_argument("--checkpoint_path",type=str, required=True,help="Path to model checkpoint file")
     parser.add_argument("--output_path",type=str,default="data/model_predictions/hybrid_model_predictions.csv",help="Path to output CSV file")
     parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
+    
+    # Checkpoint loading options (mutually exclusive)
+    checkpoint_group = parser.add_mutually_exclusive_group(required=True)
+    checkpoint_group.add_argument("--checkpoint_path", type=str,
+        help="Path to local checkpoint file")
+    checkpoint_group.add_argument("--wandb_artifact", type=str,
+        help="Load from wandb artifact: 'entity/project/artifact:alias' (e.g., 'user/project/model-checkpoint:best')")
+    checkpoint_group.add_argument("--wandb_sweep", type=str,
+        help="Load best model from sweep: 'entity/project/sweep_id' (e.g., 'user/project/abc123xyz')")
+    
     args = parser.parse_args()
     
     # Set device
@@ -497,14 +506,30 @@ def main():
         print("  2. The game column contains 'watch' or 'play' values")
         return
     
-    # Load model checkpoint
-    print(f"\nLoading model checkpoint from {args.checkpoint_path}...")
-    checkpoint = torch.load(args.checkpoint_path, map_location='cpu')
+    # Load checkpoint based on source
+    print("\n" + "="*60)
+    print("Loading Model Checkpoint")
+    print("="*60)
+    
+    if args.checkpoint_path:
+        checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
+    elif args.wandb_artifact:
+        download_dir = "checkpoints/wandb_downloads"
+        checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
+            args.wandb_artifact, download_dir
+        )
+    elif args.wandb_sweep:
+        download_dir = "checkpoints/wandb_downloads"
+        checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
+            args.wandb_sweep, download_dir
+        )
+    else:
+        raise ValueError("No checkpoint source specified")
     
     # Extract model configuration from checkpoint
     if 'model_config' not in checkpoint:
         raise ValueError(
-            f"Checkpoint at {args.checkpoint_path} does not contain 'model_config'. "
+            f"Checkpoint does not contain 'model_config'. "
             "This checkpoint was saved with an older version of the training script. "
             "Please retrain your model to generate a checkpoint with the required configuration."
         )
@@ -525,8 +550,8 @@ def main():
     print(f"  T_learner: {model_config['T_learner']}")
     
     # Extract constants from checkpoint to ensure consistency with training
-    SPECIAL = model_config.get('SPECIAL', {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2})
-    LEARNER_RAW_ID = model_config.get('LEARNER_RAW_ID', 99)
+    SPECIAL = model_config['SPECIAL']
+    LEARNER_RAW_ID = model_config['LEARNER_RAW_ID']
     print(f"  SPECIAL tokens: {SPECIAL}")
     print(f"  LEARNER_RAW_ID: {LEARNER_RAW_ID}")
     
@@ -547,9 +572,17 @@ def main():
     model.load_state_dict(checkpoint['model_state_dict'])
     print("Checkpoint loaded successfully!")
     
-    # Get normalization parameters
-    alpha0 = checkpoint.get('normalization', {}).get('alpha0', 1.0)
-    beta0 = checkpoint.get('normalization', {}).get('beta0', 1.0)
+    # Get normalization parameters (required)
+    if 'normalization' not in checkpoint:
+        raise ValueError(
+            "Checkpoint does not contain 'normalization' parameters. "
+            "This checkpoint was saved with an older version of the training script. "
+            "Please retrain your model to generate a checkpoint with the required parameters."
+        )
+    
+    normalization = checkpoint['normalization']
+    alpha0 = normalization['alpha0']
+    beta0 = normalization['beta0']
     print(f"Using alpha0={alpha0}, beta0={beta0}")
     
     # Run inference on each session
