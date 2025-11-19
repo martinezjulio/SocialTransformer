@@ -142,8 +142,13 @@ def save_checkpoint(
             aliases.append("best")
         aliases.append("latest")
         
-        wandb_run.log_artifact(artifact, aliases=aliases)
-        print(f"Logged checkpoint to wandb with aliases: {aliases}")
+        # Try to log artifact to wandb, but don't crash if it fails
+        try:
+            wandb_run.log_artifact(artifact, aliases=aliases)
+            print(f"Logged checkpoint to wandb with aliases: {aliases}")
+        except Exception as e:
+            print(f"Warning: Failed to log artifact to wandb: {e}")
+            print(f"Checkpoint still saved locally at: {checkpoint_path}")
     
     return checkpoint_path
 
