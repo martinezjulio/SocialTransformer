@@ -3,6 +3,7 @@ import argparse
 from typing import Dict
 import math
 import os
+import json
 import random
 from pathlib import Path
 
@@ -13,27 +14,10 @@ from torch.utils.data import DataLoader
 
 from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch
 from models.BetaModel import SBIPosteriorTransformer
+from transforms import BeliefNormalizer
+from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta
 
 import wandb
-
-
-def beta_nll_of_true_theta(alpha_pred: torch.Tensor, beta_pred: torch.Tensor, theta_true: torch.Tensor) -> torch.Tensor:
-    """
-    Negative log-likelihood of the true theta under the predicted Beta(alpha_pred, beta_pred).
-    Shapes: [B, K] each.
-    """
-    eps = 1e-6
-    theta_true = theta_true.clamp(eps, 1 - eps)
-    logB = torch.lgamma(alpha_pred) + torch.lgamma(beta_pred) - torch.lgamma(alpha_pred + beta_pred)
-    nll = -((alpha_pred - 1) * torch.log(theta_true) + (beta_pred - 1) * torch.log(1 - theta_true) - logB)
-    return nll.mean()
-
-
-def log_mse_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """
-    MSE in log-space to compare positive parameters across scales.
-    """
-    return ((torch.log(pred + 1e-8) - torch.log(target + 1e-8)) ** 2).mean()
 
 
 def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len: int, device: torch.device) -> torch.Tensor:
@@ -88,6 +72,11 @@ def save_checkpoint(
     wandb_run=None,
     artifact_name: str = "model-checkpoint",
     is_best: bool = False,
+    normalizer=None,
+    N_max: float = None,
+    alpha0: float = None,
+    beta0: float = None,
+    demo_belief_loss: str = None,
 ) -> str:
     """
     Save a checkpoint and optionally log it as a wandb artifact.
@@ -118,6 +107,16 @@ def save_checkpoint(
         'optimizer_state_dict': optimizer.state_dict(),
         'train_stats': train_stats,
         'val_stats': val_stats,
+        'normalization': {
+            'belief_norm_factor': normalizer.norm_factor if normalizer else None,
+            'N_max': N_max,
+            'alpha0': alpha0,
+            'beta0': beta0,
+            'normalize_beliefs': normalizer is not None,
+        },
+        'config': {
+            'demo_belief_loss': demo_belief_loss,
+        }
     }
     torch.save(checkpoint, checkpoint_path)
     print(f"Saved checkpoint to {checkpoint_path}")
@@ -158,6 +157,8 @@ def train_one_epoch(
     beta0: float = 1.0,
     use_segment_masking: bool = True,
     demo_loss_weight: float = 0.5,
+    demo_loss_fn=None,
+    normalizer=None,
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
@@ -213,19 +214,29 @@ def train_one_epoch(
         # Compute losses
         loss_theta = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_target)
         
-        # Per-demonstrator loss (no averaging!)
+        # Denormalize predictions if normalization was used
+        pred_alpha = out["alpha_demo"]
+        pred_beta = out["beta_demo"]
+        if normalizer is not None:
+            pred_alpha = normalizer.denormalize_alpha(pred_alpha)
+            pred_beta = normalizer.denormalize_beta(pred_beta)
+            target_alpha_denorm = normalizer.denormalize_alpha(y_alpha_target)
+            target_beta_denorm = normalizer.denormalize_beta(y_beta_target)
+        else:
+            target_alpha_denorm = y_alpha_target
+            target_beta_denorm = y_beta_target
+        
+        # Per-demonstrator loss using the selected loss function
         num_demonstrators = y_alpha_target.shape[1]
         loss_demo = 0.0
         for demo_id in range(num_demonstrators):
-            loss_demo += log_mse_loss(
-                out["alpha_demo"][:, demo_id, :], 
-                y_alpha_target[:, demo_id, :]
+            loss_demo += demo_loss_fn(
+                pred_alpha[:, demo_id, :],
+                pred_beta[:, demo_id, :],
+                target_alpha_denorm[:, demo_id, :],
+                target_beta_denorm[:, demo_id, :]
             )
-            loss_demo += log_mse_loss(
-                out["beta_demo"][:, demo_id, :], 
-                y_beta_target[:, demo_id, :]
-            )
-        loss_demo = loss_demo / (2 * num_demonstrators)  # Average over demos and alpha/beta
+        loss_demo = loss_demo / num_demonstrators  # Average over demonstrators
 
         loss = loss_theta + demo_loss_weight * loss_demo
         loss.backward()
@@ -246,8 +257,8 @@ def train_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_path", type=str, default="data/demonstrations_data_00/train/manifest.json")
-    parser.add_argument("--val_path", type=str, default="data/demonstrations_data_00/val/manifest.json")
+    parser.add_argument("--dataset_path", type=str, default="data/demonstrations_data_00",
+                        help="Path to dataset directory containing dataset_metadata.json and train/val subdirectories")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
@@ -267,13 +278,43 @@ def main():
     parser.add_argument("--dim_feedforward", type=int, default=768, help="Dimension of feedforward network")
     parser.add_argument("--d_model", type=int, default=256, help="Model dimension")
     parser.add_argument("--demo_loss_weight", type=float, default=0.5, help="Weight for demonstrator belief loss (0.0-2.0)")
+    parser.add_argument("--demo_belief_loss", type=str, default="log_mse",
+                        choices=["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"],
+                        help="Loss function for demonstrator belief predictions")
     
     args = parser.parse_args()
 
     device = torch.device(args.device)
     
+    # Load dataset metadata
+    metadata_path = os.path.join(args.dataset_path, "dataset_metadata.json")
+    print(f"Loading dataset metadata from {metadata_path}")
+    with open(metadata_path, "r") as f:
+        dataset_meta = json.load(f)
+    
+    # Extract normalization parameters
+    N_max = dataset_meta["parameters"]["N_max"]
+    alpha0 = dataset_meta["parameters"].get("alpha0", 1.0)
+    beta0 = dataset_meta["parameters"].get("beta0", 1.0)
+    
+    print(f"Dataset parameters: N_max={N_max}, alpha0={alpha0}, beta0={beta0}")
+    
+    # Create normalizer if needed for the chosen loss
+    if requires_normalization(args.demo_belief_loss):
+        normalizer = BeliefNormalizer(N_max, alpha0, beta0)
+        normalize_beliefs = True
+        print(f"Using normalization with factor={normalizer.norm_factor} for loss={args.demo_belief_loss}")
+    else:
+        normalizer = None
+        normalize_beliefs = False
+        print(f"No normalization needed for loss={args.demo_belief_loss}")
+    
+    # Build paths to train and val manifests
+    train_path = os.path.join(args.dataset_path, "train", "manifest.json")
+    val_path = os.path.join(args.dataset_path, "val", "manifest.json")
+    
     # Load training data first to get metadata
-    raw_train = ShardedExamplesDataset(args.train_path, cache_shards=2)
+    raw_train = ShardedExamplesDataset(train_path, cache_shards=2)
     
     # Automatically infer dataset parameters from manifest
     num_arms = raw_train.meta.get("K", 12)
@@ -299,7 +340,7 @@ def main():
                 "learning_rate": args.lr,
                 "optimizer": args.optimizer,
                 "architecture": "SBIPosteriorTransformer",
-                "dataset": args.train_path,
+                "dataset_path": args.dataset_path,
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "num_arms": num_arms,
@@ -313,6 +354,9 @@ def main():
                 "dim_feedforward": args.dim_feedforward,
                 "d_model": args.d_model,
                 "demo_loss_weight": args.demo_loss_weight,
+                "demo_belief_loss": args.demo_belief_loss,
+                "normalize_beliefs": normalize_beliefs,
+                "N_max": N_max,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -321,13 +365,27 @@ def main():
     else:
         run = None
 
-    # Build datasets
-    train_ds = BanditSequenceDataset(raw_train, num_arms=num_arms, num_agents=num_agents, num_bandits=num_bandits)
+    # Build datasets with normalization
+    train_ds = BanditSequenceDataset(
+        raw_train, 
+        num_arms=num_arms, 
+        num_agents=num_agents, 
+        num_bandits=num_bandits,
+        normalize_beliefs=normalize_beliefs,
+        normalizer=normalizer
+    )
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_batch)
 
     # Load validation data
-    raw_val = ShardedExamplesDataset(args.val_path, cache_shards=2)
-    val_ds = BanditSequenceDataset(raw_val, num_arms=num_arms, num_agents=num_agents, num_bandits=num_bandits)
+    raw_val = ShardedExamplesDataset(val_path, cache_shards=2)
+    val_ds = BanditSequenceDataset(
+        raw_val, 
+        num_arms=num_arms, 
+        num_agents=num_agents, 
+        num_bandits=num_bandits,
+        normalize_beliefs=normalize_beliefs,
+        normalizer=normalizer
+    )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
     model = SBIPosteriorTransformer(
@@ -359,8 +417,17 @@ def main():
     prev_best_checkpoint = None
     prev_latest_checkpoint = None
 
+    # Get the demo belief loss function
+    demo_loss_fn = get_demo_belief_loss(args.demo_belief_loss)
+    print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
+    
     for epoch in range(1, args.epochs + 1):
-        stats = train_one_epoch(model, train_loader, optimizer, device, demo_loss_weight=args.demo_loss_weight)
+        stats = train_one_epoch(
+            model, train_loader, optimizer, device, 
+            demo_loss_weight=args.demo_loss_weight,
+            demo_loss_fn=demo_loss_fn,
+            normalizer=normalizer
+        )
         print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
 
         # Simple eval (same losses on val set) - use full context
@@ -383,15 +450,31 @@ def main():
                 y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
                 y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
                 
+                # Denormalize predictions if needed
+                pred_alpha_val = out["alpha_demo"]
+                pred_beta_val = out["beta_demo"]
+                if normalizer is not None:
+                    pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_val)
+                    pred_beta_val = normalizer.denormalize_beta(pred_beta_val)
+                    target_alpha_val = normalizer.denormalize_alpha(y_alpha_demo_last)
+                    target_beta_val = normalizer.denormalize_beta(y_beta_demo_last)
+                else:
+                    target_alpha_val = y_alpha_demo_last
+                    target_beta_val = y_beta_demo_last
+                
                 # Per-demonstrator loss
                 num_demonstrators = y_alpha_demo_last.shape[1]
                 lt = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_last)
                 
                 ld = 0.0
                 for demo_id in range(num_demonstrators):
-                    ld += log_mse_loss(out["alpha_demo"][:, demo_id, :], y_alpha_demo_last[:, demo_id, :])
-                    ld += log_mse_loss(out["beta_demo"][:, demo_id, :], y_beta_demo_last[:, demo_id, :])
-                ld = ld / (2 * num_demonstrators)
+                    ld += demo_loss_fn(
+                        pred_alpha_val[:, demo_id, :],
+                        pred_beta_val[:, demo_id, :],
+                        target_alpha_val[:, demo_id, :],
+                        target_beta_val[:, demo_id, :]
+                    )
+                ld = ld / num_demonstrators
                 
                 val_tot["loss"] += (lt + args.demo_loss_weight*ld).item()
                 val_tot["theta"]+= lt.item()
@@ -440,6 +523,11 @@ def main():
                 wandb_run=run,
                 artifact_name=args.artifact_name,
                 is_best=True,
+                normalizer=normalizer,
+                N_max=N_max,
+                alpha0=alpha0,
+                beta0=beta0,
+                demo_belief_loss=args.demo_belief_loss,
             )
             prev_best_checkpoint = checkpoint_path
         
@@ -462,6 +550,11 @@ def main():
                 wandb_run=run,
                 artifact_name=args.artifact_name,
                 is_best=False,
+                normalizer=normalizer,
+                N_max=N_max,
+                alpha0=alpha0,
+                beta0=beta0,
+                demo_belief_loss=args.demo_belief_loss,
             )
             prev_latest_checkpoint = checkpoint_path
     
@@ -483,6 +576,11 @@ def main():
         wandb_run=run,
         artifact_name=args.artifact_name,
         is_best=False,
+        normalizer=normalizer,
+        N_max=N_max,
+        alpha0=alpha0,
+        beta0=beta0,
+        demo_belief_loss=args.demo_belief_loss,
     )
 
 

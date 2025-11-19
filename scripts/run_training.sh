@@ -9,8 +9,7 @@ conda activate banditguider
 # Set parameters
 DATASET_NAME="demonstrations_data_01"
 BASE_DATA_DIR="data"
-TRAIN_PATH="${BASE_DATA_DIR}/${DATASET_NAME}/train/manifest.json"
-VAL_PATH="${BASE_DATA_DIR}/${DATASET_NAME}/val/manifest.json"
+DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
 BATCH_SIZE=32
@@ -26,6 +25,7 @@ NUM_LAYERS=4
 DIM_FEEDFORWARD=768
 D_MODEL=256
 DEMO_LOSS_WEIGHT=0.5
+DEMO_BELIEF_LOSS="log_mse"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
@@ -41,8 +41,7 @@ echo "=================================="
 echo "Training Configuration"
 echo "=================================="
 echo "Dataset: $DATASET_NAME"
-echo "Train path: $TRAIN_PATH"
-echo "Val path: $VAL_PATH"
+echo "Dataset path: $DATASET_PATH"
 echo ""
 echo "Model Hyperparameters:"
 echo "  Batch size: $BATCH_SIZE"
@@ -59,6 +58,7 @@ echo "  Num layers: $NUM_LAYERS"
 echo "  FFN dimension: $DIM_FEEDFORWARD"
 echo "  Model dimension: $D_MODEL"
 echo "  Demo loss weight: $DEMO_LOSS_WEIGHT"
+echo "  Demo belief loss: $DEMO_BELIEF_LOSS"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -72,14 +72,24 @@ echo "=================================="
 echo ""
 
 # Check if dataset exists
-if [ ! -f "$TRAIN_PATH" ]; then
-    echo "ERROR: Training manifest not found at $TRAIN_PATH"
+DATASET_METADATA="${DATASET_PATH}/dataset_metadata.json"
+TRAIN_MANIFEST="${DATASET_PATH}/train/manifest.json"
+VAL_MANIFEST="${DATASET_PATH}/val/manifest.json"
+
+if [ ! -f "$DATASET_METADATA" ]; then
+    echo "ERROR: Dataset metadata not found at $DATASET_METADATA"
     echo "Please generate data first using scripts/generate_simulation.sh"
     exit 1
 fi
 
-if [ ! -f "$VAL_PATH" ]; then
-    echo "ERROR: Validation manifest not found at $VAL_PATH"
+if [ ! -f "$TRAIN_MANIFEST" ]; then
+    echo "ERROR: Training manifest not found at $TRAIN_MANIFEST"
+    echo "Please generate data first using scripts/generate_simulation.sh"
+    exit 1
+fi
+
+if [ ! -f "$VAL_MANIFEST" ]; then
+    echo "ERROR: Validation manifest not found at $VAL_MANIFEST"
     echo "Please generate data first using scripts/generate_simulation.sh"
     exit 1
 fi
@@ -87,8 +97,7 @@ fi
 # Run training
 echo "Starting training..."
 python src/train.py \
-    --train_path "$TRAIN_PATH" \
-    --val_path "$VAL_PATH" \
+    --dataset_path "$DATASET_PATH" \
     --batch_size $BATCH_SIZE \
     --lr $LEARNING_RATE \
     --epochs $EPOCHS \
@@ -100,6 +109,7 @@ python src/train.py \
     --dim_feedforward $DIM_FEEDFORWARD \
     --d_model $D_MODEL \
     --demo_loss_weight $DEMO_LOSS_WEIGHT \
+    --demo_belief_loss $DEMO_BELIEF_LOSS \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \
