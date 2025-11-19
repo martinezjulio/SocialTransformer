@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch
+from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
 from models.BetaModel import SBIPosteriorTransformer
 from transforms import BeliefNormalizer
 from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta
@@ -370,6 +370,8 @@ def main():
     num_rounds = raw_train.meta.get("num_rounds", 3)
     change_bandits = raw_train.meta.get("change_bandits_with_rounds", True)
     num_bandits = num_rounds if change_bandits else 1
+    T_demo = raw_train.meta.get("T_demo", 6)
+    T_learner = raw_train.meta.get("T_learner", 6)
     
     print(f"Auto-detected from manifest:")
     print(f"  num_arms (K): {num_arms}")
@@ -377,6 +379,8 @@ def main():
     print(f"  num_agents (learner + demos): {num_agents}")
     print(f"  num_bandits: {num_bandits}")
     print(f"  num_rounds: {num_rounds}")
+    print(f"  T_demo: {T_demo}")
+    print(f"  T_learner: {T_learner}")
     
     # Initialize wandb if requested
     if args.use_wandb:
@@ -461,6 +465,10 @@ def main():
         'num_layers': args.num_layers,
         'dim_feedforward': args.dim_feedforward,
         'dropout': args.dropout,
+        'T_demo': T_demo,
+        'T_learner': T_learner,
+        'SPECIAL': SPECIAL,
+        'LEARNER_RAW_ID': LEARNER_RAW_ID,
     }
 
     # Configure optimizer based on type
