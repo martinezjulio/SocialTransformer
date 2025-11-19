@@ -384,9 +384,11 @@ def main():
     
     # Initialize wandb if requested
     if args.use_wandb:
+        # When running in a sweep, wandb.init() is already called by the sweep agent
+        # We pass entity and project only if not already in a sweep context
         run = wandb.init(
-            entity=args.wandb_entity,
-            project=args.wandb_project,
+            entity=args.wandb_entity if not wandb.run else None,
+            project=args.wandb_project if not wandb.run else None,
             config={
                 "learning_rate": args.lr,
                 "optimizer": args.optimizer,
