@@ -64,9 +64,10 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     
     # Keep only relevant columns
     cols_to_keep = [
-        'session_id', 'position', 'game', 'game_sequence', 'game_index', 
-        'round_index', 'demonstrator_type', 'demonstrator_trajectory',
-        'zone_bandit', 'zone_global_index', 'reward_generated'
+        'session_id', 'session_index', 'anonymous_id', 'position', 'action',
+        'game', 'game_sequence', 'game_index', 'round_index', 'demonstrator_type', 
+        'demonstrator_trajectory', 'zone_bandit', 'zone_global_index', 
+        'reward_generated'
     ]
     df_filtered = df_filtered[cols_to_keep]
     
@@ -453,10 +454,13 @@ def run_inference_on_session(
             )
             
             # Create rows for simulated learner segment
-            for step_idx, (action, reward) in enumerate(trajectory):
+            for step_idx, (action_idx, reward) in enumerate(trajectory):
                 row = {
                     'session_id': session_df.iloc[0]['session_id'],
-                    'position': action,
+                    'session_index': session_df.iloc[0]['session_index'],
+                    'anonymous_id': session_df.iloc[0]['anonymous_id'],
+                    'position': action_idx,
+                    'action': 'shoot',
                     'game': 'play',
                     'game_sequence': game_seq,
                     'game_index': game_idx,
