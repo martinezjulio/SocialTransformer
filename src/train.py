@@ -20,6 +20,30 @@ from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_tru
 import wandb
 
 
+def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, min_lr_ratio=0.0):
+    """
+    Create a learning rate scheduler with linear warmup followed by cosine decay.
+    
+    Args:
+        optimizer: The optimizer to schedule
+        num_warmup_steps: Number of steps for linear warmup
+        num_training_steps: Total number of training steps
+        min_lr_ratio: Minimum learning rate as ratio of initial LR (default: 0.0)
+    
+    Returns:
+        LambdaLR scheduler
+    """
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            # Linear warmup
+            return float(current_step) / float(max(1, num_warmup_steps))
+        # Cosine decay
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(min_lr_ratio, 0.5 * (1.0 + math.cos(math.pi * progress)))
+    
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
 def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len: int, device: torch.device) -> torch.Tensor:
     """
     Create attention mask that makes only visible segments accessible.
@@ -77,6 +101,8 @@ def save_checkpoint(
     alpha0: float = None,
     beta0: float = None,
     demo_belief_loss: str = None,
+    scheduler=None,
+    model_config: dict = None,
 ) -> str:
     """
     Save a checkpoint and optionally log it as a wandb artifact.
@@ -92,6 +118,7 @@ def save_checkpoint(
         wandb_run: wandb run object (if None, only saves locally)
         artifact_name: Name for the wandb artifact
         is_best: Whether this is the best model so far
+        scheduler: Optional learning rate scheduler to save
         
     Returns:
         Path to the saved checkpoint
@@ -105,6 +132,7 @@ def save_checkpoint(
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
         'train_stats': train_stats,
         'val_stats': val_stats,
         'normalization': {
@@ -118,6 +146,10 @@ def save_checkpoint(
             'demo_belief_loss': demo_belief_loss,
         }
     }
+    
+    # Add model config if provided
+    if model_config is not None:
+        checkpoint['model_config'] = model_config
     torch.save(checkpoint, checkpoint_path)
     print(f"Saved checkpoint to {checkpoint_path}")
     
@@ -164,6 +196,7 @@ def train_one_epoch(
     demo_loss_weight: float = 0.5,
     demo_loss_fn=None,
     normalizer=None,
+    scheduler=None,
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
@@ -247,6 +280,10 @@ def train_one_epoch(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        
+        # Step scheduler after each batch if provided
+        if scheduler is not None:
+            scheduler.step()
 
         total_loss += loss.item()
         total_theta += loss_theta.item()
@@ -286,6 +323,11 @@ def main():
     parser.add_argument("--demo_belief_loss", type=str, default="log_mse",
                         choices=["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"],
                         help="Loss function for demonstrator belief predictions")
+    
+    # Learning rate scheduler
+    parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
+    parser.add_argument("--warmup_epochs", type=int, default=2, help="Number of epochs for LR warmup")
+    parser.add_argument("--min_lr_ratio", type=float, default=0.0, help="Minimum LR as ratio of initial LR")
     
     args = parser.parse_args()
 
@@ -362,6 +404,9 @@ def main():
                 "demo_belief_loss": args.demo_belief_loss,
                 "normalize_beliefs": normalize_beliefs,
                 "N_max": N_max,
+                "use_scheduler": args.use_scheduler,
+                "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
+                "min_lr_ratio": args.min_lr_ratio if args.use_scheduler else None,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -404,6 +449,19 @@ def main():
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
     ).to(device)
+    
+    # Store model configuration for saving in checkpoint
+    model_config = {
+        'num_arms': num_arms,
+        'num_agents': num_agents,
+        'num_bandits': num_bandits,
+        'num_demonstrators': num_demonstrators,
+        'd_model': args.d_model,
+        'nhead': args.nhead,
+        'num_layers': args.num_layers,
+        'dim_feedforward': args.dim_feedforward,
+        'dropout': args.dropout,
+    }
 
     # Configure optimizer based on type
     if args.optimizer == "adam":
@@ -414,6 +472,22 @@ def main():
         optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-2)
     else:
         raise ValueError(f"Unsupported optimizer: {args.optimizer}")
+
+    # Configure learning rate scheduler with warmup
+    scheduler = None
+    if args.use_scheduler:
+        num_training_steps = len(train_loader) * args.epochs
+        num_warmup_steps = len(train_loader) * args.warmup_epochs
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer, 
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps,
+            min_lr_ratio=args.min_lr_ratio
+        )
+        print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
+        print(f"  Total training steps: {num_training_steps}")
+        print(f"  Warmup steps: {num_warmup_steps}")
+        print(f"  Min LR ratio: {args.min_lr_ratio}")
 
     # Track best validation loss for checkpoint saving
     best_val_loss = float('inf')
@@ -431,9 +505,13 @@ def main():
             model, train_loader, optimizer, device, 
             demo_loss_weight=args.demo_loss_weight,
             demo_loss_fn=demo_loss_fn,
-            normalizer=normalizer
+            normalizer=normalizer,
+            scheduler=scheduler
         )
-        print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}")
+        
+        # Log current learning rate if scheduler is used
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  lr={current_lr:.2e}")
 
         # Simple eval (same losses on val set) - use full context
         model.eval()
@@ -494,15 +572,17 @@ def main():
             
             # Log both train and val metrics together
             if run is not None:
-                run.log({
+                log_dict = {
                     "train/loss": stats['loss'],
                     "train/loss_theta": stats['loss_theta'],
                     "train/loss_demo": stats['loss_demo'],
                     "val/loss": val_stats['loss'],
                     "val/loss_theta": val_stats['loss_theta'],
                     "val/loss_demo": val_stats['loss_demo'],
+                    "learning_rate": current_lr,
                     "epoch": epoch
-                })
+                }
+                run.log(log_dict)
         
         # Check if this is the best model so far
         is_best = val_stats['loss'] < best_val_loss
@@ -533,6 +613,8 @@ def main():
                 alpha0=alpha0,
                 beta0=beta0,
                 demo_belief_loss=args.demo_belief_loss,
+                scheduler=scheduler,
+                model_config=model_config,
             )
             prev_best_checkpoint = checkpoint_path
         
@@ -560,6 +642,8 @@ def main():
                 alpha0=alpha0,
                 beta0=beta0,
                 demo_belief_loss=args.demo_belief_loss,
+                scheduler=scheduler,
+                model_config=model_config,
             )
             prev_latest_checkpoint = checkpoint_path
     
@@ -586,6 +670,8 @@ def main():
         alpha0=alpha0,
         beta0=beta0,
         demo_belief_loss=args.demo_belief_loss,
+        scheduler=scheduler,
+        model_config=model_config,
     )
 
 

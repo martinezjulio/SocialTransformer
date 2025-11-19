@@ -553,24 +553,83 @@ def main():
     
     print(f"Detected {num_bandits} unique bandits across all sessions")
     
-    # Infer num_agents from checkpoint
-    agent_emb_weight_shape = checkpoint['model_state_dict']['embed.agent_emb.weight'].shape
-    num_agents_from_checkpoint = agent_emb_weight_shape[0]
+    # Try to load model configuration from checkpoint
+    if 'model_config' in checkpoint:
+        print("Found model_config in checkpoint, using saved hyperparameters")
+        model_config = checkpoint['model_config']
+        
+        # Override with detected values from data where necessary
+        model_config['num_bandits'] = num_bandits
+        model_config['num_demonstrators'] = num_demonstrators
+        
+        print(f"Model configuration from checkpoint:")
+        print(f"  d_model: {model_config['d_model']}")
+        print(f"  num_layers: {model_config['num_layers']}")
+        print(f"  dim_feedforward: {model_config['dim_feedforward']}")
+        print(f"  nhead: {model_config['nhead']}")
+        print(f"  num_agents: {model_config['num_agents']}")
+        print(f"  dropout: {model_config['dropout']}")
+    else:
+        # Fallback: infer from state_dict for older checkpoints
+        print("Warning: model_config not found in checkpoint, inferring from state_dict")
+        state_dict = checkpoint['model_state_dict']
+        
+        # Infer dimensions from state dict
+        agent_emb_shape = state_dict['embed.agent_emb.weight'].shape
+        num_agents_inferred = agent_emb_shape[0]
+        d_model_inferred = agent_emb_shape[1]
+        
+        # Infer num_layers by counting encoder layers
+        num_layers_inferred = 0
+        for key in state_dict.keys():
+            if 'backbone.encoder.layers.' in key:
+                layer_num = int(key.split('backbone.encoder.layers.')[1].split('.')[0])
+                num_layers_inferred = max(num_layers_inferred, layer_num + 1)
+        
+        # Infer dim_feedforward from linear1 weight
+        if 'backbone.encoder.layers.0.linear1.weight' in state_dict:
+            dim_feedforward_inferred = state_dict['backbone.encoder.layers.0.linear1.weight'].shape[0]
+        else:
+            dim_feedforward_inferred = 2048  # default
+        
+        # Infer nhead from attention weights
+        if 'backbone.encoder.layers.0.self_attn.in_proj_weight' in state_dict:
+            in_proj_weight_shape = state_dict['backbone.encoder.layers.0.self_attn.in_proj_weight'].shape
+            # in_proj_weight has shape [3*d_model, d_model] for Q, K, V
+            nhead_inferred = 8  # default, hard to infer accurately
+        else:
+            nhead_inferred = 8
+        
+        model_config = {
+            'num_arms': args.num_arms,
+            'num_agents': num_agents_inferred,
+            'num_bandits': num_bandits,
+            'num_demonstrators': num_demonstrators,
+            'd_model': d_model_inferred,
+            'nhead': nhead_inferred,
+            'num_layers': num_layers_inferred,
+            'dim_feedforward': dim_feedforward_inferred,
+            'dropout': 0.1,  # Can't infer dropout, use default
+        }
+        
+        print(f"Inferred model configuration:")
+        print(f"  d_model: {d_model_inferred}")
+        print(f"  num_layers: {num_layers_inferred}")
+        print(f"  dim_feedforward: {dim_feedforward_inferred}")
+        print(f"  nhead: {nhead_inferred} (using default)")
+        print(f"  num_agents: {num_agents_inferred}")
     
-    print(f"Checkpoint was trained with num_agents={num_agents_from_checkpoint}")
-    print(f"Using checkpoint configuration for model initialization")
-    
-    # Create model with the same configuration as checkpoint
+    # Create model with configuration
     model = SBIPosteriorTransformer(
-        num_arms=args.num_arms,
-        num_agents=num_agents_from_checkpoint,  # Use from checkpoint
-        num_bandits=num_bandits,
-        num_demonstrators=num_demonstrators,
-        d_model=256,
-        nhead=8,
-        num_layers=4,
-        dim_feedforward=768,
-        dropout=0.1,
+        num_arms=model_config['num_arms'],
+        num_agents=model_config['num_agents'],
+        num_bandits=model_config['num_bandits'],
+        num_demonstrators=model_config['num_demonstrators'],
+        d_model=model_config['d_model'],
+        nhead=model_config['nhead'],
+        num_layers=model_config['num_layers'],
+        dim_feedforward=model_config['dim_feedforward'],
+        dropout=model_config['dropout'],
     ).to(device)
     
     # Load checkpoint state
