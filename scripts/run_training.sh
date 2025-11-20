@@ -12,20 +12,20 @@ BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
-BATCH_SIZE=32
-LEARNING_RATE=3e-4
-EPOCHS=30
+BATCH_SIZE=64
+LEARNING_RATE=1e-4
+EPOCHS=20
 DEVICE="cpu"
 
 # Transformer hyperparameters
 OPTIMIZER="adamw"
 DROPOUT=0.1
-NHEAD=8
-NUM_LAYERS=4
+NHEAD=16
+NUM_LAYERS=2
 DIM_FEEDFORWARD=768
-D_MODEL=256
+D_MODEL=512
 DEMO_LOSS_WEIGHT=0.5
-DEMO_BELIEF_LOSS="log_mse"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
+DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"

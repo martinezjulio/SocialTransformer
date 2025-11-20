@@ -16,18 +16,18 @@ DEVICE="cpu"  # Options: cuda, cpu
 # ==============================================================================
 
 # Option 1: Load from local file path
-CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/3t18jmf8/epoch_011_best.pt"
-CHECKPOINT_SOURCE="local"
+#CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/1nb09uxg/epoch_003_best.pt"
+#CHECKPOINT_SOURCE="local"
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-# WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:best"
-# CHECKPOINT_SOURCE="wandb_artifact"
+#WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:v3"
+#CHECKPOINT_SOURCE="wandb_artifact"
 
 # Option 3: Load best model from wandb sweep (uncomment to use)
 # Format: "entity/project/sweep_id"
-# WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/z6lkrmix"
-# CHECKPOINT_SOURCE="wandb_sweep"
+WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/74zpyuvn"
+CHECKPOINT_SOURCE="wandb_sweep"
 
 # Print configuration
 echo "=================================="

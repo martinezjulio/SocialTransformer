@@ -52,15 +52,19 @@ def load_checkpoint_from_wandb_artifact(artifact_string: str, download_dir: str)
     api = wandb.Api()
     artifact = api.artifact(artifact_string, type='model')
     
-    # Extract project name and artifact info for directory structure
+    # Get the run that created this artifact
+    source_run = artifact.logged_by()  # Returns the run object that logged the artifact
+    run_id = source_run.id if source_run else "unknown_run"
+    
+    # Extract project name for directory structure
     parts = artifact_string.split('/')
     project_name = parts[1]
-    artifact_with_alias = parts[2].replace(':', '_')
     
-    # Create download directory
-    local_dir = os.path.join(download_dir, project_name, artifact_with_alias)
+    # Create download directory using run ID (consistent with sweep loading)
+    local_dir = os.path.join(download_dir, project_name, run_id)
     os.makedirs(local_dir, exist_ok=True)
     
+    print(f"Artifact from run: {run_id} ({source_run.name if source_run else 'unknown'})")
     print(f"Downloading to: {local_dir}")
     artifact_dir = artifact.download(root=local_dir)
     
