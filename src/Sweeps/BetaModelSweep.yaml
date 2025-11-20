@@ -1,5 +1,7 @@
 program: src/train.py
 method: bayes
+project: social-belief-modeling
+entity: juliomartinez-individual
 metric:
   name: val/loss
   goal: minimize
@@ -12,10 +14,6 @@ parameters:
     value: 20
   device:
     value: "cpu"
-  wandb_project:
-    value: "social-belief-modeling"
-  wandb_entity:
-    value: "juliomartinez-individual"
   # LR Scheduler warmup parameters
   warmup_epochs:
     value: 2
