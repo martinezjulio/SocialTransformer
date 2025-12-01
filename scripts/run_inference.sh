@@ -21,13 +21,13 @@ DEVICE="cpu"  # Options: cuda, cpu
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-#WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:v3"
-#CHECKPOINT_SOURCE="wandb_artifact"
+WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:v106"
+CHECKPOINT_SOURCE="wandb_artifact"
 
 # Option 3: Load best model from wandb sweep (uncomment to use)
 # Format: "entity/project/sweep_id"
-WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/74zpyuvn"
-CHECKPOINT_SOURCE="wandb_sweep"
+#WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/74zpyuvn"
+#CHECKPOINT_SOURCE="wandb_sweep"
 
 # Print configuration
 echo "=================================="
