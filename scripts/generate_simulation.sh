@@ -3,8 +3,9 @@
 # for the Social Bandit Guider project
 
 # Activate conda environment
-source ~/anaconda3/bin/activate
-conda activate banditguider
+#source ~/anaconda3/bin/activate
+
+conda activate SocialTransformer
 
 # Auto-increment dataset name
 BASE_DATA_DIR="data"
@@ -40,10 +41,10 @@ N_MAX=72
 NUM_DEMONSTRATORS=2
 NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
-ORDER=0
-NUM_TRAIN_RUNS=20000  # or 100000 for better performance
-NUM_VALID_RUNS=1000   # ~4% of training (scale with train size)
-NUM_TEST_RUNS=1000    # same as validation
+ORDER=2
+NUM_TRAIN_RUNS=80000  # or 100000 for better performance
+NUM_VALID_RUNS=4000   # ~4% of training (scale with train size)
+NUM_TEST_RUNS=4000    # same as validation
 T_DEMO=6
 T_LEARNER=6
 SHARD_SIZE=12000
