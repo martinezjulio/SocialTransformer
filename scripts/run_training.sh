@@ -3,8 +3,9 @@
 # on generated demonstration data
 
 # Activate conda environment
-source ~/anaconda3/bin/activate
-conda activate banditguider
+#source ~/anaconda3/bin/activate
+source /home/julio/miniforge3/etc/profile.d/conda.sh
+conda activate SocialTransformer
 
 # Set parameters
 DATASET_NAME="demonstrations_data_00"
@@ -15,7 +16,7 @@ DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 BATCH_SIZE=64
 LEARNING_RATE=1e-4
 EPOCHS=20
-DEVICE="cpu"
+DEVICE="gpu"
 
 # Transformer hyperparameters
 OPTIMIZER="adamw"
