@@ -200,8 +200,11 @@ def train_one_epoch(
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
+    print(f"  Loading first batch from dataloader...")
 
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader):
+        if batch_idx == 0:
+            print(f"  ✓ First batch loaded! Processing...")
         for k in ["bandit_ids", "agent_ids", "action_ids", "reward_ids", "special_ids", "pad_mask",
                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
             batch[k] = batch[k].to(device)
@@ -240,6 +243,8 @@ def train_one_epoch(
         
         optimizer.zero_grad()
         out = model(batch, custom_attn_mask=attn_mask)
+        if batch_idx == 0:
+            print(f"  ✓ First forward pass complete! Computing loss...")
         
         # Gather targets for each example's target bandit
         target_bandits_tensor = torch.tensor(target_bandits, device=device)
@@ -288,6 +293,11 @@ def train_one_epoch(
         total_loss += loss.item()
         total_theta += loss_theta.item()
         total_demo += loss_demo.item()
+        
+        if batch_idx == 0:
+            print(f"  ✓ First batch complete! loss={loss.item():.4f}")
+        if (batch_idx + 1) % 50 == 0:
+            print(f"    Progress: {batch_idx + 1}/{len(loader)} batches")
 
     n = len(loader)
     return {
@@ -430,7 +440,7 @@ def main():
         normalize_beliefs=normalize_beliefs,
         normalizer=normalizer
     )
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_batch)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)  # shuffle=False: rely on epoch shard shuffling + pre-randomized data
 
     # Load validation data
     raw_val = ShardedExamplesDataset(val_path, cache_shards=2)
@@ -509,8 +519,20 @@ def main():
     # Get the demo belief loss function
     demo_loss_fn = get_demo_belief_loss(args.demo_belief_loss)
     print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
+    print(f"\nStarting training loop for {args.epochs} epochs...")
+    print(f"Training batches per epoch: {len(train_loader)}")
+    print(f"Validation batches: {len(val_loader)}")
+    print(f"\nNote: First batch load may take 2-3 seconds (loading shard from disk)...")
     
     for epoch in range(1, args.epochs + 1):
+        print(f"\n{'='*50}")
+        print(f"Starting Epoch {epoch}/{args.epochs}")
+        print(f"{'='*50}")
+        
+        # Shuffle shard order for better randomization
+        if hasattr(raw_train, 'shuffle_shards'):
+            raw_train.shuffle_shards()
+        
         stats = train_one_epoch(
             model, train_loader, optimizer, device, 
             demo_loss_weight=args.demo_loss_weight,

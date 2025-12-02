@@ -350,6 +350,17 @@ class ShardedExamplesDataset(Dataset):
         shard = self._load_shard(i)
         return shard[local_idx]
 
+    def shuffle_shards(self):
+        """Shuffle the order of shards for better epoch-level randomization."""
+        import random
+        random.shuffle(self.shards)
+        # Rebuild prefix sums
+        self.prefix = []
+        c = 0
+        for s in self.shards:
+            self.prefix.append(c)
+            c += s["num_examples"]
+
 
 if __name__ == "__main__":
     import argparse
