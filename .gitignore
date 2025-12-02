@@ -6,7 +6,6 @@ raw_data/
 processed_data/
 
 # Model files
-models/
 *.pkl
 *.joblib
 *.h5
