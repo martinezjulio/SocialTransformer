@@ -8,15 +8,15 @@ source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_00"
+DATASET_NAME="demonstrations_data_01"
 BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
-BATCH_SIZE=64
+BATCH_SIZE=128
 LEARNING_RATE=1e-4
 EPOCHS=20
-DEVICE="gpu"
+DEVICE="cuda"
 
 # Transformer hyperparameters
 OPTIMIZER="adamw"

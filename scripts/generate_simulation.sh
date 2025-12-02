@@ -42,12 +42,12 @@ NUM_DEMONSTRATORS=2
 NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
 ORDER=2
-NUM_TRAIN_RUNS=80000  # or 100000 for better performance
-NUM_VALID_RUNS=4000   # ~4% of training (scale with train size)
-NUM_TEST_RUNS=4000    # same as validation
+NUM_TRAIN_RUNS=40000  # or 100000 for better performance
+NUM_VALID_RUNS=2000   # ~4% of training (scale with train size)
+NUM_TEST_RUNS=2000    # same as validation
 T_DEMO=6
 T_LEARNER=6
-SHARD_SIZE=12000
+SHARD_SIZE=2000
 MAX_CONTEXT=144
 
 # Print configuration
