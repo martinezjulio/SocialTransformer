@@ -8,12 +8,12 @@ source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_01"
+DATASET_NAME="demonstrations_data_00"
 BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
-BATCH_SIZE=128
+BATCH_SIZE=256
 LEARNING_RATE=1e-4
 EPOCHS=20
 DEVICE="cuda"
@@ -22,8 +22,8 @@ DEVICE="cuda"
 OPTIMIZER="adamw"
 DROPOUT=0.1
 NHEAD=16
-NUM_LAYERS=2
-DIM_FEEDFORWARD=768
+NUM_LAYERS=8
+DIM_FEEDFORWARD=1024
 D_MODEL=512
 DEMO_LOSS_WEIGHT=0.5
 DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy

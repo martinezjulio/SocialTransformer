@@ -3,8 +3,9 @@
 # using a trained Social Bandit Guider model
 
 # Activate conda environment
-source ~/anaconda3/bin/activate
-conda activate banditguider
+#source ~/anaconda3/bin/activate
+source /home/julio/miniforge3/etc/profile.d/conda.sh
+conda activate SocialTransformer
 
 # Set parameters
 EXPERIMENT_DATA_PATH="data/experiment_data/transfer_bandits_choice_textbox/pilot_C/preprocessed_data.csv"

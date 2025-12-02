@@ -11,9 +11,9 @@ parameters:
   dataset_path:
     value: "data/demonstrations_data_00"
   epochs:
-    value: 20
+    value: 30
   device:
-    value: "cpu"
+    value: "cuda"
   # LR Scheduler warmup parameters
   warmup_epochs:
     value: 2
@@ -25,7 +25,7 @@ parameters:
   lr:
     values: [0.00001, 0.0001, 0.0003, 0.001, 0.003]
   batch_size:
-    values: [16, 32, 64]
+    values: [64, 128, 256]
   dropout:
     values: [0.0, 0.1, 0.2, 0.3]
   num_layers:
