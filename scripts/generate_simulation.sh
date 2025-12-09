@@ -49,6 +49,9 @@ T_DEMO=6
 T_LEARNER=6
 SHARD_SIZE=2000
 MAX_CONTEXT=144
+DEMO_STRATEGY="expert_thompson_novice_random"  # Options: uniform_thompson, expert_novice_thompson, expert_thompson_novice_random
+EXPERT_N_MIN=60
+EXPERT_N_MAX=72
 
 # Print configuration
 echo "=================================="
@@ -66,6 +69,9 @@ echo "Test runs: $NUM_TEST_RUNS"
 echo "T_demo: $T_DEMO"
 echo "T_learner: $T_LEARNER"
 echo "N_max: $N_MAX"
+echo "Demo strategy: $DEMO_STRATEGY"
+echo "Expert N_min: $EXPERT_N_MIN"
+echo "Expert N_max: $EXPERT_N_MAX"
 echo "Shard size: $SHARD_SIZE"
 echo "Max context length: $MAX_CONTEXT"
 echo "=================================="
@@ -92,7 +98,10 @@ python src/generate_simulations.py \
     --num_test_runs $NUM_TEST_RUNS \
     --T_demo $T_DEMO \
     --T_learner $T_LEARNER \
-    --shard_size $SHARD_SIZE
+    --shard_size $SHARD_SIZE \
+    --demo_strategy $DEMO_STRATEGY \
+    --expert_N_min $EXPERT_N_MIN \
+    --expert_N_max $EXPERT_N_MAX
 
 # Check if generation was successful
 if [ $? -eq 0 ]; then
@@ -127,7 +136,10 @@ if [ $? -eq 0 ]; then
     "T_demo": $T_DEMO,
     "T_learner": $T_LEARNER,
     "shard_size": $SHARD_SIZE,
-    "max_context": $MAX_CONTEXT
+    "max_context": $MAX_CONTEXT,
+    "demo_strategy": "$DEMO_STRATEGY",
+    "expert_N_min": $EXPERT_N_MIN,
+    "expert_N_max": $EXPERT_N_MAX
   },
   "splits": {
     "train": "$OUT_DIR/train/",

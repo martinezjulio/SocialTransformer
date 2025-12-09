@@ -21,6 +21,28 @@ def ts_argmax(alphas: torch.Tensor, betas: torch.Tensor) -> int:
     draws = torch.distributions.Beta(alphas, betas).sample()  # [K]
     return int(torch.argmax(draws).item())
 
+def random_arm_with_exclusion(K: int, thetas: List[float], num_exclude: int = 6) -> int:
+    """
+    Select a random arm excluding the top num_exclude arms by payoff.
+    
+    Args:
+        K: number of arms
+        thetas: list of arm payoffs
+        num_exclude: number of top arms to exclude (default: 6)
+    
+    Returns:
+        Random arm index from the bottom K-num_exclude arms
+    """
+    # Create list of (arm_idx, theta) pairs and sort by theta descending
+    arm_payoffs = [(i, thetas[i]) for i in range(K)]
+    arm_payoffs.sort(key=lambda x: x[1], reverse=True)
+    
+    # Get the bottom K-num_exclude arms
+    available_arms = [arm_idx for arm_idx, _ in arm_payoffs[num_exclude:]]
+    
+    # Return random arm from available set
+    return random.choice(available_arms)
+
 def sample_bandit(K: int, min_gap: float = 0.05, min_best: float = 0.70) -> List[float]:
     """Sample K payoffs from Beta(2,2) until there's a clear best arm."""
     while True:
@@ -74,9 +96,12 @@ def simulate_segment(
     beta: torch.Tensor,   # [K]
     bandit_id: int,
     agent_id: int,  # demonstrator_id or 99 for learner
+    strategy: str = "thompson",  # "thompson" or "random_exclusion"
 ) -> Tuple[List[Tuple[int,int,int,int]], torch.Tensor, torch.Tensor]:
     """
     Simulate ONE segment (demo or learner acting for 'steps' timesteps).
+    Args:
+        strategy: "thompson" for Thompson Sampling, "random_exclusion" for random arm selection with exclusion
     Returns:
         events: list of (bandit_id, agent_id, action, reward)
         alpha_after: updated alpha [K]
@@ -87,9 +112,15 @@ def simulate_segment(
     b = beta.clone()
     
     for _ in range(steps):
-        arm = ts_argmax(a, b)
+        # Select arm based on strategy
+        if strategy == "random_exclusion":
+            arm = random_arm_with_exclusion(K, thetas, num_exclude=6)
+        else:  # default to thompson
+            arm = ts_argmax(a, b)
+        
         r = bernoulli(thetas[arm])
         events.append((bandit_id, agent_id, arm, r))
+        # Update beliefs regardless of strategy
         a[arm] += r
         b[arm] += 1 - r
     
@@ -108,6 +139,9 @@ def simulate_rounds_run(
     alpha0: float = 1.0,
     beta0: float = 1.0,
     N_max: int = 72,
+    demo_strategy: str = "uniform_thompson",
+    expert_N_min: int = 60,
+    expert_N_max: int = 72,
 ) -> Dict:
     """
     Simulate a run with multiple rounds of alternating demonstrators and learner.
@@ -123,6 +157,9 @@ def simulate_rounds_run(
         T_learner: timesteps per learner segment
         alpha0, beta0: prior parameters
         N_max: maximum pre-episode experience
+        demo_strategy: "uniform_thompson", "expert_novice_thompson", or "expert_thompson_novice_random"
+        expert_N_min: minimum N_tot for experts (used in expert_novice strategies)
+        expert_N_max: maximum N_tot for experts (used in expert_novice strategies)
     
     Returns:
         Dictionary with events, round_boundaries, demonstrators, bandits, meta
@@ -133,11 +170,37 @@ def simulate_rounds_run(
     num_bandits = num_rounds if change_bandits_with_rounds else 1
     bandit_thetas = [sample_bandit(K) for _ in range(num_bandits)]
     
-    # Sample N_tot for each demonstrator (reused across all bandits)
-    demo_N_tots = {
-        demo_id: int(torch.randint(low=0, high=N_max + 1, size=(1,)).item())
-        for demo_id in range(num_demonstrators)
-    }
+    # Sample N_tot for each demonstrator based on strategy
+    demo_N_tots = {}
+    demo_strategies = {}  # Track which strategy each demonstrator uses
+    
+    if demo_strategy == "uniform_thompson":
+        # Current behavior: random N_tot for all demonstrators
+        for demo_id in range(num_demonstrators):
+            demo_N_tots[demo_id] = int(torch.randint(low=0, high=N_max + 1, size=(1,)).item())
+            demo_strategies[demo_id] = "thompson"
+    
+    elif demo_strategy in ["expert_novice_thompson", "expert_thompson_novice_random"]:
+        # Expert-novice assignment
+        # Randomly assign which demo is expert (50/50 for demo_id 0 or 1)
+        expert_id = random.choice([0, 1]) if num_demonstrators == 2 else 0
+        novice_id = 1 - expert_id if num_demonstrators == 2 else 1
+        
+        # Sample expert N_tot from [expert_N_min, expert_N_max]
+        expert_N_tot = int(torch.randint(low=expert_N_min, high=expert_N_max + 1, size=(1,)).item())
+        
+        demo_N_tots[expert_id] = expert_N_tot
+        demo_N_tots[novice_id] = 0
+        demo_strategies[expert_id] = "thompson"
+        
+        # Set novice strategy based on demo_strategy
+        if demo_strategy == "expert_novice_thompson":
+            demo_strategies[novice_id] = "thompson"
+        else:  # expert_thompson_novice_random
+            demo_strategies[novice_id] = "random_exclusion"
+    
+    else:
+        raise ValueError(f"Unknown demo_strategy: {demo_strategy}")
     
     # Pre-compute pre-episode beliefs for each demonstrator on each bandit
     demo_pre_beliefs = {}  # [demo_id][bandit_idx] -> {N_tot, N_by_arm, S0, F0, alpha0, beta0}
@@ -214,6 +277,7 @@ def simulate_rounds_run(
                     beta=demo_betas[agent_id],
                     bandit_id=bandit_idx,
                     agent_id=agent_id,
+                    strategy=demo_strategies[agent_id],
                 )
                 demo_alphas[agent_id] = new_alpha
                 demo_betas[agent_id] = new_beta
@@ -233,6 +297,7 @@ def simulate_rounds_run(
                     beta=learner_beta,
                     bandit_id=bandit_idx,
                     agent_id=LEARNER_ID,
+                    strategy="thompson",
                 )
             
             all_events.extend(events)
@@ -249,6 +314,7 @@ def simulate_rounds_run(
         demonstrators_out.append({
             "demonstrator_id": demo_id,
             "N_tot": demo_N_tots[demo_id],
+            "strategy": demo_strategies[demo_id],
         })
     
     bandits_out = []
@@ -282,6 +348,9 @@ def simulate_rounds_run(
             "alpha0": alpha0,
             "beta0": beta0,
             "N_max": N_max,
+            "demo_strategy": demo_strategy,
+            "expert_N_min": expert_N_min,
+            "expert_N_max": expert_N_max,
             "prehistory": "TS",
         },
         "events": all_events,
@@ -345,6 +414,9 @@ def generate_dataset_streaming(
     alpha0: float = 1.0,
     beta0: float = 1.0,
     N_max: int = 72,
+    demo_strategy: str = "uniform_thompson",
+    expert_N_min: int = 60,
+    expert_N_max: int = 72,
     # sharding
     split: str = "train",
     shard_size: int = 10000,
@@ -387,6 +459,9 @@ def generate_dataset_streaming(
             "alpha0": alpha0,
             "beta0": beta0,
             "N_max": N_max,
+            "demo_strategy": demo_strategy,
+            "expert_N_min": expert_N_min,
+            "expert_N_max": expert_N_max,
             "shard_size": shard_size,
         },
         "shards": []
@@ -415,6 +490,9 @@ def generate_dataset_streaming(
             alpha0=alpha0,
             beta0=beta0,
             N_max=N_max,
+            demo_strategy=demo_strategy,
+            expert_N_min=expert_N_min,
+            expert_N_max=expert_N_max,
         )
         example = build_training_example(run)
         buf.append(example)
@@ -447,6 +525,13 @@ if __name__ == "__main__":
     parser.add_argument("--T_demo", type=int, default=6)
     parser.add_argument("--T_learner", type=int, default=6)
     parser.add_argument("--shard_size", type=int, default=12000)
+    parser.add_argument("--demo_strategy", type=str, default="uniform_thompson", 
+                        choices=["uniform_thompson", "expert_novice_thompson", "expert_thompson_novice_random"],
+                        help="Demonstrator experience strategy")
+    parser.add_argument("--expert_N_min", type=int, default=60,
+                        help="Minimum N_tot for experts")
+    parser.add_argument("--expert_N_max", type=int, default=72,
+                        help="Maximum N_tot for experts")
     
     args = parser.parse_args()
     
@@ -465,6 +550,9 @@ if __name__ == "__main__":
         T_demo=args.T_demo,
         T_learner=args.T_learner,
         N_max=args.N_max,
+        demo_strategy=args.demo_strategy,
+        expert_N_min=args.expert_N_min,
+        expert_N_max=args.expert_N_max,
         shard_size=args.shard_size
     )
     
@@ -480,6 +568,9 @@ if __name__ == "__main__":
         T_demo=args.T_demo,
         T_learner=args.T_learner,
         N_max=args.N_max,
+        demo_strategy=args.demo_strategy,
+        expert_N_min=args.expert_N_min,
+        expert_N_max=args.expert_N_max,
         shard_size=args.shard_size
     )
     
@@ -495,5 +586,8 @@ if __name__ == "__main__":
         T_demo=args.T_demo,
         T_learner=args.T_learner,
         N_max=args.N_max,
+        demo_strategy=args.demo_strategy,
+        expert_N_min=args.expert_N_min,
+        expert_N_max=args.expert_N_max,
         shard_size=args.shard_size
     )
