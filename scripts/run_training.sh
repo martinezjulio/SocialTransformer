@@ -15,7 +15,7 @@ DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 # Model hyperparameters
 BATCH_SIZE=256
 LEARNING_RATE=1e-4
-EPOCHS=20
+EPOCHS=60
 DEVICE="cuda"
 
 # Transformer hyperparameters
@@ -38,9 +38,23 @@ SAVE_EVERY=2  # Save only best and final (set to N to save every N epochs)
 ARTIFACT_NAME="sbi-transformer-checkpoint"
 
 # Learning rate scheduler
-USE_SCHEDULER=true  # Use cosine annealing with warmup
-WARMUP_EPOCHS=2
-MIN_LR_RATIO=0.0
+USE_SCHEDULER=true  # Enable LR scheduler
+WARMUP_EPOCHS=2     # Warmup epochs for cosine scheduler
+
+# Scheduler type: "plateau" or "cosine"
+SCHEDULER="plateau"
+#SCHEDULER="cosine"  # Uncomment to use cosine scheduler instead
+
+# Minimum LR (as ratio of initial LR, e.g., 1e-5 means min_lr = lr * 1e-5)
+MIN_LR_RATIO=0.00001
+
+# ReduceLROnPlateau parameters (only used when SCHEDULER="plateau")
+PATIENCE=5          # Number of epochs with no improvement before reducing LR
+FACTOR=0.5          # Factor by which to reduce LR (new_lr = lr * factor)
+
+# Early stopping (set to 0 to disable)
+EARLY_STOPPING_PATIENCE=10  # Stop training if no improvement for N epochs
+# EARLY_STOPPING_PATIENCE=0   # Uncomment to disable early stopping
 
 # Print configuration
 echo "=================================="
@@ -77,8 +91,20 @@ echo "  Artifact name: $ARTIFACT_NAME"
 echo ""
 echo "Learning Rate Scheduler:"
 echo "  Use scheduler: $USE_SCHEDULER"
-echo "  Warmup epochs: $WARMUP_EPOCHS"
+echo "  Scheduler type: $SCHEDULER"
+echo "  Warmup epochs: $WARMUP_EPOCHS (for cosine)"
 echo "  Min LR ratio: $MIN_LR_RATIO"
+if [ "$SCHEDULER" = "plateau" ]; then
+    echo "  Patience: $PATIENCE epochs"
+    echo "  Reduction factor: $FACTOR"
+fi
+echo ""
+echo "Early Stopping:"
+if [ "$EARLY_STOPPING_PATIENCE" -gt 0 ]; then
+    echo "  Enabled: stop after $EARLY_STOPPING_PATIENCE epochs without improvement"
+else
+    echo "  Disabled"
+fi
 echo "=================================="
 echo ""
 
@@ -134,8 +160,12 @@ python src/train.py \
     --save_every $SAVE_EVERY \
     --artifact_name "$ARTIFACT_NAME" \
     $SCHEDULER_FLAG \
+    --scheduler $SCHEDULER \
     --warmup_epochs $WARMUP_EPOCHS \
-    --min_lr_ratio $MIN_LR_RATIO
+    --min_lr_ratio $MIN_LR_RATIO \
+    --patience $PATIENCE \
+    --factor $FACTOR \
+    --early_stopping_patience $EARLY_STOPPING_PATIENCE
 
 # Check if training was successful
 if [ $? -eq 0 ]; then
