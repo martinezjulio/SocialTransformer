@@ -4,7 +4,7 @@
 
 # Activate conda environment
 #source ~/anaconda3/bin/activate
-
+source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Auto-increment dataset name
