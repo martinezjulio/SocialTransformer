@@ -11,7 +11,7 @@ parameters:
   dataset_path:
     value: "data/demonstrations_data_00"
   epochs:
-    value: 60
+    value: 100
   device:
     value: "cuda"
   # LR Scheduler warmup parameters
@@ -45,11 +45,11 @@ parameters:
   scheduler:
     values: ["cosine", "plateau"]
   patience:
-    value: 5
+    value: 10
   factor:
     value: 0.5
   early_stopping_patience:
-    value: 10
+    value: 30
 
 # Custom command to properly pass flags
 command:
