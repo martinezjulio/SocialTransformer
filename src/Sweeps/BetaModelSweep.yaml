@@ -11,36 +11,45 @@ parameters:
   dataset_path:
     value: "data/demonstrations_data_00"
   epochs:
-    value: 30
+    value: 60
   device:
     value: "cuda"
   # LR Scheduler warmup parameters
   warmup_epochs:
     value: 2
   min_lr_ratio:
-    value: 0.0
+    value: 0.00001
   # Hyperparameters to optimize
   optimizer:
-    values: ["adam", "adamw", "sgd"]
+    values: ["adamw"] #["adam", "adamw", "sgd"]
   lr:
-    values: [0.00001, 0.0001, 0.0003, 0.001, 0.003]
+    values: [0.00001, 0.00005, 0.0001]
   batch_size:
-    values: [64, 128, 256]
+    values: [64, 128]
   dropout:
     values: [0.0, 0.1, 0.2, 0.3]
   num_layers:
-    values: [2, 4, 6, 8]
+    values: [4, 6, 8]
   dim_feedforward:
-    values: [256, 512, 768, 1024]
+    values: [512, 768, 1024]
   # d_model and nhead - using distribution to enforce constraint
   d_model:
-    values: [128, 256, 512]
+    values: [256, 512]
   nhead:
     values: [4, 8, 16]
   demo_loss_weight:
-    values: [0.5, 1.0]
+    values: [1.0]
   demo_belief_loss:
-    values: ["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
+    values: ["cross_entropy"] #["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
+  # Scheduler parameters
+  scheduler:
+    values: ["cosine", "plateau"]
+  patience:
+    value: 5
+  factor:
+    value: 0.5
+  early_stopping_patience:
+    value: 10
 
 # Custom command to properly pass flags
 command:

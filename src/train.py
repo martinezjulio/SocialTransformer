@@ -197,6 +197,7 @@ def train_one_epoch(
     demo_loss_fn=None,
     normalizer=None,
     scheduler=None,
+    scheduler_type: str = "cosine",
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
@@ -286,8 +287,8 @@ def train_one_epoch(
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         
-        # Step scheduler after each batch if provided
-        if scheduler is not None:
+        # Step scheduler after each batch only for cosine scheduler
+        if scheduler is not None and scheduler_type == "cosine":
             scheduler.step()
 
         total_loss += loss.item()
@@ -338,6 +339,15 @@ def main():
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
     parser.add_argument("--warmup_epochs", type=int, default=2, help="Number of epochs for LR warmup")
     parser.add_argument("--min_lr_ratio", type=float, default=0.0, help="Minimum LR as ratio of initial LR")
+    parser.add_argument("--scheduler", type=str, default="cosine", 
+                        choices=["cosine", "plateau"],
+                        help="Type of LR scheduler")
+    parser.add_argument("--patience", type=int, default=5,
+                        help="Patience for ReduceLROnPlateau")
+    parser.add_argument("--factor", type=float, default=0.5,
+                        help="Factor for ReduceLROnPlateau")
+    parser.add_argument("--early_stopping_patience", type=int, default=0,
+                        help="Early stopping patience (0=disabled)")
     
     args = parser.parse_args()
 
@@ -423,6 +433,10 @@ def main():
                 "use_scheduler": args.use_scheduler,
                 "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
                 "min_lr_ratio": args.min_lr_ratio if args.use_scheduler else None,
+                "scheduler_type": args.scheduler if args.use_scheduler else None,
+                "patience": args.patience if (args.use_scheduler and args.scheduler == "plateau") else None,
+                "factor": args.factor if (args.use_scheduler and args.scheduler == "plateau") else None,
+                "early_stopping_patience": args.early_stopping_patience if args.early_stopping_patience > 0 else None,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -496,21 +510,36 @@ def main():
     # Configure learning rate scheduler with warmup
     scheduler = None
     if args.use_scheduler:
-        num_training_steps = len(train_loader) * args.epochs
-        num_warmup_steps = len(train_loader) * args.warmup_epochs
-        scheduler = get_cosine_schedule_with_warmup(
-            optimizer, 
-            num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps,
-            min_lr_ratio=args.min_lr_ratio
-        )
-        print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
-        print(f"  Total training steps: {num_training_steps}")
-        print(f"  Warmup steps: {num_warmup_steps}")
-        print(f"  Min LR ratio: {args.min_lr_ratio}")
+        if args.scheduler == "cosine":
+            num_training_steps = len(train_loader) * args.epochs
+            num_warmup_steps = len(train_loader) * args.warmup_epochs
+            scheduler = get_cosine_schedule_with_warmup(
+                optimizer, 
+                num_warmup_steps=num_warmup_steps,
+                num_training_steps=num_training_steps,
+                min_lr_ratio=args.min_lr_ratio
+            )
+            print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
+            print(f"  Total training steps: {num_training_steps}")
+            print(f"  Warmup steps: {num_warmup_steps}")
+            print(f"  Min LR ratio: {args.min_lr_ratio}")
+        elif args.scheduler == "plateau":
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=args.factor,
+                patience=args.patience,
+                min_lr=args.lr * args.min_lr_ratio
+            )
+            print(f"Using ReduceLROnPlateau scheduler")
+            print(f"  Patience: {args.patience}, Factor: {args.factor}")
+            print(f"  Min LR: {args.lr * args.min_lr_ratio:.2e}")
 
     # Track best validation loss for checkpoint saving
     best_val_loss = float('inf')
+    
+    # Early stopping tracking
+    early_stopping_counter = 0
     
     # Track previous checkpoint paths for deletion
     prev_best_checkpoint = None
@@ -538,7 +567,8 @@ def main():
             demo_loss_weight=args.demo_loss_weight,
             demo_loss_fn=demo_loss_fn,
             normalizer=normalizer,
-            scheduler=scheduler
+            scheduler=scheduler,
+            scheduler_type=args.scheduler if args.use_scheduler else "cosine"
         )
         
         # Log current learning rate if scheduler is used
@@ -602,6 +632,10 @@ def main():
             }
             print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}")
             
+            # Step plateau scheduler if using it
+            if scheduler is not None and args.scheduler == "plateau":
+                scheduler.step(val_stats['loss'])
+            
             # Log both train and val metrics together
             if run is not None:
                 log_dict = {
@@ -620,6 +654,7 @@ def main():
         is_best = val_stats['loss'] < best_val_loss
         if is_best:
             best_val_loss = val_stats['loss']
+            early_stopping_counter = 0
             print(f"     ✓ New best model! Val loss: {best_val_loss:.4f}")
             
             # Delete previous best checkpoint if it exists
@@ -649,6 +684,16 @@ def main():
                 model_config=model_config,
             )
             prev_best_checkpoint = checkpoint_path
+        else:
+            # No improvement
+            early_stopping_counter += 1
+            if args.early_stopping_patience > 0 and early_stopping_counter >= args.early_stopping_patience:
+                print(f"\n{'='*50}")
+                print(f"Early stopping triggered after {epoch} epochs")
+                print(f"No improvement for {args.early_stopping_patience} epochs")
+                print(f"Best val loss: {best_val_loss:.4f}")
+                print(f"{'='*50}")
+                break
         
         # Save periodic checkpoints if requested
         if args.save_every > 0 and epoch % args.save_every == 0:
