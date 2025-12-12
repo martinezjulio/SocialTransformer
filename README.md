@@ -188,13 +188,140 @@ wandb agent entity/project/abc123
 ```
 
 **Swept hyperparameters:**
-- Learning rate, optimizer, batch size
+- Learning rate, optimizer, batch size, weight decay
 - Architecture: d_model, nhead, num_layers, dim_feedforward, dropout
 - Loss weighting: demo_loss_weight [0.5, 1.0]
 
+### Continue Training from Checkpoint
+
+Resume training from any checkpoint (local or wandb artifact) with optional hyperparameter overrides. Useful for:
+- Extending training beyond original epoch count
+- Fine-tuning with different learning rates or schedulers
+- Recovering from interrupted training runs
+
+**Resume from wandb artifact with more epochs:**
+
+```bash
+./scripts/continue_training.sh \
+    --checkpoint <run_id> \
+    --source wandb \
+    --epochs 150
+```
+
+**Resume same wandb run (continuous metrics):**
+
+```bash
+./scripts/continue_training.sh \
+    --checkpoint <run_id> \
+    --source wandb \
+    --resume_run \
+    --epochs 150 \
+    --lr 0.00001
+```
+
+**Resume from local checkpoint:**
+
+```bash
+./scripts/continue_training.sh \
+    --checkpoint checkpoints/<run_id>/epoch_050_best.pt \
+    --source local \
+    --epochs 100
+```
+
+**Optional overrides:**
+- `--epochs` - Total epochs to train to
+- `--lr` - Learning rate
+- `--scheduler` - LR scheduler type (plateau, cosine)
+- `--optimizer` - Optimizer (adam, adamw, sgd)
+- `--weight_decay` - Weight decay for regularization
+- `--batch_size` - Batch size
+
+**Behavior:**
+- `--resume_run` flag: Continues the same wandb run (metrics append to existing run)
+- Without `--resume_run`: Creates new wandb run (clean separation)
+- Automatically detects if training is already complete
+- Loads model, optimizer, and scheduler state from checkpoint
+
 ---
 
-## 4. Attention Masking During Training
+## 4. Complete Sweep Recovery
+
+Resume incomplete runs from a wandb sweep after preemption or crashes.
+
+### Overview
+
+The sweep recovery tool identifies runs that didn't finish successfully (crashed, failed, or killed) and allows you to interactively resume them with their original configurations. This is useful for:
+- Recovering from spot instance preemptions
+- Completing runs interrupted by cluster maintenance
+- Finishing runs after out-of-memory errors
+
+**Important:** This only resumes existing incomplete runs - it does NOT start new hyperparameter configurations. To continue a sweep with new configs, use `wandb agent <sweep-id>` instead.
+
+### Usage
+
+```bash
+./scripts/complete_sweep.sh <sweep_id>
+```
+
+The script will:
+1. Query the sweep for crashed/failed/killed runs
+2. Display them in an interactive list with status and progress
+3. Let you select which runs to resume (e.g., "1,3,5" or "all")
+4. Resume each selected run with its original configuration
+
+### Example Session
+
+```bash
+$ ./scripts/complete_sweep.sh abc123xyz
+
+==================================
+Sweep Recovery Tool
+==================================
+Querying sweep: myuser/myproject/abc123xyz
+==================================
+
+Found 3 incomplete runs:
+
+[1] vital-sweep-42 (ID: run_abc123)
+    State: crashed
+    Epoch: 45/100
+    Val loss: 0.2341
+
+[2] dashing-firebolt-89 (ID: run_def456)
+    State: killed
+    Epoch: 78/100
+    Val loss: 0.1987
+
+[3] cosmic-dragon-12 (ID: run_ghi789)
+    State: failed
+    Epoch: 12/100
+    Val loss: N/A
+
+Select runs to resume (e.g., '1,3,5' or 'all' or 'q' to quit): 1,2
+
+Proceed with resuming selected runs? (y/n): y
+
+[1/2] Resuming run run_abc123...
+✓ Successfully completed run run_abc123
+
+[2/2] Resuming run run_def456...
+✓ Successfully completed run run_def456
+```
+
+### Run States
+
+The tool filters by wandb run state:
+- **crashed** - Terminated unexpectedly (no cleanup)
+- **failed** - Explicitly marked as failed
+- **killed** - Manually stopped by user
+- **finished** - Completed successfully (excluded, even if early stopped)
+- **running** - Currently active (excluded)
+
+**Note:** The tool trusts wandb's state tracking. Runs that finished via early stopping are marked as "finished" and won't be resumed.
+
+---
+
+## 5. Attention Masking During Training
 
 ### Segment-Level Masking
 
@@ -259,13 +386,16 @@ src/
   ├── generate_simulations.py   # Generate round-based training data
   ├── dataloader.py              # Dataset and batching with auto-config
   ├── train.py                   # Training loop with segment masking
+  ├── complete_sweep.py          # Resume incomplete sweep runs
   ├── models/BetaModel.py        # Transformer model
   ├── inference.py               # Thompson Sampling inference
   └── Sweeps/BetaModelSweep.yaml # Hyperparameter sweep config
 
 scripts/
   ├── generate_simulation.sh     # Data generation script
-  └── run_training.sh            # Training script
+  ├── run_training.sh            # Training script
+  ├── continue_training.sh       # Continue training from checkpoint
+  └── complete_sweep.sh          # Resume incomplete sweep runs
 
 data/
   └── demonstrations_data_*/     # Generated datasets

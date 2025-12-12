@@ -17,6 +17,7 @@ BATCH_SIZE=256
 LEARNING_RATE=1e-4
 EPOCHS=60
 DEVICE="cuda"
+WEIGHT_DECAY=0.01  # Weight decay for regularization
 
 # Transformer hyperparameters
 OPTIMIZER="adamw"
@@ -66,6 +67,7 @@ echo ""
 echo "Model Hyperparameters:"
 echo "  Batch size: $BATCH_SIZE"
 echo "  Learning rate: $LEARNING_RATE"
+echo "  Weight decay: $WEIGHT_DECAY"
 echo "  Epochs: $EPOCHS"
 echo "  Device: $DEVICE"
 echo "  (num_arms, max_bandits auto-detected from manifest)"
@@ -146,6 +148,7 @@ python src/train.py \
     --epochs $EPOCHS \
     --device $DEVICE \
     --optimizer $OPTIMIZER \
+    --weight_decay $WEIGHT_DECAY \
     --dropout $DROPOUT \
     --nhead $NHEAD \
     --num_layers $NUM_LAYERS \
