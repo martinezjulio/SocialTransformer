@@ -44,6 +44,65 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
+def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None, download_dir="checkpoints"):
+    """
+    Load checkpoint from local path or wandb artifact.
+    
+    Args:
+        checkpoint_ref: Local file path or wandb run ID
+        source: 'local' or 'wandb'
+        entity: Wandb entity (required if source='wandb')
+        project: Wandb project (required if source='wandb')
+        download_dir: Directory for downloads
+        
+    Returns:
+        checkpoint dict
+    """
+    if source == "local":
+        if not os.path.exists(checkpoint_ref):
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_ref}")
+        print(f"Loading checkpoint from local file: {checkpoint_ref}")
+        checkpoint = torch.load(checkpoint_ref, map_location='cpu')
+        return checkpoint
+        
+    elif source == "wandb":
+        if not entity or not project:
+            raise ValueError("entity and project required for wandb source")
+        
+        print(f"Loading checkpoint from wandb run: {checkpoint_ref}")
+        api = wandb.Api()
+        run = api.run(f"{entity}/{project}/{checkpoint_ref}")
+        
+        # Get model artifacts
+        artifacts = [a for a in run.logged_artifacts() if a.type == 'model']
+        if not artifacts:
+            raise ValueError(f"No model artifacts found for run {checkpoint_ref}")
+        
+        # Download latest artifact (or 'best' if available)
+        best_artifact = None
+        for artifact in artifacts:
+            if 'best' in artifact.aliases:
+                best_artifact = artifact
+                break
+        
+        artifact_to_use = best_artifact if best_artifact else artifacts[-1]
+        print(f"Downloading artifact: {artifact_to_use.name}")
+        
+        local_dir = os.path.join(download_dir, checkpoint_ref)
+        artifact_dir = artifact_to_use.download(root=local_dir)
+        
+        # Find checkpoint file
+        checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
+        if not checkpoint_files:
+            raise FileNotFoundError(f"No .pt file in artifact directory")
+        
+        checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
+        return checkpoint
+
+
 def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len: int, device: torch.device) -> torch.Tensor:
     """
     Create attention mask that makes only visible segments accessible.
@@ -349,6 +408,16 @@ def main():
     parser.add_argument("--early_stopping_patience", type=int, default=0,
                         help="Early stopping patience (0=disabled)")
     
+    # Checkpoint resumption
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None,
+                        help="Checkpoint path (local) or run ID (wandb) to resume from")
+    parser.add_argument("--checkpoint_source", type=str, choices=["local", "wandb"],
+                        help="Source of checkpoint: 'local' file or 'wandb' artifact")
+    parser.add_argument("--resume_run", action="store_true",
+                        help="Resume same wandb run ID (vs creating new run)")
+    parser.add_argument("--weight_decay", type=float, default=1e-2,
+                        help="Weight decay for optimizer (default: 0.01)")
+    
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -404,14 +473,31 @@ def main():
     
     # Initialize wandb if requested
     if args.use_wandb:
+        # Determine run ID and resume mode for checkpoint resumption
+        run_id = None
+        resume_mode = "never"
+        
+        if args.resume_from_checkpoint and args.resume_run:
+            # When resuming same run, use the checkpoint reference as run ID (if from wandb)
+            if args.checkpoint_source == "wandb":
+                run_id = args.resume_from_checkpoint
+                resume_mode = "allow"
+                print(f"Will resume wandb run: {run_id}")
+            else:
+                # For local checkpoints with --resume_run, warn user
+                print("Warning: --resume_run with local checkpoint creates new run (cannot extract run ID from local file)")
+        
         # When running in a sweep, wandb.init() is already called by the sweep agent
         # We pass entity and project only if not already in a sweep context
         run = wandb.init(
+            id=run_id,
+            resume=resume_mode,
             entity=args.wandb_entity if not wandb.run else None,
             project=args.wandb_project if not wandb.run else None,
             config={
                 "learning_rate": args.lr,
                 "optimizer": args.optimizer,
+                "weight_decay": args.weight_decay,
                 "architecture": "SBIPosteriorTransformer",
                 "dataset_path": args.dataset_path,
                 "epochs": args.epochs,
@@ -499,11 +585,11 @@ def main():
 
     # Configure optimizer based on type
     if args.optimizer == "adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-2)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == "adamw":
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     elif args.optimizer == "sgd":
-        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=1e-2)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.weight_decay)
     else:
         raise ValueError(f"Unsupported optimizer: {args.optimizer}")
 
@@ -535,8 +621,57 @@ def main():
             print(f"  Patience: {args.patience}, Factor: {args.factor}")
             print(f"  Min LR: {args.lr * args.min_lr_ratio:.2e}")
 
-    # Track best validation loss for checkpoint saving
+    # Initialize training state
+    start_epoch = 1
     best_val_loss = float('inf')
+    
+    # Load checkpoint if resuming
+    if args.resume_from_checkpoint:
+        print(f"\n{'='*50}")
+        print("Loading checkpoint for resume...")
+        print(f"{'='*50}")
+        
+        checkpoint = load_checkpoint_for_resume(
+            args.resume_from_checkpoint,
+            args.checkpoint_source,
+            entity=args.wandb_entity if args.use_wandb else None,
+            project=args.wandb_project if args.use_wandb else None
+        )
+        
+        # Check if training already complete
+        checkpoint_epoch = checkpoint['epoch']
+        if checkpoint_epoch >= args.epochs:
+            print(f"\n{'='*50}")
+            print("Training already complete!")
+            print(f"{'='*50}")
+            print(f"Checkpoint at epoch {checkpoint_epoch}")
+            print(f"Target epochs: {args.epochs}")
+            print(f"\nTo continue training, specify more epochs:")
+            print(f"  --epochs {checkpoint_epoch + 50}")
+            print(f"{'='*50}\n")
+            exit(0)
+        
+        # Load model state
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print("✓ Loaded model weights")
+        
+        # Load optimizer state
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print("✓ Loaded optimizer state")
+        
+        # Load scheduler if exists and we're using one
+        if scheduler and checkpoint.get('scheduler_state_dict'):
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("✓ Loaded scheduler state")
+        
+        # Set starting epoch and best val loss
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_loss = checkpoint['val_stats']['loss']
+        
+        print(f"\nResuming from epoch {checkpoint['epoch']}")
+        print(f"Will train from epoch {start_epoch} to {args.epochs}")
+        print(f"Best val loss so far: {best_val_loss:.4f}")
+        print(f"{'='*50}\n")
     
     # Early stopping tracking
     early_stopping_counter = 0
@@ -553,7 +688,7 @@ def main():
     print(f"Validation batches: {len(val_loader)}")
     print(f"\nNote: First batch load may take 2-3 seconds (loading shard from disk)...")
     
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         print(f"\n{'='*50}")
         print(f"Starting Epoch {epoch}/{args.epochs}")
         print(f"{'='*50}")
