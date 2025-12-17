@@ -46,6 +46,7 @@ def analyze_sweep(sweep_id: str, top_k: int = 10):
     runs_by_combined = sorted(sweep.runs, key=lambda r: r.summary.get('val/loss', float('inf')))
     runs_by_theta = sorted(sweep.runs, key=lambda r: r.summary.get('val/loss_theta', float('inf')))
     runs_by_demo = sorted(sweep.runs, key=lambda r: r.summary.get('val/loss_demo', float('inf')))
+    runs_by_experience = sorted(sweep.runs, key=lambda r: r.summary.get('val/loss_experience', float('inf')))
     
     # Print best runs for each metric
     print("\n🏆 TOP RUNS BY COMBINED LOSS (val/loss)")
@@ -59,6 +60,10 @@ def analyze_sweep(sweep_id: str, top_k: int = 10):
     print("\n🧠 TOP RUNS BY DEMO LOSS (val/loss_demo)")
     print("-"*80)
     print_top_runs(runs_by_demo, 'val/loss_demo', top_k)
+    
+    print("\n🔢 TOP RUNS BY EXPERIENCE LOSS (val/loss_experience)")
+    print("-"*80)
+    print_top_runs(runs_by_experience, 'val/loss_experience', top_k)
     
     # Compare best configs
     print("\n" + "="*80)
@@ -74,13 +79,16 @@ def analyze_sweep(sweep_id: str, top_k: int = 10):
     print("\n🧠 Best for Demo Loss:")
     print_config(runs_by_demo[0])
     
+    print("\n🔢 Best for Experience Loss:")
+    print_config(runs_by_experience[0])
+    
     # Create comparison dataframe
     print("\n" + "="*80)
     print("📈 PERFORMANCE COMPARISON OF BEST RUNS")
     print("="*80)
     
     comparison_data = []
-    for name, runs in [("Combined", runs_by_combined), ("Theta", runs_by_theta), ("Demo", runs_by_demo)]:
+    for name, runs in [("Combined", runs_by_combined), ("Theta", runs_by_theta), ("Demo", runs_by_demo), ("Experience", runs_by_experience)]:
         run = runs[0]
         comparison_data.append({
             'Optimized For': name,
@@ -88,6 +96,7 @@ def analyze_sweep(sweep_id: str, top_k: int = 10):
             'val/loss': f"{run.summary.get('val/loss', float('nan')):.4f}",
             'val/loss_theta': f"{run.summary.get('val/loss_theta', float('nan')):.4f}",
             'val/loss_demo': f"{run.summary.get('val/loss_demo', float('nan')):.4f}",
+            'val/loss_experience': f"{run.summary.get('val/loss_experience', float('nan')):.4f}",
             'Batch Size': run.config.get('batch_size', 'N/A'),
             'LR': run.config.get('lr', 'N/A'),
             'Loss Type': run.config.get('demo_belief_loss', 'N/A'),
@@ -121,14 +130,16 @@ def print_config(run):
     print(f"  Run: {run.name} ({run.id})")
     print(f"  URL: {run.url}")
     print(f"\n  Performance:")
-    print(f"    val/loss:       {run.summary.get('val/loss', 'N/A'):.6f}")
-    print(f"    val/loss_theta: {run.summary.get('val/loss_theta', 'N/A'):.6f}")
-    print(f"    val/loss_demo:  {run.summary.get('val/loss_demo', 'N/A'):.6f}")
+    print(f"    val/loss:            {run.summary.get('val/loss', 'N/A'):.6f}")
+    print(f"    val/loss_theta:      {run.summary.get('val/loss_theta', 'N/A'):.6f}")
+    print(f"    val/loss_demo:       {run.summary.get('val/loss_demo', 'N/A'):.6f}")
+    print(f"    val/loss_experience: {run.summary.get('val/loss_experience', 'N/A'):.6f}")
     
     print(f"\n  Hyperparameters:")
     important_params = [
         'batch_size', 'lr', 'optimizer', 'dropout', 'num_layers', 
-        'd_model', 'nhead', 'dim_feedforward', 'demo_loss_weight', 'demo_belief_loss'
+        'd_model', 'nhead', 'dim_feedforward', 'demo_loss_weight', 
+        'experience_loss_weight', 'demo_belief_loss'
     ]
     
     for param in important_params:

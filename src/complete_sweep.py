@@ -115,6 +115,7 @@ def resume_run(run_info, entity, project):
         '--d_model', str(config['d_model']),
         '--demo_loss_weight', str(config['demo_loss_weight']),
         '--demo_belief_loss', config['demo_belief_loss'],
+        '--experience_loss_weight', str(config.get('experience_loss_weight', 0.0)),
         '--weight_decay', str(config.get('weight_decay', 0.01)),
         '--device', config.get('device', 'cuda'),
     ]

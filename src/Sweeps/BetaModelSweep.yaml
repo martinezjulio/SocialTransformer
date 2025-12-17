@@ -43,6 +43,8 @@ parameters:
     values: [1.0]
   demo_belief_loss:
     values: ["cross_entropy"] #["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
+  experience_loss_weight:
+    values: [0, 1]
   # Scheduler parameters
   scheduler:
     values: ["cosine", "plateau"]
