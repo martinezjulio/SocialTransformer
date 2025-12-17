@@ -163,6 +163,43 @@ def beta_cross_entropy(pred_alpha: torch.Tensor, pred_beta: torch.Tensor,
     return cross_entropy.mean()
 
 
+def experience_loss_log(pred_alpha: torch.Tensor, pred_beta: torch.Tensor,
+                       target_alpha: torch.Tensor, target_beta: torch.Tensor,
+                       alpha0: float = 1.0, beta0: float = 1.0,
+                       eps: float = 1.0) -> torch.Tensor:
+    """
+    Log-space MSE loss on total experience N_tot.
+    
+    Computes N_tot = sum over arms of (alpha - alpha0) + (beta - beta0)
+    Then applies MSE loss in log space to handle varying scales (novices vs experts).
+    
+    Args:
+        pred_alpha: Predicted alpha [B, K]
+        pred_beta: Predicted beta [B, K]
+        target_alpha: Target alpha [B, K]
+        target_beta: Target beta [B, K]
+        alpha0: Prior alpha parameter
+        beta0: Prior beta parameter
+        eps: Small constant for log stability (default: 1.0)
+    
+    Returns:
+        Scalar loss value
+    """
+    K = pred_alpha.shape[-1]
+    
+    # Compute N_tot from predictions
+    pred_N_tot = (pred_alpha.sum(dim=-1) - alpha0 * K + 
+                  pred_beta.sum(dim=-1) - beta0 * K)
+    
+    # Compute N_tot from targets
+    target_N_tot = (target_alpha.sum(dim=-1) - alpha0 * K + 
+                    target_beta.sum(dim=-1) - beta0 * K)
+    
+    # MSE in log space (add eps to handle N=0 case for novices)
+    return F.mse_loss(torch.log(pred_N_tot + eps), 
+                      torch.log(target_N_tot + eps))
+
+
 def get_demo_belief_loss(loss_type: str):
     """
     Get the appropriate loss function for demonstrator belief predictions.

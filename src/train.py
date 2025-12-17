@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
 from models.BetaModel import SBIPosteriorTransformer
 from transforms import BeliefNormalizer
-from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta
+from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log
 
 import wandb
 
@@ -162,6 +162,7 @@ def save_checkpoint(
     demo_belief_loss: str = None,
     scheduler=None,
     model_config: dict = None,
+    experience_loss_weight: float = None,
 ) -> str:
     """
     Save a checkpoint and optionally log it as a wandb artifact.
@@ -203,6 +204,7 @@ def save_checkpoint(
         },
         'config': {
             'demo_belief_loss': demo_belief_loss,
+            'experience_loss_weight': experience_loss_weight,
         }
     }
     
@@ -257,9 +259,10 @@ def train_one_epoch(
     normalizer=None,
     scheduler=None,
     scheduler_type: str = "cosine",
+    experience_loss_weight: float = 0.0,
 ) -> Dict[str, float]:
     model.train()
-    total_loss, total_theta, total_demo = 0.0, 0.0, 0.0
+    total_loss, total_theta, total_demo, total_experience = 0.0, 0.0, 0.0, 0.0
     print(f"  Loading first batch from dataloader...")
 
     for batch_idx, batch in enumerate(loader):
@@ -341,7 +344,21 @@ def train_one_epoch(
             )
         loss_demo = loss_demo / num_demonstrators  # Average over demonstrators
 
-        loss = loss_theta + demo_loss_weight * loss_demo
+        # Per-demonstrator experience loss
+        loss_experience = 0.0
+        if experience_loss_weight > 0:
+            for demo_id in range(num_demonstrators):
+                loss_experience += experience_loss_log(
+                    pred_alpha[:, demo_id, :],
+                    pred_beta[:, demo_id, :],
+                    target_alpha_denorm[:, demo_id, :],
+                    target_beta_denorm[:, demo_id, :],
+                    alpha0=alpha0,
+                    beta0=beta0
+                )
+            loss_experience = loss_experience / num_demonstrators
+
+        loss = loss_theta + demo_loss_weight * loss_demo + experience_loss_weight * loss_experience
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -353,6 +370,7 @@ def train_one_epoch(
         total_loss += loss.item()
         total_theta += loss_theta.item()
         total_demo += loss_demo.item()
+        total_experience += loss_experience.item()
         
         if batch_idx == 0:
             print(f"  ✓ First batch complete! loss={loss.item():.4f}")
@@ -364,6 +382,7 @@ def train_one_epoch(
         "loss": total_loss / n,
         "loss_theta": total_theta / n,
         "loss_demo": total_demo / n,
+        "loss_experience": total_experience / n,
     }
 
 
@@ -393,6 +412,8 @@ def main():
     parser.add_argument("--demo_belief_loss", type=str, default="log_mse",
                         choices=["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"],
                         help="Loss function for demonstrator belief predictions")
+    parser.add_argument("--experience_loss_weight", type=float, default=0.0, 
+                        help="Weight for experience (N_tot) loss (0.0-1.0)")
     
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
@@ -514,6 +535,7 @@ def main():
                 "d_model": args.d_model,
                 "demo_loss_weight": args.demo_loss_weight,
                 "demo_belief_loss": args.demo_belief_loss,
+                "experience_loss_weight": args.experience_loss_weight,
                 "normalize_beliefs": normalize_beliefs,
                 "N_max": N_max,
                 "use_scheduler": args.use_scheduler,
@@ -699,21 +721,24 @@ def main():
         
         stats = train_one_epoch(
             model, train_loader, optimizer, device, 
+            alpha0=alpha0,
+            beta0=beta0,
             demo_loss_weight=args.demo_loss_weight,
             demo_loss_fn=demo_loss_fn,
             normalizer=normalizer,
             scheduler=scheduler,
-            scheduler_type=args.scheduler if args.use_scheduler else "cosine"
+            scheduler_type=args.scheduler if args.use_scheduler else "cosine",
+            experience_loss_weight=args.experience_loss_weight
         )
         
         # Log current learning rate if scheduler is used
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  lr={current_lr:.2e}")
+        print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  exp={stats['loss_experience']:.4f}  lr={current_lr:.2e}")
 
         # Simple eval (same losses on val set) - use full context
         model.eval()
         with torch.no_grad():
-            val_tot = {"loss":0.0,"theta":0.0,"demo":0.0}
+            val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0}
             for batch in val_loader:
                 for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
                           "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
@@ -756,16 +781,32 @@ def main():
                     )
                 ld = ld / num_demonstrators
                 
-                val_tot["loss"] += (lt + args.demo_loss_weight*ld).item()
+                # Per-demonstrator experience loss
+                le = 0.0
+                if args.experience_loss_weight > 0:
+                    for demo_id in range(num_demonstrators):
+                        le += experience_loss_log(
+                            pred_alpha_val[:, demo_id, :],
+                            pred_beta_val[:, demo_id, :],
+                            target_alpha_val[:, demo_id, :],
+                            target_beta_val[:, demo_id, :],
+                            alpha0=alpha0,
+                            beta0=beta0
+                        )
+                    le = le / num_demonstrators
+                
+                val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le).item()
                 val_tot["theta"]+= lt.item()
                 val_tot["demo"] += ld.item()
+                val_tot["experience"] += le.item()
             n = len(val_loader)
             val_stats = {
                 "loss": val_tot['loss']/n,
                 "loss_theta": val_tot['theta']/n,
                 "loss_demo": val_tot['demo']/n,
+                "loss_experience": val_tot['experience']/n,
             }
-            print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}")
+            print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}  exp={val_stats['loss_experience']:.4f}")
             
             # Step plateau scheduler if using it
             if scheduler is not None and args.scheduler == "plateau":
@@ -777,9 +818,11 @@ def main():
                     "train/loss": stats['loss'],
                     "train/loss_theta": stats['loss_theta'],
                     "train/loss_demo": stats['loss_demo'],
+                    "train/loss_experience": stats['loss_experience'],
                     "val/loss": val_stats['loss'],
                     "val/loss_theta": val_stats['loss_theta'],
                     "val/loss_demo": val_stats['loss_demo'],
+                    "val/loss_experience": val_stats['loss_experience'],
                     "learning_rate": current_lr,
                     "epoch": epoch
                 }
@@ -817,6 +860,7 @@ def main():
                 demo_belief_loss=args.demo_belief_loss,
                 scheduler=scheduler,
                 model_config=model_config,
+                experience_loss_weight=args.experience_loss_weight,
             )
             prev_best_checkpoint = checkpoint_path
         else:
@@ -856,6 +900,7 @@ def main():
                 demo_belief_loss=args.demo_belief_loss,
                 scheduler=scheduler,
                 model_config=model_config,
+                experience_loss_weight=args.experience_loss_weight,
             )
             prev_latest_checkpoint = checkpoint_path
     
@@ -884,6 +929,7 @@ def main():
         demo_belief_loss=args.demo_belief_loss,
         scheduler=scheduler,
         model_config=model_config,
+        experience_loss_weight=args.experience_loss_weight,
     )
 
 

@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
         --epochs|--lr|--scheduler|--optimizer|--weight_decay|--batch_size|\
         --warmup_epochs|--min_lr_ratio|--patience|--factor|--early_stopping_patience|\
         --dropout|--nhead|--num_layers|--dim_feedforward|--d_model|\
-        --demo_loss_weight|--demo_belief_loss|--dataset_path|--device)
+        --demo_loss_weight|--demo_belief_loss|--experience_loss_weight|--dataset_path|--device)
             OVERRIDES+=("$1" "$2")
             shift 2
             ;;
