@@ -52,6 +52,8 @@ MAX_CONTEXT=144
 DEMO_STRATEGY="expert_thompson_novice_random"  # Options: uniform_thompson, expert_novice_thompson, expert_thompson_novice_random
 EXPERT_N_MIN=60
 EXPERT_N_MAX=72
+BANDIT_STRATEGY="sample"  # Options: sample, permute
+BANDIT_PAYOFFS="0.0,0.1,0.2,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.75,0.8"  # Must have exactly K values
 
 # Print configuration
 echo "=================================="
@@ -72,6 +74,8 @@ echo "N_max: $N_MAX"
 echo "Demo strategy: $DEMO_STRATEGY"
 echo "Expert N_min: $EXPERT_N_MIN"
 echo "Expert N_max: $EXPERT_N_MAX"
+echo "Bandit strategy: $BANDIT_STRATEGY"
+echo "Bandit payoffs: $BANDIT_PAYOFFS"
 echo "Shard size: $SHARD_SIZE"
 echo "Max context length: $MAX_CONTEXT"
 echo "=================================="
@@ -101,7 +105,9 @@ python src/generate_simulations.py \
     --shard_size $SHARD_SIZE \
     --demo_strategy $DEMO_STRATEGY \
     --expert_N_min $EXPERT_N_MIN \
-    --expert_N_max $EXPERT_N_MAX
+    --expert_N_max $EXPERT_N_MAX \
+    --bandit_strategy $BANDIT_STRATEGY \
+    --bandit_payoffs "$BANDIT_PAYOFFS"
 
 # Check if generation was successful
 if [ $? -eq 0 ]; then
@@ -139,7 +145,9 @@ if [ $? -eq 0 ]; then
     "max_context": $MAX_CONTEXT,
     "demo_strategy": "$DEMO_STRATEGY",
     "expert_N_min": $EXPERT_N_MIN,
-    "expert_N_max": $EXPERT_N_MAX
+    "expert_N_max": $EXPERT_N_MAX,
+    "bandit_strategy": "$BANDIT_STRATEGY",
+    "bandit_payoffs": "$BANDIT_PAYOFFS"
   },
   "splits": {
     "train": "$OUT_DIR/train/",
