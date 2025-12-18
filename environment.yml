@@ -1,0 +1,6 @@
+name: SocialTransformer
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+prefix: /home/julio/miniforge3/envs/SocialTransformer
