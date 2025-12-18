@@ -346,17 +346,16 @@ def train_one_epoch(
 
         # Per-demonstrator experience loss
         loss_experience = 0.0
-        if experience_loss_weight > 0:
-            for demo_id in range(num_demonstrators):
-                loss_experience += experience_loss_log(
-                    pred_alpha[:, demo_id, :],
-                    pred_beta[:, demo_id, :],
-                    target_alpha_denorm[:, demo_id, :],
-                    target_beta_denorm[:, demo_id, :],
-                    alpha0=alpha0,
-                    beta0=beta0
-                )
-            loss_experience = loss_experience / num_demonstrators
+        for demo_id in range(num_demonstrators):
+            loss_experience += experience_loss_log(
+                pred_alpha[:, demo_id, :],
+                pred_beta[:, demo_id, :],
+                target_alpha_denorm[:, demo_id, :],
+                target_beta_denorm[:, demo_id, :],
+                alpha0=alpha0,
+                beta0=beta0
+            )
+        loss_experience = loss_experience / num_demonstrators
 
         loss = loss_theta + demo_loss_weight * loss_demo + experience_loss_weight * loss_experience
         loss.backward()
@@ -783,17 +782,16 @@ def main():
                 
                 # Per-demonstrator experience loss
                 le = 0.0
-                if args.experience_loss_weight > 0:
-                    for demo_id in range(num_demonstrators):
-                        le += experience_loss_log(
-                            pred_alpha_val[:, demo_id, :],
-                            pred_beta_val[:, demo_id, :],
-                            target_alpha_val[:, demo_id, :],
-                            target_beta_val[:, demo_id, :],
-                            alpha0=alpha0,
-                            beta0=beta0
-                        )
-                    le = le / num_demonstrators
+                for demo_id in range(num_demonstrators):
+                    le += experience_loss_log(
+                        pred_alpha_val[:, demo_id, :],
+                        pred_beta_val[:, demo_id, :],
+                        target_alpha_val[:, demo_id, :],
+                        target_beta_val[:, demo_id, :],
+                        alpha0=alpha0,
+                        beta0=beta0
+                    )
+                le = le / num_demonstrators
                 
                 val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le).item()
                 val_tot["theta"]+= lt.item()
