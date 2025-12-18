@@ -51,6 +51,20 @@ def sample_bandit(K: int, min_gap: float = 0.05, min_best: float = 0.70) -> List
         if best - second >= min_gap and best >= min_best:
             return thetas
 
+def permute_bandit(payoff_values: List[float]) -> List[float]:
+    """
+    Create a bandit by permuting a fixed set of payoff values.
+    
+    Args:
+        payoff_values: Fixed list of payoff values to permute
+    
+    Returns:
+        Random permutation of the payoff values
+    """
+    thetas = payoff_values.copy()
+    random.shuffle(thetas)
+    return thetas
+
 def allocate_prehistory_ts(
     K: int,
     N_tot: int,
@@ -142,6 +156,8 @@ def simulate_rounds_run(
     demo_strategy: str = "uniform_thompson",
     expert_N_min: int = 60,
     expert_N_max: int = 72,
+    bandit_strategy: str = "sample",
+    bandit_payoffs: List[float] = None,
 ) -> Dict:
     """
     Simulate a run with multiple rounds of alternating demonstrators and learner.
@@ -160,15 +176,24 @@ def simulate_rounds_run(
         demo_strategy: "uniform_thompson", "expert_novice_thompson", or "expert_thompson_novice_random"
         expert_N_min: minimum N_tot for experts (used in expert_novice strategies)
         expert_N_max: maximum N_tot for experts (used in expert_novice strategies)
+        bandit_strategy: "sample" for random Beta sampling, "permute" for fixed payoffs permuted
+        bandit_payoffs: Fixed payoff values to permute (required if bandit_strategy="permute", must have length K)
     
     Returns:
         Dictionary with events, round_boundaries, demonstrators, bandits, meta
     """
     LEARNER_ID = 99
     
-    # Sample bandits
+    # Sample bandits based on strategy
     num_bandits = num_rounds if change_bandits_with_rounds else 1
-    bandit_thetas = [sample_bandit(K) for _ in range(num_bandits)]
+    if bandit_strategy == "sample":
+        bandit_thetas = [sample_bandit(K) for _ in range(num_bandits)]
+    elif bandit_strategy == "permute":
+        if bandit_payoffs is None or len(bandit_payoffs) != K:
+            raise ValueError(f"bandit_payoffs must have exactly K={K} values for permute strategy, got {len(bandit_payoffs) if bandit_payoffs else 0}")
+        bandit_thetas = [permute_bandit(bandit_payoffs) for _ in range(num_bandits)]
+    else:
+        raise ValueError(f"Unknown bandit_strategy: {bandit_strategy}")
     
     # Sample N_tot for each demonstrator based on strategy
     demo_N_tots = {}
@@ -351,6 +376,8 @@ def simulate_rounds_run(
             "demo_strategy": demo_strategy,
             "expert_N_min": expert_N_min,
             "expert_N_max": expert_N_max,
+            "bandit_strategy": bandit_strategy,
+            "bandit_payoffs": bandit_payoffs if bandit_strategy == "permute" else None,
             "prehistory": "TS",
         },
         "events": all_events,
@@ -417,6 +444,8 @@ def generate_dataset_streaming(
     demo_strategy: str = "uniform_thompson",
     expert_N_min: int = 60,
     expert_N_max: int = 72,
+    bandit_strategy: str = "sample",
+    bandit_payoffs: List[float] = None,
     # sharding
     split: str = "train",
     shard_size: int = 10000,
@@ -462,6 +491,8 @@ def generate_dataset_streaming(
             "demo_strategy": demo_strategy,
             "expert_N_min": expert_N_min,
             "expert_N_max": expert_N_max,
+            "bandit_strategy": bandit_strategy,
+            "bandit_payoffs": bandit_payoffs if bandit_strategy == "permute" else None,
             "shard_size": shard_size,
         },
         "shards": []
@@ -493,6 +524,8 @@ def generate_dataset_streaming(
             demo_strategy=demo_strategy,
             expert_N_min=expert_N_min,
             expert_N_max=expert_N_max,
+            bandit_strategy=bandit_strategy,
+            bandit_payoffs=bandit_payoffs,
         )
         example = build_training_example(run)
         buf.append(example)
@@ -532,8 +565,20 @@ if __name__ == "__main__":
                         help="Minimum N_tot for experts")
     parser.add_argument("--expert_N_max", type=int, default=72,
                         help="Maximum N_tot for experts")
+    parser.add_argument("--bandit_strategy", type=str, default="sample", 
+                        choices=["sample", "permute"],
+                        help="Bandit generation strategy: 'sample' (random Beta) or 'permute' (fixed payoffs permuted)")
+    parser.add_argument("--bandit_payoffs", type=str, default="0.0,0.1,0.2,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.75,0.8",
+                        help="Comma-separated payoff values for permute strategy (must have exactly K values)")
     
     args = parser.parse_args()
+    
+    # Parse bandit payoffs if provided
+    bandit_payoffs = None
+    if args.bandit_strategy == "permute":
+        bandit_payoffs = [float(x.strip()) for x in args.bandit_payoffs.split(",")]
+        if len(bandit_payoffs) != args.K:
+            raise ValueError(f"bandit_payoffs must have exactly K={args.K} values, got {len(bandit_payoffs)}")
     
     random.seed(42)
     torch.manual_seed(42)
@@ -553,6 +598,8 @@ if __name__ == "__main__":
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
+        bandit_strategy=args.bandit_strategy,
+        bandit_payoffs=bandit_payoffs,
         shard_size=args.shard_size
     )
     
@@ -571,6 +618,8 @@ if __name__ == "__main__":
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
+        bandit_strategy=args.bandit_strategy,
+        bandit_payoffs=bandit_payoffs,
         shard_size=args.shard_size
     )
     
@@ -589,5 +638,7 @@ if __name__ == "__main__":
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
+        bandit_strategy=args.bandit_strategy,
+        bandit_payoffs=bandit_payoffs,
         shard_size=args.shard_size
     )
