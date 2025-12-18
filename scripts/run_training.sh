@@ -8,14 +8,14 @@ source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_00"
+DATASET_NAME="demonstrations_data_02"
 BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
 BATCH_SIZE=256
 LEARNING_RATE=1e-4
-EPOCHS=60
+EPOCHS=200
 DEVICE="cuda"
 WEIGHT_DECAY=0.01  # Weight decay for regularization
 
@@ -26,8 +26,9 @@ NHEAD=16
 NUM_LAYERS=8
 DIM_FEEDFORWARD=1024
 D_MODEL=512
-DEMO_LOSS_WEIGHT=0.5
+DEMO_LOSS_WEIGHT=1.0
 DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
+EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
@@ -81,6 +82,7 @@ echo "  FFN dimension: $DIM_FEEDFORWARD"
 echo "  Model dimension: $D_MODEL"
 echo "  Demo loss weight: $DEMO_LOSS_WEIGHT"
 echo "  Demo belief loss: $DEMO_BELIEF_LOSS"
+echo "  Experience loss weight: $EXPERIENCE_LOSS_WEIGHT"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -156,6 +158,7 @@ python src/train.py \
     --d_model $D_MODEL \
     --demo_loss_weight $DEMO_LOSS_WEIGHT \
     --demo_belief_loss $DEMO_BELIEF_LOSS \
+    --experience_loss_weight $EXPERIENCE_LOSS_WEIGHT \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \

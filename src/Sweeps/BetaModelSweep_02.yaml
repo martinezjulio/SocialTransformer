@@ -1,0 +1,65 @@
+program: src/train.py
+method: bayes
+project: social-belief-modeling
+entity: juliomartinez-individual
+metric:
+  name: val/loss
+  goal: minimize
+
+parameters:
+  # Fixed parameters
+  dataset_path:
+    value: "data/demonstrations_data_02"
+  epochs:
+    value: 250
+  device:
+    value: "cuda"
+  # LR Scheduler warmup parameters
+  warmup_epochs:
+    value: 2
+  min_lr_ratio:
+    value: 0.00001
+  # Hyperparameters to optimize
+  optimizer:
+    values: ["adamw"] #["adam", "adamw", "sgd"]
+  lr:
+    values: [0.00001, 0.00005, 0.0001]
+  weight_decay:
+    values: [0.0, 0.001, 0.01, 0.1]
+  batch_size:
+    values: [64, 128]
+  dropout:
+    values: [0.0, 0.1, 0.2, 0.3]
+  num_layers:
+    values: [4, 6, 8]
+  dim_feedforward:
+    values: [512, 768, 1024]
+  # d_model and nhead - using distribution to enforce constraint
+  d_model:
+    values: [256, 512]
+  nhead:
+    values: [4, 8, 16]
+  demo_loss_weight:
+    values: [1.0]
+  demo_belief_loss:
+    values: ["cross_entropy"] #["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
+  experience_loss_weight:
+    values: [0.0, 1.0]
+  # Scheduler parameters
+  scheduler:
+    values: ["cosine", "plateau"]
+  patience:
+    value: 10
+  factor:
+    value: 0.5
+  early_stopping_patience:
+    value: 30
+
+# Custom command to properly pass flags
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args}
+  - --use_wandb
+  - --use_scheduler

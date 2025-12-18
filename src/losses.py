@@ -195,6 +195,11 @@ def experience_loss_log(pred_alpha: torch.Tensor, pred_beta: torch.Tensor,
     target_N_tot = (target_alpha.sum(dim=-1) - alpha0 * K + 
                     target_beta.sum(dim=-1) - beta0 * K)
     
+    # Clamp to non-negative to avoid log of negative values
+    # (can happen with predicted values early in training)
+    pred_N_tot = torch.clamp(pred_N_tot, min=0.0)
+    target_N_tot = torch.clamp(target_N_tot, min=0.0)
+    
     # MSE in log space (add eps to handle N=0 case for novices)
     return F.mse_loss(torch.log(pred_N_tot + eps), 
                       torch.log(target_N_tot + eps))
