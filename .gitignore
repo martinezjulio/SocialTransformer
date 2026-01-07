@@ -120,3 +120,6 @@ plots/
 results/
 outputs/
 experiments/
+
+# Cursor files
+.cursor/
