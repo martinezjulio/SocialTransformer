@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
@@ -745,12 +746,14 @@ def main():
     all_results = []
     
     # Loop over all combinations
-    for learner_input in ["human", "model"]:
-        for beta_method in ["theta_betas", "novice_betas", "expert_betas", "recent_betas"]:
-            print(f"\n--- Running: learner_segment_input={learner_input}, beta_method={beta_method} ---")
+    for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
+        for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"], 
+                                desc=f"Beta method ({learner_input})", position=1, leave=False):
             
-            for session_id in df['session_id'].unique():
-                print(f"  Processing session: {session_id}")
+            session_ids = df['session_id'].unique()
+            for session_id in tqdm(session_ids, 
+                                  desc=f"Sessions ({learner_input}, {beta_method})", 
+                                  position=2, leave=False):
                 session_df = df[df['session_id'] == session_id].copy()
                 
                 result_df = run_inference_on_session(
