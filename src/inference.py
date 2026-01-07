@@ -368,7 +368,9 @@ def run_inference_on_session(
     learner_steps: int = 6,
     SPECIAL: Dict[str, int] = None,
     learner_segment_input: str = "human",
-    beta_method: str = "theta_betas"
+    beta_method: str = "theta_betas",
+    num_rollouts: int = 1,
+    seed: int = 42
 ) -> pd.DataFrame:
     """
     Run inference on a single session, generating hybrid data.
@@ -389,10 +391,12 @@ def run_inference_on_session(
                     "novice_betas" (novice demonstrator beliefs),
                     "expert_betas" (expert demonstrator beliefs), or
                     "recent_betas" (most recent demonstrator's beliefs)
+        num_rollouts: Number of independent rollouts per session
+        seed: Base random seed for reproducibility
         
     Returns:
         DataFrame with original demos + simulated learner segments,
-        plus learner_segment_input and beta_method columns
+        plus learner_segment_input, beta_method, and rollout_id columns
     """
     # Parse game sequence to understand structure
     game_seq = session_df.iloc[0]['game_sequence']
@@ -406,194 +410,209 @@ def run_inference_on_session(
     demo_games = session_df[session_df['game'] == 'watch']['game_index'].unique()
     learner_games = session_df[session_df['game'] == 'play']['game_index'].unique()
     
-    # Build result incrementally
-    result_rows = []
-    accumulated_events = []
-    current_segment_idx = 0
+    # Collect results from all rollouts
+    all_rollout_rows = []
     
-    # Track simulated learner data for "model" mode
-    simulated_data_rows = []
-    
-    # Process games in order
-    for game_idx in game_indices:
+    # Run multiple independent rollouts
+    for rollout_id in range(num_rollouts):
+        # Set reproducible seed for this rollout
+        rollout_seed = seed + rollout_id
+        random.seed(rollout_seed)
+        np.random.seed(rollout_seed)
+        
+        # Build result incrementally
+        result_rows = []
+        accumulated_events = []
+        current_segment_idx = 0
+        
+        # Track simulated learner data for "model" mode
+        simulated_data_rows = []
+        
+        # Process games in order
+        for game_idx in game_indices:
         game_df = session_df[session_df['game_index'] == game_idx].copy()
         
-        if game_idx in demo_games:
-            # This is a demonstration segment - keep as is
-            for _, row in game_df.iterrows():
-                row_dict = row.to_dict()
-                # Add metadata columns
-                row_dict['learner_segment_input'] = learner_segment_input
-                row_dict['beta_method'] = beta_method
-                # Add NaN for beta predictions (no model inference for demos)
-                row_dict['theta_betas'] = np.nan
-                row_dict['expert_betas'] = np.nan
-                row_dict['novice_betas'] = np.nan
-                result_rows.append(row_dict)
+            if game_idx in demo_games:
+                # This is a demonstration segment - keep as is
+                for _, row in game_df.iterrows():
+                    row_dict = row.to_dict()
+                    # Add metadata columns
+                    row_dict['rollout_id'] = rollout_id
+                    row_dict['learner_segment_input'] = learner_segment_input
+                    row_dict['beta_method'] = beta_method
+                    # Add NaN for beta predictions (no model inference for demos)
+                    row_dict['theta_betas'] = np.nan
+                    row_dict['expert_betas'] = np.nan
+                    row_dict['novice_betas'] = np.nan
+                    result_rows.append(row_dict)
                 
-                # Add to accumulated events for model context
-                bandit_id = 0  # Will be properly mapped later
-                demo_type = row['demonstrator_type']
-                action = int(row['position'])
-                reward = 1 if row['reward_generated'] else 0
-                # Events will be properly formatted when we do inference
+                    # Add to accumulated events for model context
+                    bandit_id = 0  # Will be properly mapped later
+                    demo_type = row['demonstrator_type']
+                    action = int(row['position'])
+                    reward = 1 if row['reward_generated'] else 0
+                    # Events will be properly formatted when we do inference
+                
+                current_segment_idx += 1
+                
+            elif game_idx in learner_games:
+                # This is a learner segment - simulate it using model predictions
+                
+                # Convert accumulated context to model format
+                visible_games = [g for g in game_indices if g < game_idx]
+                
+                if len(visible_games) == 0:
+                    # No context yet, shouldn't happen in proper game sequences
+                    print(f"Warning: Learner segment before any demo in session {session_df.iloc[0]['session_id']}")
+                    continue
+                
+                # Prepare context: either original human data or combine with simulated data
+                if learner_segment_input == "model" and len(simulated_data_rows) > 0:
+                    # Combine original demos with previously simulated learner segments
+                    simulated_df = pd.DataFrame(simulated_data_rows)
+                    # Keep only demos from original (filter to visible games only)
+                    demos_df = session_df[
+                        (session_df['game'] == 'watch') & 
+                        (session_df['game_index'].isin(visible_games))
+                    ].copy()
+                    # Combine demos and simulated learner data
+                    context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
+                    # Sort to maintain temporal order
+                    context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
+                else:
+                    # Use original human data
+                    context_df = session_df
+                
+                model_input = convert_session_to_model_format(
+                    context_df, 
+                    visible_games,
+                    num_arms
+                )
             
-            current_segment_idx += 1
-            
-        elif game_idx in learner_games:
-            # This is a learner segment - simulate it using model predictions
-            
-            # Convert accumulated context to model format
-            visible_games = [g for g in game_indices if g < game_idx]
-            
-            if len(visible_games) == 0:
-                # No context yet, shouldn't happen in proper game sequences
-                print(f"Warning: Learner segment before any demo in session {session_df.iloc[0]['session_id']}")
-                continue
-            
-            # Prepare context: either original human data or combine with simulated data
-            if learner_segment_input == "model" and len(simulated_data_rows) > 0:
-                # Combine original demos with previously simulated learner segments
-                simulated_df = pd.DataFrame(simulated_data_rows)
-                # Keep only demos from original (filter to visible games only)
-                demos_df = session_df[
-                    (session_df['game'] == 'watch') & 
-                    (session_df['game_index'].isin(visible_games))
-                ].copy()
-                # Combine demos and simulated learner data
-                context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
-                # Sort to maintain temporal order
-                context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
-            else:
-                # Use original human data
-                context_df = session_df
-            
-            model_input = convert_session_to_model_format(
-                context_df, 
-                visible_games,
-                num_arms
-            )
-            
-            # Encode to tensors
-            tensors = encode_events_to_tensors(
-                model_input['events'],
-                num_arms,
-                len(model_input['bandits_info']),
-                SPECIAL
-            )
-            
-            # Add padding mask (no padding for single sequence)
-            seq_len = tensors['bandit_ids'].shape[1]
-            tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
-            
-            # Move to device
-            for k in tensors:
-                tensors[k] = tensors[k].to(device)
-            
-            # Create segment mask to only see visible segments
-            num_visible_segments = len(visible_games)
-            attn_mask = create_segment_mask(
-                model_input['segment_boundaries'] + [seq_len],  # Add end position
-                num_visible_segments,
-                seq_len,
-                device
-            )
-            
-            # Run model inference
-            with torch.no_grad():
-                model.eval()
-                outputs = model(tensors, custom_attn_mask=attn_mask)
-            
-            # Serialize all three types of beta predictions for recording
-            theta_betas_str = serialize_betas(
-                outputs['alpha_theta'][0, :], 
-                outputs['beta_theta'][0, :]
-            )
-            
-            novice_demo_idx = demo_order_map['novice']
-            novice_betas_str = serialize_betas(
-                outputs['alpha_demo'][0, novice_demo_idx, :],
-                outputs['beta_demo'][0, novice_demo_idx, :]
-            )
-            
-            expert_demo_idx = demo_order_map['expert']
-            expert_betas_str = serialize_betas(
-                outputs['alpha_demo'][0, expert_demo_idx, :],
-                outputs['beta_demo'][0, expert_demo_idx, :]
-            )
-            
-            # Select beta parameters based on beta_method
-            if beta_method == "theta_betas":
-                # Use predicted bandit payoff beliefs (theta)
-                pred_alpha = outputs['alpha_theta'][0, :]  # [K]
-                pred_beta = outputs['beta_theta'][0, :]    # [K]
-            elif beta_method == "novice_betas":
-                # Use novice demonstrator's beliefs
+                # Encode to tensors
+                tensors = encode_events_to_tensors(
+                    model_input['events'],
+                    num_arms,
+                    len(model_input['bandits_info']),
+                    SPECIAL
+                )
+                
+                # Add padding mask (no padding for single sequence)
+                seq_len = tensors['bandit_ids'].shape[1]
+                tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
+                
+                # Move to device
+                for k in tensors:
+                    tensors[k] = tensors[k].to(device)
+                
+                # Create segment mask to only see visible segments
+                num_visible_segments = len(visible_games)
+                attn_mask = create_segment_mask(
+                    model_input['segment_boundaries'] + [seq_len],  # Add end position
+                    num_visible_segments,
+                    seq_len,
+                    device
+                )
+                
+                # Run model inference
+                with torch.no_grad():
+                    model.eval()
+                    outputs = model(tensors, custom_attn_mask=attn_mask)
+                
+                # Serialize all three types of beta predictions for recording
+                theta_betas_str = serialize_betas(
+                    outputs['alpha_theta'][0, :], 
+                    outputs['beta_theta'][0, :]
+                )
+                
                 novice_demo_idx = demo_order_map['novice']
-                pred_alpha = outputs['alpha_demo'][0, novice_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, novice_demo_idx, :]    # [K]
-            elif beta_method == "expert_betas":
-                # Use expert demonstrator's beliefs
-                expert_demo_idx = demo_order_map['expert']
-                pred_alpha = outputs['alpha_demo'][0, expert_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, expert_demo_idx, :]    # [K]
-            elif beta_method == "recent_betas":
-                # Use the most recent demonstrator's beliefs
-                # Find the last demo segment before current learner
-                last_demo_game_idx = visible_games[-1]  # Most recent visible game
-                last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
-                last_demo_type = last_demo_df.iloc[0]['demonstrator_type']  # 'novice' or 'expert'
+                novice_betas_str = serialize_betas(
+                    outputs['alpha_demo'][0, novice_demo_idx, :],
+                    outputs['beta_demo'][0, novice_demo_idx, :]
+                )
                 
-                # Get the model index for this demonstrator
-                recent_demo_idx = demo_order_map[last_demo_type]
-                pred_alpha = outputs['alpha_demo'][0, recent_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, recent_demo_idx, :]    # [K]
-            else:
-                raise ValueError(f"Unknown beta_method: {beta_method}")
+                expert_demo_idx = demo_order_map['expert']
+                expert_betas_str = serialize_betas(
+                    outputs['alpha_demo'][0, expert_demo_idx, :],
+                    outputs['beta_demo'][0, expert_demo_idx, :]
+                )
             
-            # Get current bandit payoffs
-            current_round = game_df.iloc[0]['round_index']
-            current_zone = game_df.iloc[0]['zone_global_index']
-            bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
+                # Select beta parameters based on beta_method
+                if beta_method == "theta_betas":
+                    # Use predicted bandit payoff beliefs (theta)
+                    pred_alpha = outputs['alpha_theta'][0, :]  # [K]
+                    pred_beta = outputs['beta_theta'][0, :]    # [K]
+                elif beta_method == "novice_betas":
+                    # Use novice demonstrator's beliefs
+                    novice_demo_idx = demo_order_map['novice']
+                    pred_alpha = outputs['alpha_demo'][0, novice_demo_idx, :]  # [K]
+                    pred_beta = outputs['beta_demo'][0, novice_demo_idx, :]    # [K]
+                elif beta_method == "expert_betas":
+                    # Use expert demonstrator's beliefs
+                    expert_demo_idx = demo_order_map['expert']
+                    pred_alpha = outputs['alpha_demo'][0, expert_demo_idx, :]  # [K]
+                    pred_beta = outputs['beta_demo'][0, expert_demo_idx, :]    # [K]
+                elif beta_method == "recent_betas":
+                    # Use the most recent demonstrator's beliefs
+                    # Find the last demo segment before current learner
+                    last_demo_game_idx = visible_games[-1]  # Most recent visible game
+                    last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
+                    last_demo_type = last_demo_df.iloc[0]['demonstrator_type']  # 'novice' or 'expert'
+                    
+                    # Get the model index for this demonstrator
+                    recent_demo_idx = demo_order_map[last_demo_type]
+                    pred_alpha = outputs['alpha_demo'][0, recent_demo_idx, :]  # [K]
+                    pred_beta = outputs['beta_demo'][0, recent_demo_idx, :]    # [K]
+                else:
+                    raise ValueError(f"Unknown beta_method: {beta_method}")
+                
+                # Get current bandit payoffs
+                current_round = game_df.iloc[0]['round_index']
+                current_zone = game_df.iloc[0]['zone_global_index']
+                bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
+                
+                # Run Thompson sampling
+                trajectory = thompson_sampling_step(
+                    pred_alpha.cpu(),
+                    pred_beta.cpu(),
+                    bandit_payoffs,
+                    learner_steps
+                )
             
-            # Run Thompson sampling
-            trajectory = thompson_sampling_step(
-                pred_alpha.cpu(),
-                pred_beta.cpu(),
-                bandit_payoffs,
-                learner_steps
-            )
-            
-            # Create rows for simulated learner segment
-            for step_idx, (action_idx, reward) in enumerate(trajectory):
-                row = {
-                    'session_id': session_df.iloc[0]['session_id'],
-                    'session_index': session_df.iloc[0]['session_index'],
-                    'anonymous_id': session_df.iloc[0]['anonymous_id'],
-                    'position': action_idx,
-                    'action': 'shoot',
-                    'game': 'play',
-                    'game_sequence': game_seq,
-                    'game_index': game_idx,
-                    'round_index': current_round,
-                    'demonstrator_type': np.nan,
-                    'demonstrator_trajectory': np.nan,
-                    'zone_bandit': game_df.iloc[0]['zone_bandit'],
-                    'zone_global_index': current_zone,
-                    'reward_generated': bool(reward),
-                    'learner_segment_input': learner_segment_input,
-                    'beta_method': beta_method,
-                    'theta_betas': theta_betas_str,
-                    'expert_betas': expert_betas_str,
-                    'novice_betas': novice_betas_str
-                }
-                result_rows.append(row)
-                # Also store in simulated_data for potential use in next iteration
-                simulated_data_rows.append(row)
-            
-            current_segment_idx += 1
+                # Create rows for simulated learner segment
+                for step_idx, (action_idx, reward) in enumerate(trajectory):
+                    row = {
+                        'rollout_id': rollout_id,
+                        'session_id': session_df.iloc[0]['session_id'],
+                        'session_index': session_df.iloc[0]['session_index'],
+                        'anonymous_id': session_df.iloc[0]['anonymous_id'],
+                        'position': action_idx,
+                        'action': 'shoot',
+                        'game': 'play',
+                        'game_sequence': game_seq,
+                        'game_index': game_idx,
+                        'round_index': current_round,
+                        'demonstrator_type': np.nan,
+                        'demonstrator_trajectory': np.nan,
+                        'zone_bandit': game_df.iloc[0]['zone_bandit'],
+                        'zone_global_index': current_zone,
+                        'reward_generated': bool(reward),
+                        'learner_segment_input': learner_segment_input,
+                        'beta_method': beta_method,
+                        'theta_betas': theta_betas_str,
+                        'expert_betas': expert_betas_str,
+                        'novice_betas': novice_betas_str
+                    }
+                    result_rows.append(row)
+                    # Also store in simulated_data for potential use in next iteration
+                    simulated_data_rows.append(row)
+                
+                current_segment_idx += 1
+        
+        # Collect results from this rollout
+        all_rollout_rows.extend(result_rows)
     
-    return pd.DataFrame(result_rows)
+    return pd.DataFrame(all_rollout_rows)
 
 
 def main():
@@ -601,6 +620,10 @@ def main():
     parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
     parser.add_argument("--output_path",type=str,default="data/model_predictions/hybrid_model_predictions.csv",help="Path to output CSV file")
     parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
+    parser.add_argument("--num_rollouts", type=int, default=1,
+        help="Number of independent rollouts per session (default: 1)")
+    parser.add_argument("--seed", type=int, default=42,
+        help="Base random seed for reproducibility (default: 42)")
     
     # Checkpoint loading options (mutually exclusive)
     checkpoint_group = parser.add_mutually_exclusive_group(required=True)
@@ -708,8 +731,8 @@ def main():
     print(f"Using alpha0={alpha0}, beta0={beta0}")
     
     # Run inference on each session for all 8 combinations
-    print(f"\nProcessing {df['session_id'].nunique()} sessions with 8 combinations...")
-    print("Combinations: learner_segment_input × beta_method")
+    print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) × 8 combinations...")
+    print("Combinations: learner_segment_input × beta_method × rollouts")
     print("  - human × theta_betas")
     print("  - human × novice_betas")
     print("  - human × expert_betas")
@@ -740,7 +763,9 @@ def main():
                     model_config['T_learner'],
                     SPECIAL,
                     learner_segment_input=learner_input,
-                    beta_method=beta_method
+                    beta_method=beta_method,
+                    num_rollouts=args.num_rollouts,
+                    seed=args.seed
                 )
                 
                 all_results.append(result_df)
@@ -758,8 +783,8 @@ def main():
     final_df.to_csv(args.output_path, index=False)
     
     print(f"\nDone! Generated {len(final_df)} rows for {final_df['session_id'].nunique()} sessions")
-    print(f"  - 8 combinations: 2 learner_segment_input modes × 4 beta_method options")
-    print(f"  - Rows per combination: {len(final_df) // 8}")
+    print(f"  - 8 combinations × {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
+    print(f"  - Rows per combination-rollout: {len(final_df) // (8 * args.num_rollouts)}")
     print(f"Output saved to: {args.output_path}")
 
 
