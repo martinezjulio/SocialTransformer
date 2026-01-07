@@ -430,8 +430,8 @@ def run_inference_on_session(
         
         # Process games in order
         for game_idx in game_indices:
-        game_df = session_df[session_df['game_index'] == game_idx].copy()
-        
+            game_df = session_df[session_df['game_index'] == game_idx].copy()
+            
             if game_idx in demo_games:
                 # This is a demonstration segment - keep as is
                 for _, row in game_df.iterrows():
