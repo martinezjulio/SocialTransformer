@@ -431,8 +431,8 @@ def run_inference_on_session(
         
         # Process games in order
         for game_idx in game_indices:
-            game_df = session_df[session_df['game_index'] == game_idx].copy()
-            
+        game_df = session_df[session_df['game_index'] == game_idx].copy()
+        
             if game_idx in demo_games:
                 # This is a demonstration segment - keep as is
                 for _, row in game_df.iterrows():
@@ -446,7 +446,7 @@ def run_inference_on_session(
                     row_dict['expert_betas'] = np.nan
                     row_dict['novice_betas'] = np.nan
                     result_rows.append(row_dict)
-                
+                    
                     # Add to accumulated events for model context
                     bandit_id = 0  # Will be properly mapped later
                     demo_type = row['demonstrator_type']
@@ -469,122 +469,122 @@ def run_inference_on_session(
                 
                 # Prepare context: either original human data or combine with simulated data
                 if learner_segment_input == "model" and len(simulated_data_rows) > 0:
-                    # Combine original demos with previously simulated learner segments
-                    simulated_df = pd.DataFrame(simulated_data_rows)
-                    # Keep only demos from original (filter to visible games only)
-                    demos_df = session_df[
-                        (session_df['game'] == 'watch') & 
-                        (session_df['game_index'].isin(visible_games))
-                    ].copy()
-                    # Combine demos and simulated learner data
-                    context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
-                    # Sort to maintain temporal order
-                    context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
-                else:
-                    # Use original human data
-                    context_df = session_df
-                
-                model_input = convert_session_to_model_format(
-                    context_df, 
-                    visible_games,
-                    num_arms
-                )
+                # Combine original demos with previously simulated learner segments
+                simulated_df = pd.DataFrame(simulated_data_rows)
+                # Keep only demos from original (filter to visible games only)
+                demos_df = session_df[
+                    (session_df['game'] == 'watch') & 
+                    (session_df['game_index'].isin(visible_games))
+                ].copy()
+                # Combine demos and simulated learner data
+                context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
+                # Sort to maintain temporal order
+                context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
+            else:
+                # Use original human data
+                context_df = session_df
             
-                # Encode to tensors
-                tensors = encode_events_to_tensors(
-                    model_input['events'],
-                    num_arms,
-                    len(model_input['bandits_info']),
-                    SPECIAL
-                )
-                
-                # Add padding mask (no padding for single sequence)
-                seq_len = tensors['bandit_ids'].shape[1]
-                tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
-                
-                # Move to device
-                for k in tensors:
-                    tensors[k] = tensors[k].to(device)
-                
-                # Create segment mask to only see visible segments
-                num_visible_segments = len(visible_games)
-                attn_mask = create_segment_mask(
-                    model_input['segment_boundaries'] + [seq_len],  # Add end position
-                    num_visible_segments,
-                    seq_len,
-                    device
-                )
-                
-                # Run model inference
-                with torch.no_grad():
-                    model.eval()
-                    outputs = model(tensors, custom_attn_mask=attn_mask)
-                
-                # Serialize all three types of beta predictions for recording
-                theta_betas_str = serialize_betas(
-                    outputs['alpha_theta'][0, :], 
-                    outputs['beta_theta'][0, :]
-                )
-                
+            model_input = convert_session_to_model_format(
+                context_df, 
+                visible_games,
+                num_arms
+            )
+            
+            # Encode to tensors
+            tensors = encode_events_to_tensors(
+                model_input['events'],
+                num_arms,
+                len(model_input['bandits_info']),
+                SPECIAL
+            )
+            
+            # Add padding mask (no padding for single sequence)
+            seq_len = tensors['bandit_ids'].shape[1]
+            tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
+            
+            # Move to device
+            for k in tensors:
+                tensors[k] = tensors[k].to(device)
+            
+            # Create segment mask to only see visible segments
+            num_visible_segments = len(visible_games)
+            attn_mask = create_segment_mask(
+                model_input['segment_boundaries'] + [seq_len],  # Add end position
+                num_visible_segments,
+                seq_len,
+                device
+            )
+            
+            # Run model inference
+            with torch.no_grad():
+                model.eval()
+                outputs = model(tensors, custom_attn_mask=attn_mask)
+            
+            # Serialize all three types of beta predictions for recording
+            theta_betas_str = serialize_betas(
+                outputs['alpha_theta'][0, :], 
+                outputs['beta_theta'][0, :]
+            )
+            
+            novice_demo_idx = demo_order_map['novice']
+            novice_betas_str = serialize_betas(
+                outputs['alpha_demo'][0, novice_demo_idx, :],
+                outputs['beta_demo'][0, novice_demo_idx, :]
+            )
+            
+            expert_demo_idx = demo_order_map['expert']
+            expert_betas_str = serialize_betas(
+                outputs['alpha_demo'][0, expert_demo_idx, :],
+                outputs['beta_demo'][0, expert_demo_idx, :]
+            )
+            
+            # Select beta parameters based on beta_method
+            if beta_method == "theta_betas":
+                # Use predicted bandit payoff beliefs (theta)
+                pred_alpha = outputs['alpha_theta'][0, :]  # [K]
+                pred_beta = outputs['beta_theta'][0, :]    # [K]
+            elif beta_method == "novice_betas":
+                # Use novice demonstrator's beliefs
                 novice_demo_idx = demo_order_map['novice']
-                novice_betas_str = serialize_betas(
-                    outputs['alpha_demo'][0, novice_demo_idx, :],
-                    outputs['beta_demo'][0, novice_demo_idx, :]
-                )
-                
+                pred_alpha = outputs['alpha_demo'][0, novice_demo_idx, :]  # [K]
+                pred_beta = outputs['beta_demo'][0, novice_demo_idx, :]    # [K]
+            elif beta_method == "expert_betas":
+                # Use expert demonstrator's beliefs
                 expert_demo_idx = demo_order_map['expert']
-                expert_betas_str = serialize_betas(
-                    outputs['alpha_demo'][0, expert_demo_idx, :],
-                    outputs['beta_demo'][0, expert_demo_idx, :]
-                )
+                pred_alpha = outputs['alpha_demo'][0, expert_demo_idx, :]  # [K]
+                pred_beta = outputs['beta_demo'][0, expert_demo_idx, :]    # [K]
+            elif beta_method == "recent_betas":
+                # Use the most recent demonstrator's beliefs
+                # Find the last demo segment before current learner
+                last_demo_game_idx = visible_games[-1]  # Most recent visible game
+                last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
+                last_demo_type = last_demo_df.iloc[0]['demonstrator_type']  # 'novice' or 'expert'
+                
+                # Get the model index for this demonstrator
+                recent_demo_idx = demo_order_map[last_demo_type]
+                pred_alpha = outputs['alpha_demo'][0, recent_demo_idx, :]  # [K]
+                pred_beta = outputs['beta_demo'][0, recent_demo_idx, :]    # [K]
+            else:
+                raise ValueError(f"Unknown beta_method: {beta_method}")
             
-                # Select beta parameters based on beta_method
-                if beta_method == "theta_betas":
-                    # Use predicted bandit payoff beliefs (theta)
-                    pred_alpha = outputs['alpha_theta'][0, :]  # [K]
-                    pred_beta = outputs['beta_theta'][0, :]    # [K]
-                elif beta_method == "novice_betas":
-                    # Use novice demonstrator's beliefs
-                    novice_demo_idx = demo_order_map['novice']
-                    pred_alpha = outputs['alpha_demo'][0, novice_demo_idx, :]  # [K]
-                    pred_beta = outputs['beta_demo'][0, novice_demo_idx, :]    # [K]
-                elif beta_method == "expert_betas":
-                    # Use expert demonstrator's beliefs
-                    expert_demo_idx = demo_order_map['expert']
-                    pred_alpha = outputs['alpha_demo'][0, expert_demo_idx, :]  # [K]
-                    pred_beta = outputs['beta_demo'][0, expert_demo_idx, :]    # [K]
-                elif beta_method == "recent_betas":
-                    # Use the most recent demonstrator's beliefs
-                    # Find the last demo segment before current learner
-                    last_demo_game_idx = visible_games[-1]  # Most recent visible game
-                    last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
-                    last_demo_type = last_demo_df.iloc[0]['demonstrator_type']  # 'novice' or 'expert'
-                    
-                    # Get the model index for this demonstrator
-                    recent_demo_idx = demo_order_map[last_demo_type]
-                    pred_alpha = outputs['alpha_demo'][0, recent_demo_idx, :]  # [K]
-                    pred_beta = outputs['beta_demo'][0, recent_demo_idx, :]    # [K]
-                else:
-                    raise ValueError(f"Unknown beta_method: {beta_method}")
-                
-                # Get current bandit payoffs
-                current_round = game_df.iloc[0]['round_index']
-                current_zone = game_df.iloc[0]['zone_global_index']
-                bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
-                
-                # Run Thompson sampling
-                trajectory = thompson_sampling_step(
-                    pred_alpha.cpu(),
-                    pred_beta.cpu(),
-                    bandit_payoffs,
-                    learner_steps
-                )
+            # Get current bandit payoffs
+            current_round = game_df.iloc[0]['round_index']
+            current_zone = game_df.iloc[0]['zone_global_index']
+            bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
+            
+            # Run Thompson sampling
+            trajectory = thompson_sampling_step(
+                pred_alpha.cpu(),
+                pred_beta.cpu(),
+                bandit_payoffs,
+                learner_steps
+            )
             
                 # Create rows for simulated learner segment
                 for step_idx, (action_idx, reward) in enumerate(trajectory):
                     row = {
                         'rollout_id': rollout_id,
-                        'session_id': session_df.iloc[0]['session_id'],
+                            'session_id': session_df.iloc[0]['session_id'],
                         'session_index': session_df.iloc[0]['session_index'],
                         'anonymous_id': session_df.iloc[0]['anonymous_id'],
                         'position': action_idx,
