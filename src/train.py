@@ -270,7 +270,8 @@ def save_checkpoint(
                 'run_id': wandb_run.id,
             }
         )
-        artifact.add_file(checkpoint_path)
+        # Add file with clean epoch-only name in artifact (local file keeps descriptive name)
+        artifact.add_file(checkpoint_path, name=f"epoch_{epoch:03d}.pt")
         
         # Add aliases for versioning
         aliases = [f"epoch_{epoch}"]
