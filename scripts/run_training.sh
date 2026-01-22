@@ -13,23 +13,23 @@ BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
 # Model hyperparameters
-BATCH_SIZE=256
-LEARNING_RATE=1e-4
-EPOCHS=200
+BATCH_SIZE=128
+LEARNING_RATE=5e-5
+EPOCHS=350
 DEVICE="cuda"
-WEIGHT_DECAY=0.01  # Weight decay for regularization
+WEIGHT_DECAY=0.1  # Weight decay for regularization
 
 # Transformer hyperparameters
 OPTIMIZER="adamw"
-DROPOUT=0.1
-NHEAD=16
-NUM_LAYERS=8
+DROPOUT=0.2
+NHEAD=8
+NUM_LAYERS=4
 DIM_FEEDFORWARD=1024
 D_MODEL=512
 DEMO_LOSS_WEIGHT=1.0
 DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
-MASKING_STRATEGY="all_bandits"  # Options: all_bandits, current_bandit_only
+MASKING_STRATEGY="current_bandit_only"  # Options: all_bandits, current_bandit_only
 
 # Profile and Experience Head Configuration
 PROFILE_METHOD="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
@@ -43,8 +43,8 @@ WANDB_ENTITY="juliomartinez-individual"
 
 # Checkpoint configuration
 CHECKPOINT_DIR="checkpoints"
-SAVE_EVERY=2  # Save only best and final (set to N to save every N epochs)
-ARTIFACT_NAME="sbi-transformer-checkpoint"
+ARTIFACT_NAME="sbi-transformer"
+SAVE_EVERY=1  # Save only best and final (set to N to save every N epochs)
 
 # Learning rate scheduler
 USE_SCHEDULER=true  # Enable LR scheduler
@@ -58,11 +58,11 @@ SCHEDULER="plateau"
 MIN_LR_RATIO=0.00001
 
 # ReduceLROnPlateau parameters (only used when SCHEDULER="plateau")
-PATIENCE=5          # Number of epochs with no improvement before reducing LR
+PATIENCE=10          # Number of epochs with no improvement before reducing LR
 FACTOR=0.5          # Factor by which to reduce LR (new_lr = lr * factor)
 
 # Early stopping (set to 0 to disable)
-EARLY_STOPPING_PATIENCE=10  # Stop training if no improvement for N epochs
+EARLY_STOPPING_PATIENCE=0  # Stop training if no improvement for N epochs
 # EARLY_STOPPING_PATIENCE=0   # Uncomment to disable early stopping
 
 # Print configuration
