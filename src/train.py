@@ -198,6 +198,7 @@ def save_checkpoint(
     scheduler=None,
     model_config: dict = None,
     experience_loss_weight: float = None,
+    log_to_wandb: bool = True,
 ) -> str:
     """
     Save a checkpoint and optionally log it as a wandb artifact.
@@ -214,6 +215,7 @@ def save_checkpoint(
         artifact_name: Name for the wandb artifact
         is_best: Whether this is the best model so far
         scheduler: Optional learning rate scheduler to save
+        log_to_wandb: Whether to log the checkpoint to wandb (default: True)
         
     Returns:
         Path to the saved checkpoint
@@ -251,8 +253,8 @@ def save_checkpoint(
     torch.save(checkpoint, checkpoint_path)
     print(f"Saved checkpoint to {checkpoint_path}")
     
-    # Log to wandb artifacts if run is provided
-    if wandb_run is not None:
+    # Log to wandb artifacts if run is provided and logging is enabled
+    if wandb_run is not None and log_to_wandb:
         # Include run ID in artifact name to separate runs in sweeps
         artifact_name_with_run = f"{artifact_name}-run-{wandb_run.id}"
         
@@ -973,7 +975,12 @@ def main():
                 os.remove(prev_best_checkpoint)
                 print(f"     Deleted previous best checkpoint: {prev_best_checkpoint}")
             
-            # Save best model checkpoint
+            # Delete previous latest checkpoint if it exists
+            if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+                os.remove(prev_latest_checkpoint)
+                print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+            
+            # Save best model checkpoint (logs to W&B with all aliases)
             checkpoint_name = f"epoch_{epoch:03d}_best.pt"
             checkpoint_path = save_checkpoint(
                 model=model,
@@ -994,8 +1001,34 @@ def main():
                 scheduler=scheduler,
                 model_config=model_config,
                 experience_loss_weight=args.experience_loss_weight,
+                log_to_wandb=True,
             )
             prev_best_checkpoint = checkpoint_path
+            
+            # Also save as latest checkpoint (local only, no W&B logging)
+            checkpoint_name_latest = f"epoch_{epoch:03d}_latest.pt"
+            checkpoint_path_latest = save_checkpoint(
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                train_stats=stats,
+                val_stats=val_stats,
+                checkpoint_dir=args.checkpoint_dir,
+                checkpoint_name=checkpoint_name_latest,
+                wandb_run=run,
+                artifact_name=args.artifact_name,
+                is_best=False,
+                normalizer=normalizer,
+                N_max=N_max,
+                alpha0=alpha0,
+                beta0=beta0,
+                demo_belief_loss=args.demo_belief_loss,
+                scheduler=scheduler,
+                model_config=model_config,
+                experience_loss_weight=args.experience_loss_weight,
+                log_to_wandb=False,
+            )
+            prev_latest_checkpoint = checkpoint_path_latest
         else:
             # No improvement
             early_stopping_counter += 1
@@ -1014,6 +1047,7 @@ def main():
                 os.remove(prev_latest_checkpoint)
                 print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
             
+            # Save as latest checkpoint (logs to W&B since not already logged as best)
             checkpoint_name = f"epoch_{epoch:03d}_latest.pt"
             checkpoint_path = save_checkpoint(
                 model=model,
@@ -1034,36 +1068,44 @@ def main():
                 scheduler=scheduler,
                 model_config=model_config,
                 experience_loss_weight=args.experience_loss_weight,
+                log_to_wandb=True,
             )
             prev_latest_checkpoint = checkpoint_path
     
-    # Save final model as latest checkpoint
-    # Delete previous latest checkpoint if it exists
-    if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
-        os.remove(prev_latest_checkpoint)
-        print(f"Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+    # Save final model as latest checkpoint (only if not already saved)
+    final_checkpoint_name = f"epoch_{args.epochs:03d}_latest.pt"
+    final_checkpoint_exists = prev_latest_checkpoint is not None and \
+                              final_checkpoint_name in prev_latest_checkpoint
     
-    checkpoint_name = f"epoch_{args.epochs:03d}_latest.pt"
-    final_checkpoint_path = save_checkpoint(
-        model=model,
-        optimizer=optimizer,
-        epoch=args.epochs,
-        train_stats=stats,
-        val_stats=val_stats,
-        checkpoint_dir=args.checkpoint_dir,
-        checkpoint_name=checkpoint_name,
-        wandb_run=run,
-        artifact_name=args.artifact_name,
-        is_best=False,
-        normalizer=normalizer,
-        N_max=N_max,
-        alpha0=alpha0,
-        beta0=beta0,
-        demo_belief_loss=args.demo_belief_loss,
-        scheduler=scheduler,
-        model_config=model_config,
-        experience_loss_weight=args.experience_loss_weight,
-    )
+    if not final_checkpoint_exists:
+        # Delete previous latest checkpoint if it exists and is for a different epoch
+        if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+            os.remove(prev_latest_checkpoint)
+            print(f"Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+        
+        final_checkpoint_path = save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            epoch=args.epochs,
+            train_stats=stats,
+            val_stats=val_stats,
+            checkpoint_dir=args.checkpoint_dir,
+            checkpoint_name=final_checkpoint_name,
+            wandb_run=run,
+            artifact_name=args.artifact_name,
+            is_best=False,
+            normalizer=normalizer,
+            N_max=N_max,
+            alpha0=alpha0,
+            beta0=beta0,
+            demo_belief_loss=args.demo_belief_loss,
+            scheduler=scheduler,
+            model_config=model_config,
+            experience_loss_weight=args.experience_loss_weight,
+            log_to_wandb=True,
+        )
+    else:
+        print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
 
 
 if __name__ == "__main__":
