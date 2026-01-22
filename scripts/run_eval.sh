@@ -12,6 +12,12 @@ OUTPUT_PATH="data/evaluation/test_evaluation.csv"
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
+# Optional: Override masking strategy from checkpoint (uncomment to use)
+#MASKING_STRATEGY_OVERRIDE="all_bandits"  # Options: all_bandits, current_bandit_only
+
+# Optional: Override profile method from checkpoint (uncomment to use)
+#PROFILE_METHOD_OVERRIDE="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
+
 # ==============================================================================
 # CHECKPOINT LOADING OPTIONS (choose ONE of the following three options)
 # ==============================================================================
@@ -95,27 +101,45 @@ if [ -n "$MAX_EXAMPLES" ]; then
     MAX_EXAMPLES_FLAG="--max_examples $MAX_EXAMPLES"
 fi
 
+# Build masking_strategy_override flag
+MASKING_STRATEGY_FLAG=""
+if [ -n "$MASKING_STRATEGY_OVERRIDE" ]; then
+    MASKING_STRATEGY_FLAG="--masking_strategy_override $MASKING_STRATEGY_OVERRIDE"
+fi
+
+# Build profile_method_override flag
+PROFILE_METHOD_FLAG=""
+if [ -n "$PROFILE_METHOD_OVERRIDE" ]; then
+    PROFILE_METHOD_FLAG="--profile_method_override $PROFILE_METHOD_OVERRIDE"
+fi
+
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --checkpoint_path "$CHECKPOINT_PATH" \
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
-        $MAX_EXAMPLES_FLAG
+        $MAX_EXAMPLES_FLAG \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_artifact "$WANDB_ARTIFACT" \
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
-        $MAX_EXAMPLES_FLAG
+        $MAX_EXAMPLES_FLAG \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_sweep "$WANDB_SWEEP" \
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
-        $MAX_EXAMPLES_FLAG
+        $MAX_EXAMPLES_FLAG \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 fi
 
 # Check if evaluation was successful

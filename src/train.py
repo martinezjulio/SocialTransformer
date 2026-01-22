@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
 from models.BetaModel import SBIPosteriorTransformer
 from transforms import BeliefNormalizer
-from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log
+from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log, get_experience_head_loss
 
 import wandb
 
@@ -103,7 +103,15 @@ def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None
         return checkpoint
 
 
-def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len: int, device: torch.device) -> torch.Tensor:
+def create_segment_mask(
+    segment_boundaries: torch.Tensor,
+    cutoffs: list,
+    seq_len: int,
+    device: torch.device,
+    masking_strategy: str = "all_bandits",
+    segment_info: list = None,
+    round_bandit_map: torch.Tensor = None
+) -> torch.Tensor:
     """
     Create attention mask that makes only visible segments accessible.
     
@@ -112,6 +120,9 @@ def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len
         cutoffs: List[int] - how many segments visible per example (1-indexed)
         seq_len: int - total sequence length
         device: torch device
+        masking_strategy: "all_bandits" or "current_bandit_only"
+        segment_info: List[List[Dict]] - segment metadata (one list per batch item)
+        round_bandit_map: [B, num_rounds] - which bandit for each round
     
     Returns:
         mask: [seq_len, seq_len] or [B, seq_len, seq_len] - causal mask with segment cutoffs
@@ -136,6 +147,30 @@ def create_segment_mask(segment_boundaries: torch.Tensor, cutoffs: list, seq_len
         # Mask out everything from cutoff_pos onward (including the cutoff position itself)
         if cutoff_pos < seq_len:
             batch_mask[b, :, cutoff_pos:] = True  # Can't attend to future
+        
+        # Additional masking for "current_bandit_only" strategy
+        if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
+            # Determine the target bandit from the cutoff segment
+            seg_info_target = segment_info[b][visible_segs - 1]
+            target_round = seg_info_target["round"]
+            target_bandit = int(round_bandit_map[b, target_round].item())
+            
+            # Mask out all segments that belong to different bandits
+            for seg_idx in range(visible_segs):
+                seg_info_i = segment_info[b][seg_idx]
+                round_i = seg_info_i["round"]
+                bandit_i = int(round_bandit_map[b, round_i].item())
+                
+                if bandit_i != target_bandit:
+                    # Mask this entire segment
+                    start_pos = int(segment_boundaries[b, seg_idx].item())
+                    if seg_idx + 1 < len(segment_boundaries[b]):
+                        end_pos = int(segment_boundaries[b, seg_idx + 1].item())
+                    else:
+                        end_pos = cutoff_pos
+                    
+                    # Mask all positions from attending to this segment
+                    batch_mask[b, :, start_pos:end_pos] = True
     
     # If all examples have the same cutoff, can return single mask
     # Otherwise need to handle per-example masks - PyTorch expects [B*H, T, T] for multi-head attention
@@ -205,6 +240,8 @@ def save_checkpoint(
         'config': {
             'demo_belief_loss': demo_belief_loss,
             'experience_loss_weight': experience_loss_weight,
+            'masking_strategy': model_config['masking_strategy'] if model_config else 'all_bandits',
+            'experience_head_loss_weight': model_config.get('experience_head_loss_weight') if model_config else None,
         }
     }
     
@@ -260,9 +297,14 @@ def train_one_epoch(
     scheduler=None,
     scheduler_type: str = "cosine",
     experience_loss_weight: float = 0.0,
+    masking_strategy: str = "all_bandits",
+    profile_method: str = "no_profile",
+    experience_head_loss_weight: float = 1.0,
+    experience_head_loss_fn=None,
+    num_arms: int = 12,
 ) -> Dict[str, float]:
     model.train()
-    total_loss, total_theta, total_demo, total_experience = 0.0, 0.0, 0.0, 0.0
+    total_loss, total_theta, total_demo, total_experience, total_experience_head = 0.0, 0.0, 0.0, 0.0, 0.0
     print(f"  Loading first batch from dataloader...")
 
     for batch_idx, batch in enumerate(loader):
@@ -297,7 +339,10 @@ def train_one_epoch(
                 batch["segment_boundaries"], 
                 segment_cutoffs, 
                 seq_len,
-                device
+                device,
+                masking_strategy=masking_strategy,
+                segment_info=batch["segment_info"],
+                round_bandit_map=batch["round_bandit_map"]
             )
         else:
             # Use full context (last bandit)
@@ -357,7 +402,22 @@ def train_one_epoch(
             )
         loss_experience = loss_experience / num_demonstrators
 
-        loss = loss_theta + demo_loss_weight * loss_demo + experience_loss_weight * loss_experience
+        # Compute experience head loss if present (for profile methods)
+        loss_experience_head = 0.0
+        if 'N_tot_pred' in out and experience_head_loss_fn is not None:
+            loss_experience_head = experience_head_loss_fn(
+                out['N_tot_pred'],
+                target_alpha_denorm,
+                target_beta_denorm,
+                alpha0=alpha0,
+                beta0=beta0,
+                K=num_arms
+            )
+
+        loss = (loss_theta + 
+                demo_loss_weight * loss_demo + 
+                experience_loss_weight * loss_experience + 
+                experience_head_loss_weight * loss_experience_head)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -370,6 +430,10 @@ def train_one_epoch(
         total_theta += loss_theta.item()
         total_demo += loss_demo.item()
         total_experience += loss_experience.item()
+        if isinstance(loss_experience_head, torch.Tensor):
+            total_experience_head += loss_experience_head.item()
+        else:
+            total_experience_head += loss_experience_head
         
         if batch_idx == 0:
             print(f"  ✓ First batch complete! loss={loss.item():.4f}")
@@ -382,6 +446,7 @@ def train_one_epoch(
         "loss_theta": total_theta / n,
         "loss_demo": total_demo / n,
         "loss_experience": total_experience / n,
+        "loss_experience_head": total_experience_head / n,
     }
 
 
@@ -413,6 +478,19 @@ def main():
                         help="Loss function for demonstrator belief predictions")
     parser.add_argument("--experience_loss_weight", type=float, default=0.0, 
                         help="Weight for experience (N_tot) loss (0.0-1.0)")
+    parser.add_argument("--masking_strategy", type=str, default="all_bandits",
+                        choices=["all_bandits", "current_bandit_only"],
+                        help="Attention masking strategy: 'all_bandits' (see all prior context) or 'current_bandit_only' (see only current bandit's context)")
+    parser.add_argument("--profile_method", type=str, default="no_profile",
+                        choices=["no_profile", "learned_profile", "agent_pooling", "cross_attention"],
+                        help="Demonstrator profile extraction method")
+    parser.add_argument("--experience_head_loss_weight", type=float, default=1.0,
+                        help="Weight for direct experience head loss (only used for profile methods)")
+    parser.add_argument("--experience_head_loss_type", type=str, default="mse",
+                        choices=["mse", "bce"],
+                        help="Loss type for experience head: 'mse' (continuous N_tot) or 'bce' (expert vs novice)")
+    parser.add_argument("--expert_threshold", type=float, default=30.0,
+                        help="N_tot threshold for expert classification (only used for BCE loss)")
     
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
@@ -535,6 +613,11 @@ def main():
                 "demo_loss_weight": args.demo_loss_weight,
                 "demo_belief_loss": args.demo_belief_loss,
                 "experience_loss_weight": args.experience_loss_weight,
+                "masking_strategy": args.masking_strategy,
+                "profile_method": args.profile_method,
+                "experience_head_loss_weight": args.experience_head_loss_weight,
+                "experience_head_loss_type": args.experience_head_loss_type,
+                "expert_threshold": args.expert_threshold,
                 "normalize_beliefs": normalize_beliefs,
                 "N_max": N_max,
                 "use_scheduler": args.use_scheduler,
@@ -585,6 +668,8 @@ def main():
         num_layers=args.num_layers,
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
+        profile_method=args.profile_method,
+        experience_head_loss_type=args.experience_head_loss_type,
     ).to(device)
     
     # Store model configuration for saving in checkpoint
@@ -602,6 +687,9 @@ def main():
         'T_learner': T_learner,
         'SPECIAL': SPECIAL,
         'LEARNER_RAW_ID': LEARNER_RAW_ID,
+        'masking_strategy': args.masking_strategy,
+        'profile_method': args.profile_method,
+        'experience_head_loss_type': args.experience_head_loss_type,
     }
 
     # Configure optimizer based on type
@@ -704,6 +792,15 @@ def main():
     # Get the demo belief loss function
     demo_loss_fn = get_demo_belief_loss(args.demo_belief_loss)
     print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
+    
+    # Get the experience head loss function (only for profile methods)
+    if args.profile_method != "no_profile":
+        experience_head_loss_fn = get_experience_head_loss(args.experience_head_loss_type)
+        print(f"Using {args.experience_head_loss_type} loss for experience head")
+        print(f"Experience head loss weight: {args.experience_head_loss_weight}")
+    else:
+        experience_head_loss_fn = None
+    
     print(f"\nStarting training loop for {args.epochs} epochs...")
     print(f"Training batches per epoch: {len(train_loader)}")
     print(f"Validation batches: {len(val_loader)}")
@@ -727,17 +824,26 @@ def main():
             normalizer=normalizer,
             scheduler=scheduler,
             scheduler_type=args.scheduler if args.use_scheduler else "cosine",
-            experience_loss_weight=args.experience_loss_weight
+            experience_loss_weight=args.experience_loss_weight,
+            masking_strategy=args.masking_strategy,
+            profile_method=args.profile_method,
+            experience_head_loss_weight=args.experience_head_loss_weight,
+            experience_head_loss_fn=experience_head_loss_fn,
+            num_arms=num_arms
         )
         
         # Log current learning rate if scheduler is used
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  exp={stats['loss_experience']:.4f}  lr={current_lr:.2e}")
+        log_str = f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  exp={stats['loss_experience']:.4f}"
+        if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
+            log_str += f"  exp_head={stats['loss_experience_head']:.4f}"
+        log_str += f"  lr={current_lr:.2e}"
+        print(log_str)
 
         # Simple eval (same losses on val set) - use full context
         model.eval()
         with torch.no_grad():
-            val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0}
+            val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0,"experience_head":0.0}
             for batch in val_loader:
                 for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
                           "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
@@ -793,18 +899,38 @@ def main():
                     )
                 le = le / num_demonstrators
                 
-                val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le).item()
+                # Compute experience head loss if present
+                le_head = 0.0
+                if 'N_tot_pred' in out and experience_head_loss_fn is not None:
+                    le_head = experience_head_loss_fn(
+                        out['N_tot_pred'],
+                        target_alpha_val,
+                        target_beta_val,
+                        alpha0=alpha0,
+                        beta0=beta0,
+                        K=num_arms
+                    )
+                
+                val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le + args.experience_head_loss_weight*le_head).item()
                 val_tot["theta"]+= lt.item()
                 val_tot["demo"] += ld.item()
                 val_tot["experience"] += le.item()
+                if isinstance(le_head, torch.Tensor):
+                    val_tot["experience_head"] += le_head.item()
+                else:
+                    val_tot["experience_head"] += le_head
             n = len(val_loader)
             val_stats = {
                 "loss": val_tot['loss']/n,
                 "loss_theta": val_tot['theta']/n,
                 "loss_demo": val_tot['demo']/n,
                 "loss_experience": val_tot['experience']/n,
+                "loss_experience_head": val_tot['experience_head']/n,
             }
-            print(f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}  exp={val_stats['loss_experience']:.4f}")
+            val_log_str = f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}  exp={val_stats['loss_experience']:.4f}"
+            if val_stats['loss_experience_head'] > 0:
+                val_log_str += f"  exp_head={val_stats['loss_experience_head']:.4f}"
+            print(val_log_str)
             
             # Step plateau scheduler if using it
             if scheduler is not None and args.scheduler == "plateau":
@@ -824,6 +950,11 @@ def main():
                     "learning_rate": current_lr,
                     "epoch": epoch
                 }
+                # Add experience head loss if present
+                if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
+                    log_dict["train/loss_experience_head"] = stats['loss_experience_head']
+                if 'loss_experience_head' in val_stats and val_stats['loss_experience_head'] > 0:
+                    log_dict["val/loss_experience_head"] = val_stats['loss_experience_head']
                 run.log(log_dict)
         
         # Check if this is the best model so far
