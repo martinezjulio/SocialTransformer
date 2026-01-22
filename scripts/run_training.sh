@@ -29,6 +29,13 @@ D_MODEL=512
 DEMO_LOSS_WEIGHT=1.0
 DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
+MASKING_STRATEGY="all_bandits"  # Options: all_bandits, current_bandit_only
+
+# Profile and Experience Head Configuration
+PROFILE_METHOD="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
+EXPERIENCE_HEAD_LOSS_WEIGHT=1.0  # Weight for direct experience head loss (only used for profile methods)
+EXPERIENCE_HEAD_LOSS_TYPE="mse"  # Options: mse, bce
+EXPERT_THRESHOLD=30.0  # Threshold for expert classification (only used for BCE loss)
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
@@ -83,6 +90,13 @@ echo "  Model dimension: $D_MODEL"
 echo "  Demo loss weight: $DEMO_LOSS_WEIGHT"
 echo "  Demo belief loss: $DEMO_BELIEF_LOSS"
 echo "  Experience loss weight: $EXPERIENCE_LOSS_WEIGHT"
+echo "  Masking strategy: $MASKING_STRATEGY"
+echo ""
+echo "Profile Method & Experience Head:"
+echo "  Profile method: $PROFILE_METHOD"
+echo "  Experience head loss weight: $EXPERIENCE_HEAD_LOSS_WEIGHT"
+echo "  Experience head loss type: $EXPERIENCE_HEAD_LOSS_TYPE"
+echo "  Expert threshold (for BCE): $EXPERT_THRESHOLD"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -159,6 +173,11 @@ python src/train.py \
     --demo_loss_weight $DEMO_LOSS_WEIGHT \
     --demo_belief_loss $DEMO_BELIEF_LOSS \
     --experience_loss_weight $EXPERIENCE_LOSS_WEIGHT \
+    --masking_strategy $MASKING_STRATEGY \
+    --profile_method $PROFILE_METHOD \
+    --experience_head_loss_weight $EXPERIENCE_HEAD_LOSS_WEIGHT \
+    --experience_head_loss_type $EXPERIENCE_HEAD_LOSS_TYPE \
+    --expert_threshold $EXPERT_THRESHOLD \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \

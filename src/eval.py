@@ -40,7 +40,10 @@ def create_segment_mask_single(
     segment_boundaries: List[int], 
     cutoff: int, 
     seq_len: int, 
-    device: torch.device
+    device: torch.device,
+    masking_strategy: str = "all_bandits",
+    segment_info: List[Dict] = None,
+    round_bandit_map: List[int] = None
 ) -> torch.Tensor:
     """
     Create attention mask for single example with segment cutoff.
@@ -50,6 +53,9 @@ def create_segment_mask_single(
         cutoff: Number of segments to make visible (1-indexed)
         seq_len: Total sequence length
         device: torch device
+        masking_strategy: "all_bandits" or "current_bandit_only"
+        segment_info: List of segment metadata dicts
+        round_bandit_map: List mapping round index to bandit ID
         
     Returns:
         mask: [seq_len, seq_len] - True = masked (not attended to), False = visible
@@ -66,6 +72,30 @@ def create_segment_mask_single(
     # Mask out everything from cutoff_pos onward
     if cutoff_pos < seq_len:
         mask[:, cutoff_pos:] = True
+    
+    # Additional masking for "current_bandit_only" strategy
+    if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
+        # Determine the target bandit from the cutoff segment
+        seg_info_target = segment_info[cutoff - 1]
+        target_round = seg_info_target["round"]
+        target_bandit = int(round_bandit_map[target_round])
+        
+        # Mask out all segments that belong to different bandits
+        for seg_idx in range(cutoff):
+            seg_info_i = segment_info[seg_idx]
+            round_i = seg_info_i["round"]
+            bandit_i = int(round_bandit_map[round_i])
+            
+            if bandit_i != target_bandit:
+                # Mask this entire segment
+                start_pos = segment_boundaries[seg_idx]
+                if seg_idx + 1 < len(segment_boundaries):
+                    end_pos = segment_boundaries[seg_idx + 1]
+                else:
+                    end_pos = cutoff_pos
+                
+                # Mask all positions from attending to this segment
+                mask[:, start_pos:end_pos] = True
     
     return mask
 
@@ -131,7 +161,8 @@ def evaluate_single_example(
     SPECIAL: Dict,
     normalizer=None,
     alpha0: float = 1.0,
-    beta0: float = 1.0
+    beta0: float = 1.0,
+    masking_strategy: str = "all_bandits"
 ) -> List[Dict]:
     """
     Evaluate model on single example at multiple segment cutoffs.
@@ -166,7 +197,10 @@ def evaluate_single_example(
             example["segment_boundaries"],
             cutoff,
             seq_len,
-            device
+            device,
+            masking_strategy=masking_strategy,
+            segment_info=example["segment_info"],
+            round_bandit_map=example["round_bandit_map"]
         )
         
         # Run model
@@ -278,6 +312,35 @@ def evaluate_single_example(
             "novice_N_tot_pred": pred_novice_N,
             "novice_N_tot_raw": demo0_N if novice_id == 0 else demo1_N,
         }
+        
+        # Add experience head metrics if present
+        if 'N_tot_pred' in outputs:
+            N_tot_pred = outputs['N_tot_pred'][0].cpu()  # [num_demonstrators]
+            
+            # Get expert and novice predictions
+            pred_expert_N_head = N_tot_pred[expert_id].item()
+            pred_novice_N_head = N_tot_pred[novice_id].item()
+            
+            # For BCE mode, convert logits to probabilities
+            # We can detect BCE vs MSE by checking if values are in reasonable N_tot range
+            # If values are very negative (logits), convert to probabilities
+            if pred_expert_N_head < 0 or pred_novice_N_head < -5:  # Likely logits
+                pred_expert_prob = torch.sigmoid(N_tot_pred[expert_id]).item()
+                pred_novice_prob = torch.sigmoid(N_tot_pred[novice_id]).item()
+                metrics["experience_head_expert_prob"] = pred_expert_prob
+                metrics["experience_head_novice_prob"] = pred_novice_prob
+                # Binary predictions (threshold 0.5 on probability)
+                metrics["experience_head_expert_pred_binary"] = int(pred_expert_prob > 0.5)
+                metrics["experience_head_novice_pred_binary"] = int(pred_novice_prob > 0.5)
+                # Accuracy (expert should be 1, novice should be 0)
+                metrics["experience_head_expert_correct"] = int(pred_expert_prob > 0.5)
+                metrics["experience_head_novice_correct"] = int(pred_novice_prob <= 0.5)
+            else:
+                # MSE mode - continuous N_tot
+                metrics["experience_head_expert_N_pred"] = pred_expert_N_head
+                metrics["experience_head_novice_N_pred"] = pred_novice_N_head
+                metrics["experience_head_expert_error"] = abs(pred_expert_N_head - true_expert_N)
+                metrics["experience_head_novice_error"] = abs(pred_novice_N_head - true_novice_N)
         
         results.append(metrics)
     
@@ -531,6 +594,12 @@ def main():
         help="Skip generating visualization (only save CSV)")
     parser.add_argument("--plot_output_dir", type=str, default="figures/evaluation",
         help="Directory to save plots")
+    parser.add_argument("--masking_strategy_override", type=str, default=None,
+        choices=["all_bandits", "current_bandit_only"],
+        help="Override masking strategy from checkpoint (optional)")
+    parser.add_argument("--profile_method_override", type=str, default=None,
+        choices=["no_profile", "learned_profile", "agent_pooling", "cross_attention"],
+        help="Override profile method from checkpoint (optional)")
     
     # Checkpoint loading options (mutually exclusive)
     checkpoint_group = parser.add_mutually_exclusive_group(required=True)
@@ -593,6 +662,8 @@ def main():
         num_layers=model_config['num_layers'],
         dim_feedforward=model_config['dim_feedforward'],
         dropout=model_config['dropout'],
+        profile_method=profile_method,
+        experience_head_loss_type=experience_head_loss_type,
     ).to(device)
     
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -612,6 +683,25 @@ def main():
     alpha0 = checkpoint['normalization']['alpha0']
     beta0 = checkpoint['normalization']['beta0']
     print(f"  alpha0={alpha0}, beta0={beta0}")
+    
+    # Get masking strategy (from checkpoint or override)
+    if args.masking_strategy_override:
+        masking_strategy = args.masking_strategy_override
+        print(f"\n✓ Using overridden masking strategy: {masking_strategy}")
+    else:
+        masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
+        print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
+    
+    # Get profile method (from checkpoint or override)
+    if args.profile_method_override:
+        profile_method = args.profile_method_override
+        print(f"✓ Using overridden profile method: {profile_method}")
+    else:
+        profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
+        print(f"✓ Using profile method from checkpoint: {profile_method}")
+    
+    experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
+    print(f"✓ Experience head loss type: {experience_head_loss_type}")
     
     # Load test data
     print("\n" + "="*60)
@@ -664,7 +754,8 @@ def main():
                 SPECIAL,
                 normalizer=normalizer,
                 alpha0=alpha0,
-                beta0=beta0
+                beta0=beta0,
+                masking_strategy=masking_strategy
             )
             
             # Add example_id to each result

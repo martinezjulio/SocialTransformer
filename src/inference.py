@@ -330,7 +330,15 @@ def encode_events_to_tensors(
     }
 
 
-def create_segment_mask(segment_boundaries: List[int], cutoff: int, seq_len: int, device: torch.device) -> torch.Tensor:
+def create_segment_mask(
+    segment_boundaries: List[int],
+    cutoff: int,
+    seq_len: int,
+    device: torch.device,
+    masking_strategy: str = "all_bandits",
+    segment_info: List[Dict] = None,
+    round_bandit_map: List[int] = None
+) -> torch.Tensor:
     """
     Create attention mask that makes only the first 'cutoff' segments visible.
     
@@ -339,6 +347,9 @@ def create_segment_mask(segment_boundaries: List[int], cutoff: int, seq_len: int
         cutoff: Number of segments to make visible (1-indexed)
         seq_len: Total sequence length
         device: torch device
+        masking_strategy: "all_bandits" or "current_bandit_only"
+        segment_info: List of segment metadata dicts
+        round_bandit_map: List mapping round index to bandit ID
         
     Returns:
         mask: [seq_len, seq_len] - True = masked (not attended to), False = visible
@@ -356,6 +367,30 @@ def create_segment_mask(segment_boundaries: List[int], cutoff: int, seq_len: int
     if cutoff_pos < seq_len:
         mask[:, cutoff_pos:] = True
     
+    # Additional masking for "current_bandit_only" strategy
+    if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
+        # Determine the target bandit from the cutoff segment
+        seg_info_target = segment_info[cutoff - 1]
+        target_round = seg_info_target["round"]
+        target_bandit = int(round_bandit_map[target_round])
+        
+        # Mask out all segments that belong to different bandits
+        for seg_idx in range(cutoff):
+            seg_info_i = segment_info[seg_idx]
+            round_i = seg_info_i["round"]
+            bandit_i = int(round_bandit_map[round_i])
+            
+            if bandit_i != target_bandit:
+                # Mask this entire segment
+                start_pos = segment_boundaries[seg_idx]
+                if seg_idx + 1 < len(segment_boundaries):
+                    end_pos = segment_boundaries[seg_idx + 1]
+                else:
+                    end_pos = cutoff_pos
+                
+                # Mask all positions from attending to this segment
+                mask[:, start_pos:end_pos] = True
+    
     return mask
 
 
@@ -371,7 +406,8 @@ def run_inference_on_session(
     learner_segment_input: str = "human",
     beta_method: str = "theta_betas",
     num_rollouts: int = 1,
-    seed: int = 42
+    seed: int = 42,
+    masking_strategy: str = "all_bandits"
 ) -> pd.DataFrame:
     """
     Run inference on a single session, generating hybrid data.
@@ -512,7 +548,10 @@ def run_inference_on_session(
                 model_input['segment_boundaries'] + [seq_len],  # Add end position
                 num_visible_segments,
                 seq_len,
-                device
+                device,
+                masking_strategy=masking_strategy,
+                segment_info=model_input['segment_info'],
+                round_bandit_map=model_input['round_bandit_map']
             )
             
             # Run model inference
@@ -625,6 +664,12 @@ def main():
         help="Number of independent rollouts per session (default: 1)")
     parser.add_argument("--seed", type=int, default=42,
         help="Base random seed for reproducibility (default: 42)")
+    parser.add_argument("--masking_strategy_override", type=str, default=None,
+        choices=["all_bandits", "current_bandit_only"],
+        help="Override masking strategy from checkpoint (optional)")
+    parser.add_argument("--profile_method_override", type=str, default=None,
+        choices=["no_profile", "learned_profile", "agent_pooling", "cross_attention"],
+        help="Override profile method from checkpoint (optional)")
     
     # Checkpoint loading options (mutually exclusive)
     checkpoint_group = parser.add_mutually_exclusive_group(required=True)
@@ -712,6 +757,8 @@ def main():
         num_layers=model_config['num_layers'],
         dim_feedforward=model_config['dim_feedforward'],
         dropout=model_config['dropout'],
+        profile_method=profile_method,
+        experience_head_loss_type=experience_head_loss_type,
     ).to(device)
     
     # Load checkpoint state
@@ -730,6 +777,25 @@ def main():
     alpha0 = normalization['alpha0']
     beta0 = normalization['beta0']
     print(f"Using alpha0={alpha0}, beta0={beta0}")
+    
+    # Get masking strategy (from checkpoint or override)
+    if args.masking_strategy_override:
+        masking_strategy = args.masking_strategy_override
+        print(f"\n✓ Using overridden masking strategy: {masking_strategy}")
+    else:
+        masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
+        print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
+    
+    # Get profile method (from checkpoint or override)
+    if args.profile_method_override:
+        profile_method = args.profile_method_override
+        print(f"✓ Using overridden profile method: {profile_method}")
+    else:
+        profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
+        print(f"✓ Using profile method from checkpoint: {profile_method}")
+    
+    experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
+    print(f"✓ Experience head loss type: {experience_head_loss_type}")
     
     # Run inference on each session for all 8 combinations
     print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) × 8 combinations...")
@@ -768,7 +834,8 @@ def main():
                     learner_segment_input=learner_input,
                     beta_method=beta_method,
                     num_rollouts=args.num_rollouts,
-                    seed=args.seed
+                    seed=args.seed,
+                    masking_strategy=masking_strategy
                 )
                 
                 all_results.append(result_df)

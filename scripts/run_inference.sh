@@ -14,6 +14,12 @@ DEVICE="cpu"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
 
+# Optional: Override masking strategy from checkpoint (uncomment to use)
+#MASKING_STRATEGY_OVERRIDE="all_bandits"  # Options: all_bandits, current_bandit_only
+
+# Optional: Override profile method from checkpoint (uncomment to use)
+#PROFILE_METHOD_OVERRIDE="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
+
 # ==============================================================================
 # CHECKPOINT LOADING OPTIONS (choose ONE of the following three options)
 # ==============================================================================
@@ -88,6 +94,18 @@ fi
 OUTPUT_DIR=$(dirname "$OUTPUT_PATH")
 mkdir -p "$OUTPUT_DIR"
 
+# Build masking_strategy_override flag
+MASKING_STRATEGY_FLAG=""
+if [ -n "$MASKING_STRATEGY_OVERRIDE" ]; then
+    MASKING_STRATEGY_FLAG="--masking_strategy_override $MASKING_STRATEGY_OVERRIDE"
+fi
+
+# Build profile_method_override flag
+PROFILE_METHOD_FLAG=""
+if [ -n "$PROFILE_METHOD_OVERRIDE" ]; then
+    PROFILE_METHOD_FLAG="--profile_method_override $PROFILE_METHOD_OVERRIDE"
+fi
+
 # Build python command based on checkpoint source
 echo "Starting inference..."
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
@@ -97,7 +115,9 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
-        --seed $SEED
+        --seed $SEED \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
@@ -105,7 +125,9 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
-        --seed $SEED
+        --seed $SEED \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
     python src/inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
@@ -113,7 +135,9 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
         --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
-        --seed $SEED
+        --seed $SEED \
+        $MASKING_STRATEGY_FLAG \
+        $PROFILE_METHOD_FLAG
 fi
 
 # Check if inference was successful

@@ -246,3 +246,92 @@ def requires_normalization(loss_type: str) -> bool:
     """
     # Only log_mse benefits from normalization
     return loss_type == "log_mse"
+
+
+def experience_head_mse_loss(
+    pred_N_tot: torch.Tensor,
+    target_alpha: torch.Tensor,
+    target_beta: torch.Tensor,
+    alpha0: float,
+    beta0: float,
+    K: int,
+    eps: float = 1.0
+) -> torch.Tensor:
+    """
+    Direct MSE loss on N_tot predictions from experience head (continuous).
+    
+    Args:
+        pred_N_tot: [B, num_demonstrators] - continuous N_tot predictions
+        target_alpha: [B, num_demonstrators, K]
+        target_beta: [B, num_demonstrators, K]
+        alpha0: prior alpha parameter
+        beta0: prior beta parameter
+        K: number of arms
+        eps: for log stability
+    
+    Returns:
+        Scalar loss
+    """
+    # Compute target N_tot
+    target_N_tot = (target_alpha.sum(dim=-1) - alpha0 * K + 
+                    target_beta.sum(dim=-1) - beta0 * K)
+    target_N_tot = torch.clamp(target_N_tot, min=0.0)
+    
+    # MSE in log space
+    return F.mse_loss(torch.log(pred_N_tot + eps), 
+                      torch.log(target_N_tot + eps))
+
+
+def experience_head_bce_loss(
+    pred_logits: torch.Tensor,
+    target_alpha: torch.Tensor,
+    target_beta: torch.Tensor,
+    alpha0: float,
+    beta0: float,
+    K: int,
+    expert_threshold: float = 30.0
+) -> torch.Tensor:
+    """
+    Binary cross-entropy loss for expert vs novice classification.
+    
+    Args:
+        pred_logits: [B, num_demonstrators] - logits (before sigmoid)
+        target_alpha: [B, num_demonstrators, K]
+        target_beta: [B, num_demonstrators, K]
+        alpha0: prior alpha parameter
+        beta0: prior beta parameter
+        K: number of arms
+        expert_threshold: N_tot threshold for expert label (default: 30)
+    
+    Returns:
+        Scalar loss
+    """
+    # Compute target N_tot
+    target_N_tot = (target_alpha.sum(dim=-1) - alpha0 * K + 
+                    target_beta.sum(dim=-1) - beta0 * K)
+    target_N_tot = torch.clamp(target_N_tot, min=0.0)
+    
+    # Convert to binary labels (1 = expert, 0 = novice)
+    is_expert = (target_N_tot > expert_threshold).float()
+    
+    # Binary cross-entropy with logits
+    return F.binary_cross_entropy_with_logits(pred_logits, is_expert)
+
+
+def get_experience_head_loss(loss_type: str):
+    """
+    Get the appropriate loss function for experience head predictions.
+    
+    Args:
+        loss_type: "mse" or "bce"
+    
+    Returns:
+        Loss function
+    """
+    losses = {
+        "mse": experience_head_mse_loss,
+        "bce": experience_head_bce_loss,
+    }
+    if loss_type not in losses:
+        raise ValueError(f"Unknown experience head loss type: {loss_type}. Must be 'mse' or 'bce'")
+    return losses[loss_type]
