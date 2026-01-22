@@ -253,15 +253,19 @@ def save_checkpoint(
     
     # Log to wandb artifacts if run is provided
     if wandb_run is not None:
+        # Include run ID in artifact name to separate runs in sweeps
+        artifact_name_with_run = f"{artifact_name}-run-{wandb_run.id}"
+        
         artifact = wandb.Artifact(
-            name=artifact_name,
+            name=artifact_name_with_run,
             type='model',
-            description=f'Model checkpoint at epoch {epoch}',
+            description=f'Model checkpoint for run {wandb_run.id} at epoch {epoch}',
             metadata={
                 'epoch': epoch,
                 'train_loss': train_stats['loss'],
                 'val_loss': val_stats['loss'],
                 'is_best': is_best,
+                'run_id': wandb_run.id,
             }
         )
         artifact.add_file(checkpoint_path)
@@ -463,7 +467,7 @@ def main():
     parser.add_argument("--wandb_entity", type=str, default="juliomartinez-individual", help="W&B user name or team name")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--save_every", type=int, default=0, help="Save checkpoint every N epochs (0 = only save best and final)")
-    parser.add_argument("--artifact_name", type=str, default="sbi-transformer-checkpoint", help="Name for wandb artifact")
+    parser.add_argument("--artifact_name", type=str, default="sbi-transformer", help="Name for wandb artifact")
     
     # Hyperparameters for sweep
     parser.add_argument("--optimizer", type=str, default="adamw", choices=["adam", "adamw", "sgd"], help="Optimizer type")
