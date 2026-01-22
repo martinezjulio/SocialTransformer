@@ -1007,8 +1007,8 @@ def main():
                 print(f"{'='*50}")
                 break
         
-        # Save periodic checkpoints if requested
-        if args.save_every > 0 and epoch % args.save_every == 0:
+        # Save periodic checkpoints if requested (but skip if already saved as best)
+        if args.save_every > 0 and epoch % args.save_every == 0 and not is_best:
             # Delete previous latest checkpoint if it exists
             if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
                 os.remove(prev_latest_checkpoint)
