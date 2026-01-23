@@ -11,7 +11,7 @@ parameters:
   dataset_path:
     value: "data/demonstrations_data_02"
   epochs:
-    value: 250
+    value: 350
   device:
     value: "cuda"
   # LR Scheduler warmup parameters
@@ -31,9 +31,9 @@ parameters:
   dropout:
     values: [0.0, 0.1, 0.2, 0.3]
   num_layers:
-    values: [4, 6, 8]
+    values: [4, 8]
   dim_feedforward:
-    values: [512, 768, 1024]
+    values: [512, 1024]
   # d_model and nhead - using distribution to enforce constraint
   d_model:
     values: [256, 512]
@@ -44,26 +44,26 @@ parameters:
   demo_belief_loss:
     values: ["cross_entropy"] #["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
   experience_loss_weight:
-    values: [0.0, 1.0]
+    values: [1.0]
   masking_strategy:
-    values: ["all_bandits", "current_bandit_only"]
+    values: ["all_bandits"]
   profile_method:
-    values: ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
+    values: ["learned_profile"] # ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
   experience_head_loss_weight:
-    values: [0.0, 0.5, 1.0]
+    values: [1.0]
   experience_head_loss_type:
     values: ["mse", "bce"]
   expert_threshold:
     value: 30.0
   # Scheduler parameters
   scheduler :
-    values: ["cosine", "plateau"]
+    values: ["plateau"] # ["cosine", "plateau"]
   patience:
     value: 10
   factor:
     value: 0.5
   early_stopping_patience:
-    value: 50
+    value: 0
 
 # Custom command to properly pass flags
 command:
