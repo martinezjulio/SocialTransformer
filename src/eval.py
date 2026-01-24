@@ -32,7 +32,7 @@ sns.set_style("whitegrid")
 plt.rcParams['figure.facecolor'] = 'white'
 
 
-SPECIAL = {"NONE": 0, "BANDIT_SEP": 1, "QUERY": 2}
+SPECIAL = {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2}
 LEARNER_RAW_ID = 99
 
 
@@ -133,9 +133,9 @@ def prepare_single_example_batch(
     
     # Add QUERY token
     bandit_ids.append(0)
-    agent_ids.append(0)
-    action_ids.append(num_arms)
-    reward_ids.append(2)
+    agent_ids.append(num_agents)  # padding
+    action_ids.append(num_arms)   # padding
+    reward_ids.append(2)          # padding
     special_ids.append(SPECIAL["QUERY"])
     
     # Convert to tensors with batch dimension

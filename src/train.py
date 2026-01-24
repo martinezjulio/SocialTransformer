@@ -502,7 +502,8 @@ def main():
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
     parser.add_argument("--warmup_epochs", type=int, default=2, help="Number of epochs for LR warmup")
-    parser.add_argument("--min_lr_ratio", type=float, default=0.0, help="Minimum LR as ratio of initial LR")
+    parser.add_argument("--min_lr", type=float, default=1e-8,
+                        help="Minimum learning rate (absolute value, not ratio)")
     parser.add_argument("--scheduler", type=str, default="cosine", 
                         choices=["cosine", "plateau"],
                         help="Type of LR scheduler")
@@ -510,8 +511,14 @@ def main():
                         help="Patience for ReduceLROnPlateau")
     parser.add_argument("--factor", type=float, default=0.5,
                         help="Factor for ReduceLROnPlateau")
-    parser.add_argument("--early_stopping_patience", type=int, default=0,
-                        help="Early stopping patience (0=disabled)")
+    
+    # Overfitting-based early stopping
+    parser.add_argument("--overfitting_threshold", type=float, default=10.0,
+                        help="Percentage threshold above best val loss to detect overfitting (0=disabled)")
+    parser.add_argument("--overfitting_patience", type=int, default=30,
+                        help="Consecutive epochs exceeding threshold to trigger early stopping")
+    parser.add_argument("--overfitting_window", type=int, default=15,
+                        help="Window size for moving average trend detection")
     
     # Checkpoint resumption
     parser.add_argument("--resume_from_checkpoint", type=str, default=None,
@@ -629,11 +636,13 @@ def main():
                 "N_max": N_max,
                 "use_scheduler": args.use_scheduler,
                 "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
-                "min_lr_ratio": args.min_lr_ratio if args.use_scheduler else None,
+                "min_lr": args.min_lr if args.use_scheduler else None,
                 "scheduler_type": args.scheduler if args.use_scheduler else None,
                 "patience": args.patience if (args.use_scheduler and args.scheduler == "plateau") else None,
                 "factor": args.factor if (args.use_scheduler and args.scheduler == "plateau") else None,
-                "early_stopping_patience": args.early_stopping_patience if args.early_stopping_patience > 0 else None,
+                "overfitting_threshold": args.overfitting_threshold if args.overfitting_threshold > 0 else None,
+                "overfitting_patience": args.overfitting_patience,
+                "overfitting_window": args.overfitting_window,
             },
         )
         # Append run ID to checkpoint directory for organization
@@ -789,8 +798,9 @@ def main():
         print(f"Best val loss so far: {best_val_loss:.4f}")
         print(f"{'='*50}\n")
     
-    # Early stopping tracking
-    early_stopping_counter = 0
+    # Overfitting detection tracking
+    overfitting_counter = 0
+    val_loss_history = []  # Track recent validation losses
     
     # Track previous checkpoint paths for deletion
     prev_best_checkpoint = None
@@ -1031,15 +1041,41 @@ def main():
             )
             prev_latest_checkpoint = checkpoint_path_latest
         else:
-            # No improvement
-            early_stopping_counter += 1
-            if args.early_stopping_patience > 0 and early_stopping_counter >= args.early_stopping_patience:
-                print(f"\n{'='*50}")
-                print(f"Early stopping triggered after {epoch} epochs")
-                print(f"No improvement for {args.early_stopping_patience} epochs")
-                print(f"Best val loss: {best_val_loss:.4f}")
-                print(f"{'='*50}")
-                break
+            # No improvement - check for overfitting
+            val_loss_history.append(val_stats['loss'])
+            
+            # Only check if overfitting detection is enabled (threshold > 0)
+            if args.overfitting_threshold > 0:
+                # Condition A: Current loss exceeds threshold
+                threshold_exceeded = val_stats['loss'] > best_val_loss * (1 + args.overfitting_threshold / 100.0)
+                
+                # Condition B: Moving average shows upward trend
+                upward_trend = False
+                if len(val_loss_history) >= args.overfitting_window:
+                    recent_losses = val_loss_history[-args.overfitting_window:]
+                    # Simple trend: compare first half vs second half of window
+                    first_half_avg = sum(recent_losses[:len(recent_losses)//2]) / (len(recent_losses)//2)
+                    second_half_avg = sum(recent_losses[len(recent_losses)//2:]) / (len(recent_losses) - len(recent_losses)//2)
+                    upward_trend = second_half_avg > first_half_avg
+                
+                # Both conditions must be true
+                if threshold_exceeded and upward_trend:
+                    overfitting_counter += 1
+                    print(f"     ⚠ Overfitting signal {overfitting_counter}/{args.overfitting_patience}: "
+                          f"val_loss={val_stats['loss']:.4f} vs best={best_val_loss:.4f} "
+                          f"(+{((val_stats['loss']/best_val_loss - 1)*100):.2f}%), trend=↑")
+                    
+                    if overfitting_counter >= args.overfitting_patience:
+                        print(f"\n{'='*50}")
+                        print(f"Early stopping: Overfitting detected after {epoch} epochs")
+                        print(f"Val loss consistently above best by >{args.overfitting_threshold}% with upward trend")
+                        print(f"Best val loss: {best_val_loss:.4f}")
+                        print(f"Current val loss: {val_stats['loss']:.4f}")
+                        print(f"{'='*50}")
+                        break
+                else:
+                    # Reset counter if conditions not met
+                    overfitting_counter = 0
         
         # Save periodic checkpoints if requested (but skip if already saved as best)
         if args.save_every > 0 and epoch % args.save_every == 0 and not is_best:

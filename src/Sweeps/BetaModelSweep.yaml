@@ -17,8 +17,8 @@ parameters:
   # LR Scheduler warmup parameters
   warmup_epochs:
     value: 2
-  min_lr_ratio:
-    value: 0.00001
+  min_lr:
+    value: 1e-8
   # Hyperparameters to optimize
   optimizer:
     values: ["adamw"] #["adam", "adamw", "sgd"]
@@ -52,8 +52,13 @@ parameters:
     value: 10
   factor:
     value: 0.5
-  early_stopping_patience:
+  # Overfitting-based early stopping
+  overfitting_threshold:
+    value: 10.0  # Conservative to handle double descent even in 100-epoch runs
+  overfitting_patience:
     value: 30
+  overfitting_window:
+    value: 15
 
 # Custom command to properly pass flags
 command:

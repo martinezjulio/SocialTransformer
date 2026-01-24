@@ -287,6 +287,7 @@ def encode_events_to_tensors(
     events: List[Tuple[int, int, int, int]],
     num_arms: int,
     num_bandits: int,
+    num_agents: int,
     SPECIAL: Dict[str, int]
 ) -> Dict[str, torch.Tensor]:
     """
@@ -296,6 +297,7 @@ def encode_events_to_tensors(
         events: List of (bandit_id, agent_id, action, reward) tuples
         num_arms: Number of bandit arms
         num_bandits: Number of unique bandits
+        num_agents: Number of agents (for padding)
         SPECIAL: Dictionary of special token IDs
         
     Returns:
@@ -315,10 +317,10 @@ def encode_events_to_tensors(
         special_ids.append(SPECIAL["NONE"])
     
     # Add QUERY token at the end
-    bandit_ids.append(0)
-    agent_ids.append(0)
-    action_ids.append(num_arms)  # PAD
-    reward_ids.append(2)  # PAD
+    bandit_ids.append(0)  # For now, keep bandit_id=0
+    agent_ids.append(num_agents)  # padding
+    action_ids.append(num_arms)   # padding
+    reward_ids.append(2)          # padding
     special_ids.append(SPECIAL["QUERY"])
     
     return {
@@ -401,6 +403,7 @@ def run_inference_on_session(
     alpha0: float,
     beta0: float,
     num_arms: int = 12,
+    num_agents: int = 3,
     learner_steps: int = 6,
     SPECIAL: Dict[str, int] = None,
     learner_segment_input: str = "human",
@@ -419,6 +422,7 @@ def run_inference_on_session(
         alpha0: Prior alpha parameter
         beta0: Prior beta parameter
         num_arms: Number of bandit arms
+        num_agents: Number of agents (for padding)
         learner_steps: Number of steps per learner segment
         SPECIAL: Dictionary of special token IDs
         learner_segment_input: "human" to use original learner data as context, 
@@ -531,6 +535,7 @@ def run_inference_on_session(
                 model_input['events'],
                 num_arms,
                 len(model_input['bandits_info']),
+                num_agents,
                 SPECIAL
             )
             
@@ -829,6 +834,7 @@ def main():
                     alpha0,
                     beta0,
                     model_config['num_arms'],
+                    model_config['num_agents'],
                     model_config['T_learner'],
                     SPECIAL,
                     learner_segment_input=learner_input,
