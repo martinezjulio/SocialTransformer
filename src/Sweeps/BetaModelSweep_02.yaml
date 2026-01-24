@@ -11,14 +11,14 @@ parameters:
   dataset_path:
     value: "data/demonstrations_data_02"
   epochs:
-    value: 350
+    value: 500
   device:
     value: "cuda"
   # LR Scheduler warmup parameters
   warmup_epochs:
     value: 2
-  min_lr_ratio:
-    value: 0.00001
+  min_lr:
+    value: 1e-8
   # Hyperparameters to optimize
   optimizer:
     values: ["adamw"] #["adam", "adamw", "sgd"]
@@ -40,30 +40,35 @@ parameters:
   nhead:
     values: [4, 8, 16]
   demo_loss_weight:
-    values: [1.0]
+    values: 1.0
   demo_belief_loss:
     values: ["cross_entropy"] #["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"]
   experience_loss_weight:
-    values: [1.0]
+    values: 1.0
   masking_strategy:
-    values: ["all_bandits"]
+    values: "all_bandits" # ["all_bandits", "current_bandit_only"]
   profile_method:
-    values: ["learned_profile"] # ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
+    values: "no_profile" # ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
   experience_head_loss_weight:
-    values: [1.0]
+    values: 1.0
   experience_head_loss_type:
-    values: ["mse", "bce"]
+    values: "bce" # ["mse", "bce"]
   expert_threshold:
     value: 30.0
   # Scheduler parameters
   scheduler :
-    values: ["plateau"] # ["cosine", "plateau"]
+    values: "plateau" # ["cosine", "plateau"]
   patience:
-    value: 10
+    value: 15
   factor:
-    value: 0.5
-  early_stopping_patience:
-    value: 0
+    value: 0.7
+  # Overfitting-based early stopping
+  overfitting_threshold:
+    values: 15.0  # 0 = disabled, sweep different thresholds
+  overfitting_patience:
+    values: 50  # Permissive for 500 epochs, robust to double descent
+  overfitting_window:
+    value: 15  # 15-epoch moving average
 
 # Custom command to properly pass flags
 command:

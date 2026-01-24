@@ -109,7 +109,7 @@ def simulate_segment(
     alpha: torch.Tensor,  # [K] current belief shapes for this agent
     beta: torch.Tensor,   # [K]
     bandit_id: int,
-    agent_id: int,  # demonstrator_id or 99 for learner
+    agent_id: int,  # demonstrator_id (1, 2, ...) or 0 for learner
     strategy: str = "thompson",  # "thompson" or "random_exclusion"
 ) -> Tuple[List[Tuple[int,int,int,int]], torch.Tensor, torch.Tensor]:
     """
@@ -182,7 +182,7 @@ def simulate_rounds_run(
     Returns:
         Dictionary with events, round_boundaries, demonstrators, bandits, meta
     """
-    LEARNER_ID = 99
+    LEARNER_ID = 0
     
     # Sample bandits based on strategy
     num_bandits = num_rounds if change_bandits_with_rounds else 1
@@ -291,21 +291,24 @@ def simulate_rounds_run(
                 segments.append(("demo", demo_id))
         
         # Simulate each segment in the round
-        for seg_type, agent_id in segments:
+        for seg_type, demo_id in segments:
             if seg_type == "demo":
+                # Convert demo_id (0, 1, ...) to agent_id (1, 2, ...) for events
+                # Learner uses agent_id 0, so demonstrators are 1, 2, ...
+                agent_id = demo_id + 1
                 events, new_alpha, new_beta = simulate_segment(
                     mode="demo",
                     steps=T_demo,
                     K=K,
                     thetas=thetas,
-                    alpha=demo_alphas[agent_id],
-                    beta=demo_betas[agent_id],
+                    alpha=demo_alphas[demo_id],
+                    beta=demo_betas[demo_id],
                     bandit_id=bandit_idx,
                     agent_id=agent_id,
-                    strategy=demo_strategies[agent_id],
+                    strategy=demo_strategies[demo_id],
                 )
-                demo_alphas[agent_id] = new_alpha
-                demo_betas[agent_id] = new_beta
+                demo_alphas[demo_id] = new_alpha
+                demo_betas[demo_id] = new_beta
                 
                 # Learner also observes demo actions
                 for (_, _, arm, r) in events:
@@ -313,6 +316,7 @@ def simulate_rounds_run(
                     learner_beta[arm] += 1 - r
                     
             else:  # learner
+                agent_id = LEARNER_ID
                 events, learner_alpha, learner_beta = simulate_segment(
                     mode="learner",
                     steps=T_learner,
@@ -321,7 +325,7 @@ def simulate_rounds_run(
                     alpha=learner_alpha,
                     beta=learner_beta,
                     bandit_id=bandit_idx,
-                    agent_id=LEARNER_ID,
+                    agent_id=agent_id,
                     strategy="thompson",
                 )
             

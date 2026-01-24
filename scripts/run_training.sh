@@ -15,7 +15,7 @@ DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 # Model hyperparameters
 BATCH_SIZE=128
 LEARNING_RATE=5e-5
-EPOCHS=350
+EPOCHS=500
 DEVICE="cuda"
 WEIGHT_DECAY=0.1  # Weight decay for regularization
 
@@ -54,16 +54,17 @@ WARMUP_EPOCHS=2     # Warmup epochs for cosine scheduler
 SCHEDULER="plateau"
 #SCHEDULER="cosine"  # Uncomment to use cosine scheduler instead
 
-# Minimum LR (as ratio of initial LR, e.g., 1e-5 means min_lr = lr * 1e-5)
-MIN_LR_RATIO=0.00001
+# Minimum LR (absolute value, not ratio)
+MIN_LR=1e-8
 
 # ReduceLROnPlateau parameters (only used when SCHEDULER="plateau")
-PATIENCE=10          # Number of epochs with no improvement before reducing LR
-FACTOR=0.5          # Factor by which to reduce LR (new_lr = lr * factor)
+PATIENCE=15          # Number of epochs with no improvement before reducing LR
+FACTOR=0.7          # Factor by which to reduce LR (new_lr = lr * factor)
 
-# Early stopping (set to 0 to disable)
-EARLY_STOPPING_PATIENCE=0  # Stop training if no improvement for N epochs
-# EARLY_STOPPING_PATIENCE=0   # Uncomment to disable early stopping
+# Overfitting-based early stopping (set threshold to 0 to disable)
+OVERFITTING_THRESHOLD=10.0     # Percentage above best val loss to detect overfitting (0=disabled)
+OVERFITTING_PATIENCE=30        # Consecutive epochs exceeding threshold to trigger stop
+OVERFITTING_WINDOW=15          # Window size for moving average trend detection
 
 # Print configuration
 echo "=================================="
@@ -111,17 +112,19 @@ echo "Learning Rate Scheduler:"
 echo "  Use scheduler: $USE_SCHEDULER"
 echo "  Scheduler type: $SCHEDULER"
 echo "  Warmup epochs: $WARMUP_EPOCHS (for cosine)"
-echo "  Min LR ratio: $MIN_LR_RATIO"
+echo "  Min LR: $MIN_LR"
 if [ "$SCHEDULER" = "plateau" ]; then
     echo "  Patience: $PATIENCE epochs"
     echo "  Reduction factor: $FACTOR"
 fi
 echo ""
-echo "Early Stopping:"
-if [ "$EARLY_STOPPING_PATIENCE" -gt 0 ]; then
-    echo "  Enabled: stop after $EARLY_STOPPING_PATIENCE epochs without improvement"
-else
+echo "Overfitting Detection:"
+if [ "$OVERFITTING_THRESHOLD" == "0" ] || [ "$OVERFITTING_THRESHOLD" == "0.0" ]; then
     echo "  Disabled"
+else
+    echo "  Threshold: ${OVERFITTING_THRESHOLD}% above best val loss"
+    echo "  Patience: $OVERFITTING_PATIENCE consecutive epochs"
+    echo "  Trend window: $OVERFITTING_WINDOW epochs"
 fi
 echo "=================================="
 echo ""
@@ -187,10 +190,12 @@ python src/train.py \
     $SCHEDULER_FLAG \
     --scheduler $SCHEDULER \
     --warmup_epochs $WARMUP_EPOCHS \
-    --min_lr_ratio $MIN_LR_RATIO \
+    --min_lr $MIN_LR \
     --patience $PATIENCE \
     --factor $FACTOR \
-    --early_stopping_patience $EARLY_STOPPING_PATIENCE
+    --overfitting_threshold $OVERFITTING_THRESHOLD \
+    --overfitting_patience $OVERFITTING_PATIENCE \
+    --overfitting_window $OVERFITTING_WINDOW
 
 # Check if training was successful
 if [ $? -eq 0 ]; then

@@ -13,7 +13,7 @@ SPECIAL = {
     "BANDIT_SEP": 2,  # (b, -1, -1, -1)
 }
 
-LEARNER_RAW_ID = 99  # learner's agent_id in the simulator
+LEARNER_RAW_ID = 0  # learner's agent_id in the simulator
 
 
 # ---------- helpers ----------
@@ -29,35 +29,33 @@ def _remap_agent_ids_local(
     num_agents: int = 4
 ) -> Tuple[List[Tuple[int,int,int,int]], int]:
     """
-    Remap raw agent ids to a compact local space for this example:
-      - Learner (raw=99) maps to 0 (primary position)
-      - Demonstrators present in the example map to 1..D (D <= num_agents-1)
-      - BANDIT_SEP rows get agent_id = 0 (share with learner; distinguished by special_ids)
+    Process agent IDs and handle BANDIT_SEP sentinel.
+    Agent IDs are already correct from generation (learner=0, demos=1,2,...).
+    Only need to handle BANDIT_SEP sentinel (-1) -> num_agents for padding.
+    
     Returns:
-      remapped_events, num_agents_used (<= num_agents)
+      processed_events, num_agents_used (<= num_agents)
     """
-    demos = _collect_local_demo_ids(events)
-    D = len(demos)
+    # Count unique real agent IDs
+    demos = sorted({ag for (_, ag, _, _) in events if ag not in (LEARNER_RAW_ID, -1)})
+    num_agents_used = len(demos) + 1  # +1 for learner
 
-    if D + 1 > num_agents:
+    if num_agents_used > num_agents:
         raise ValueError(
-            f"Example has {D} demonstrators + learner = {D+1} agents, "
-            f"but num_agents={num_agents}. Increase num_agents in the model."
+            f"Example has {num_agents_used} agents, but num_agents={num_agents}"
         )
 
-    demo_map = {raw: i + 1 for i, raw in enumerate(demos)}  # demos start at 1
-    learner_index = 0  # learner is always at 0
-
+    # Process events: just replace BANDIT_SEP sentinel (-1) with padding
     out: List[Tuple[int,int,int,int]] = []
     for (b, ag, a, r) in events:
         if ag == -1:
-            # BANDIT_SEP row—use agent_id=0 (shares with learner; structural token)
-            out.append((b, 0, a, r))
-        elif ag == LEARNER_RAW_ID:
-            out.append((b, learner_index, a, r))
+            # BANDIT_SEP - use num_agents as padding
+            out.append((b, num_agents, a, r))
         else:
-            out.append((b, demo_map[ag], a, r))
-    return out, (D + 1)  # demos + learner
+            # Regular event or learner - IDs already correct
+            out.append((b, ag, a, r))
+    
+    return out, num_agents_used
 
 
 # ---------- Dataset ----------
@@ -113,12 +111,13 @@ class BanditSequenceDataset(Dataset):
         """
         bandit_ids, agent_ids, action_ids, reward_ids, special_ids = [], [], [], [], []
         for (b, ag, a, r) in stream:
-            if ag == -1:
+            # Check if this is BANDIT_SEP (agent_id was set to num_agents in remapping)
+            if ag == self.num_agents:
                 # BANDIT_SEP
                 bandit_ids.append(min(max(b, 0), self.num_bandits - 1))
-                agent_ids.append(0)               # structural row; any index ok
-                action_ids.append(self.num_arms)  # PAD
-                reward_ids.append(2)              # PAD
+                agent_ids.append(self.num_agents)  # padding
+                action_ids.append(self.num_arms)   # padding
+                reward_ids.append(2)               # padding
                 special_ids.append(SPECIAL["BANDIT_SEP"])
                 continue
 
@@ -148,10 +147,10 @@ class BanditSequenceDataset(Dataset):
         enc = self._encode_stream(remapped_events)
 
         # Append QUERY token at the very end for readout
-        bandit_ids = enc["bandit_ids"] + [0]
-        agent_ids = enc["agent_ids"] + [0]
-        action_ids = enc["action_ids"] + [self.num_arms]
-        reward_ids = enc["reward_ids"] + [2]
+        bandit_ids = enc["bandit_ids"] + [0]  # For now, keep bandit_id=0
+        agent_ids = enc["agent_ids"] + [self.num_agents]  # padding
+        action_ids = enc["action_ids"] + [self.num_arms]  # padding
+        reward_ids = enc["reward_ids"] + [2]              # padding
         special_ids = enc["special_ids"] + [SPECIAL["QUERY"]]
 
         # Extract labels for all demonstrators and all bandits
