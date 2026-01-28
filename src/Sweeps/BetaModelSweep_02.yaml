@@ -55,6 +55,13 @@ parameters:
     values: "bce" # ["mse", "bce"]
   expert_threshold:
     value: 30.0
+  # Head input configurations (Phase 3)
+  theta_head_input:
+    values: ["query_only", "query_and_profiles"]
+  demo_beliefs_head_input:
+    values: ["query_only", "profiles_only", "query_and_profiles"]
+  experience_head_input:
+    values: ["query_only", "profiles_only", "query_and_profiles"]
   # Scheduler parameters
   scheduler :
     values: "plateau" # ["cosine", "plateau"]

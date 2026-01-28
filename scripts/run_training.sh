@@ -8,7 +8,7 @@ source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_02"
+DATASET_NAME="demonstrations_data_04"
 BASE_DATA_DIR="data"
 DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
 
@@ -32,10 +32,15 @@ EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 
 MASKING_STRATEGY="current_bandit_only"  # Options: all_bandits, current_bandit_only
 
 # Profile and Experience Head Configuration
-PROFILE_METHOD="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
+PROFILE_METHOD="learned_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
 EXPERIENCE_HEAD_LOSS_WEIGHT=1.0  # Weight for direct experience head loss (only used for profile methods)
 EXPERIENCE_HEAD_LOSS_TYPE="mse"  # Options: mse, bce
 EXPERT_THRESHOLD=30.0  # Threshold for expert classification (only used for BCE loss)
+
+# Head Input Configurations (Phase 3)
+THETA_HEAD_INPUT="query_only"  # Options: query_only, query_and_profiles
+DEMO_BELIEFS_HEAD_INPUT="profiles_only"  # Options: query_only, profiles_only, query_and_profiles
+EXPERIENCE_HEAD_INPUT="profiles_only"  # Options: query_only, profiles_only, query_and_profiles
 
 # Weights & Biases configuration
 WANDB_PROJECT="social-belief-modeling"
@@ -98,6 +103,11 @@ echo "  Profile method: $PROFILE_METHOD"
 echo "  Experience head loss weight: $EXPERIENCE_HEAD_LOSS_WEIGHT"
 echo "  Experience head loss type: $EXPERIENCE_HEAD_LOSS_TYPE"
 echo "  Expert threshold (for BCE): $EXPERT_THRESHOLD"
+echo ""
+echo "Head Input Configurations:"
+echo "  Theta head input: $THETA_HEAD_INPUT"
+echo "  Demo beliefs head input: $DEMO_BELIEFS_HEAD_INPUT"
+echo "  Experience head input: $EXPERIENCE_HEAD_INPUT"
 echo ""
 echo "Weights & Biases:"
 echo "  Project: $WANDB_PROJECT"
@@ -181,6 +191,9 @@ python src/train.py \
     --experience_head_loss_weight $EXPERIENCE_HEAD_LOSS_WEIGHT \
     --experience_head_loss_type $EXPERIENCE_HEAD_LOSS_TYPE \
     --expert_threshold $EXPERT_THRESHOLD \
+    --theta_head_input $THETA_HEAD_INPUT \
+    --demo_beliefs_head_input $DEMO_BELIEFS_HEAD_INPUT \
+    --experience_head_input $EXPERIENCE_HEAD_INPUT \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \

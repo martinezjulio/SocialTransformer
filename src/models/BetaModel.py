@@ -30,7 +30,7 @@ class EventEmbedder(nn.Module):
     ) -> None:
         super().__init__()
         self.bandit_emb = nn.Embedding(num_bandits, d_model)
-        self.agent_emb  = nn.Embedding(num_agents, d_model)
+        self.agent_emb  = nn.Embedding(num_agents + 1, d_model)  # +1 for structural token padding (uses num_agents as index)
         self.action_emb = nn.Embedding(num_actions + 1, d_model)  # +1 for PAD action
         self.reward_emb = nn.Embedding(3, d_model)  # {0,1,2(PAD)}
         self.special_emb = nn.Embedding(3, d_model)  # NONE, QUERY, BANDIT_SEP
@@ -222,29 +222,65 @@ class CrossAttentionExtractor(ProfileExtractor):
 class DemoExperienceHead(nn.Module):
     """
     Predict demonstrator experience level (N_tot) from profile embeddings.
+    Configurable to use query embeddings and/or profile embeddings.
     Supports two output types:
     - "mse": continuous N_tot prediction
     - "bce": logits for expert vs novice binary classification
     """
-    def __init__(self, d_model: int, num_demonstrators: int, output_type: str = "mse"):
+    def __init__(self, d_model: int, num_demonstrators: int, output_type: str = "mse", input_mode: str = "profiles_only"):
         super().__init__()
         self.output_type = output_type
         self.num_demonstrators = num_demonstrators
+        self.input_mode = input_mode
+        
+        # Determine input size (per demonstrator)
+        if input_mode == "query_only":
+            input_size = d_model
+        elif input_mode == "profiles_only":
+            input_size = d_model
+        elif input_mode == "query_and_profiles":
+            input_size = d_model + d_model
+        else:
+            raise ValueError(f"Unknown input_mode: {input_mode}")
+        
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model // 2),
+            nn.Linear(input_size, d_model // 2),
             nn.ReLU(),
             nn.Linear(d_model // 2, 1)
         )
     
-    def forward(self, profiles: torch.Tensor) -> torch.Tensor:
+    def forward(self, profiles: torch.Tensor, query_emb: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Args:
             profiles: [B, num_demonstrators, d_model]
+            query_emb: Optional [B, d_model] - QUERY token hidden state
         
         Returns:
             [B, num_demonstrators] - N_tot predictions (continuous) or logits (for BCE)
         """
-        out = self.mlp(profiles).squeeze(-1)  # [B, D]
+        B, D, d = profiles.shape
+        outputs = []
+        
+        for demo_id in range(D):
+            profile_d = profiles[:, demo_id, :]  # [B, d_model]
+            
+            # Build input based on mode
+            if self.input_mode == "query_only":
+                if query_emb is None:
+                    raise ValueError("query_only mode requires query_emb")
+                mlp_input = query_emb
+            elif self.input_mode == "profiles_only":
+                mlp_input = profile_d
+            elif self.input_mode == "query_and_profiles":
+                if query_emb is None:
+                    raise ValueError("query_and_profiles mode requires query_emb")
+                mlp_input = torch.cat([query_emb, profile_d], dim=-1)
+            
+            out_d = self.mlp(mlp_input).squeeze(-1)  # [B]
+            outputs.append(out_d)
+        
+        out = torch.stack(outputs, dim=1)  # [B, D]
+        
         if self.output_type == "mse":
             return F.softplus(out) + 1e-3  # Positive values for N_tot
         else:  # bce
@@ -254,21 +290,35 @@ class DemoExperienceHead(nn.Module):
 class BanditPayoffsHead(nn.Module):
     """
     Predict bandit payoffs (theta) via Beta distribution parameters.
+    Configurable to use query embeddings and/or profile embeddings.
     """
-    def __init__(self, d_model: int, num_arms: int):
+    def __init__(self, d_model: int, num_arms: int, input_mode: str = "query_only", num_demonstrators: int = 2):
         super().__init__()
         self.num_arms = num_arms
+        self.input_mode = input_mode
+        
+        # Determine input size based on mode
+        if input_mode == "query_only":
+            input_size = d_model
+        elif input_mode == "profiles_only":
+            input_size = d_model * num_demonstrators
+        elif input_mode == "query_and_profiles":
+            input_size = d_model + d_model * num_demonstrators
+        else:
+            raise ValueError(f"Unknown input_mode: {input_mode}")
+        
         self.mlp = nn.Sequential(
-            nn.Linear(d_model, d_model),
+            nn.Linear(input_size, d_model),
             nn.ReLU(),
-            nn.Linear(d_model, 2 * num_arms),  # alpha_theta, beta_theta
+            nn.Linear(d_model, 2 * num_arms),
         )
         self.softplus = nn.Softplus()
     
-    def forward(self, query_emb: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, query_emb: torch.Tensor, profiles: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            query_emb: [B, d_model] - QUERY token embedding
+            query_emb: [B, d_model] - QUERY token hidden state
+            profiles: Optional [B, D, d_model] - profile hidden states
         
         Returns:
             alpha_theta: [B, K]
@@ -277,10 +327,22 @@ class BanditPayoffsHead(nn.Module):
         B = query_emb.shape[0]
         K = self.num_arms
         
-        theta_out = self.mlp(query_emb)  # [B, 2K]
+        # Build input based on mode
+        if self.input_mode == "query_only":
+            mlp_input = query_emb
+        elif self.input_mode == "profiles_only":
+            if profiles is None:
+                raise ValueError("profiles_only mode requires profiles")
+            mlp_input = profiles.view(B, -1)  # [B, D*d_model]
+        elif self.input_mode == "query_and_profiles":
+            if profiles is None:
+                raise ValueError("query_and_profiles mode requires profiles")
+            mlp_input = torch.cat([query_emb, profiles.view(B, -1)], dim=-1)
+        
+        theta_out = self.mlp(mlp_input)
         theta_out = theta_out.view(B, 2, K)
-        alpha_theta = self.softplus(theta_out[:, 0, :]) + 1e-3  # [B, K]
-        beta_theta = self.softplus(theta_out[:, 1, :]) + 1e-3   # [B, K]
+        alpha_theta = self.softplus(theta_out[:, 0, :]) + 1e-3
+        beta_theta = self.softplus(theta_out[:, 1, :]) + 1e-3
         
         return alpha_theta, beta_theta
 
@@ -288,29 +350,36 @@ class BanditPayoffsHead(nn.Module):
 class DemoBeliefsHead(nn.Module):
     """
     Predict demonstrator beliefs via Beta distribution parameters.
-    Optionally conditions on profile embeddings.
+    Configurable to use query embeddings and/or profile embeddings.
     """
-    def __init__(self, d_model: int, num_arms: int, num_demonstrators: int = 2, use_profiles: bool = False):
+    def __init__(self, d_model: int, num_arms: int, num_demonstrators: int = 2, input_mode: str = "query_and_profiles"):
         super().__init__()
         self.num_arms = num_arms
         self.num_demonstrators = num_demonstrators
-        self.use_profiles = use_profiles
+        self.input_mode = input_mode
         
-        # Input size: query + optional profiles
-        input_size = d_model + (d_model * num_demonstrators if use_profiles else 0)
+        # Determine input size based on mode
+        if input_mode == "query_only":
+            input_size = d_model
+        elif input_mode == "profiles_only":
+            input_size = d_model * num_demonstrators
+        elif input_mode == "query_and_profiles":
+            input_size = d_model + d_model * num_demonstrators
+        else:
+            raise ValueError(f"Unknown input_mode: {input_mode}")
         
         self.mlp = nn.Sequential(
             nn.Linear(input_size, d_model),
             nn.ReLU(),
-            nn.Linear(d_model, 2 * num_demonstrators * num_arms),  # alpha/beta per demo
+            nn.Linear(d_model, 2 * num_demonstrators * num_arms),
         )
         self.softplus = nn.Softplus()
     
-    def forward(self, query_emb: torch.Tensor, profile_embeddings: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, query_emb: torch.Tensor, profiles: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            query_emb: [B, d_model] - QUERY token embedding
-            profile_embeddings: Optional [B, D, d_model] - demonstrator profiles
+            query_emb: [B, d_model] - QUERY token hidden state
+            profiles: Optional [B, D, d_model] - profile hidden states
         
         Returns:
             alpha_demo: [B, D, K]
@@ -320,18 +389,22 @@ class DemoBeliefsHead(nn.Module):
         K = self.num_arms
         D = self.num_demonstrators
         
-        # Concatenate query with profile embeddings if provided
-        if self.use_profiles and profile_embeddings is not None:
-            # Flatten profile embeddings and concatenate
-            profiles_flat = profile_embeddings.view(B, -1)  # [B, D*d_model]
-            mlp_input = torch.cat([query_emb, profiles_flat], dim=-1)  # [B, d_model + D*d_model]
-        else:
+        # Build input based on mode
+        if self.input_mode == "query_only":
             mlp_input = query_emb
+        elif self.input_mode == "profiles_only":
+            if profiles is None:
+                raise ValueError("profiles_only mode requires profiles")
+            mlp_input = profiles.view(B, -1)
+        elif self.input_mode == "query_and_profiles":
+            if profiles is None:
+                raise ValueError("query_and_profiles mode requires profiles")
+            mlp_input = torch.cat([query_emb, profiles.view(B, -1)], dim=-1)
         
-        demo_out = self.mlp(mlp_input)  # [B, 2*D*K]
+        demo_out = self.mlp(mlp_input)
         demo_out = demo_out.view(B, D, 2, K)
-        alpha_demo = self.softplus(demo_out[:, :, 0, :]) + 1e-3  # [B, D, K]
-        beta_demo = self.softplus(demo_out[:, :, 1, :]) + 1e-3   # [B, D, K]
+        alpha_demo = self.softplus(demo_out[:, :, 0, :]) + 1e-3
+        beta_demo = self.softplus(demo_out[:, :, 1, :]) + 1e-3
         
         return alpha_demo, beta_demo
 
@@ -406,22 +479,46 @@ class SBIPosteriorTransformer(nn.Module):
         dropout: float = 0.1,
         profile_method: str = "no_profile",
         experience_head_loss_type: str = "mse",
+        theta_head_input: str = "query_only",
+        demo_beliefs_head_input: str = "query_and_profiles",
+        experience_head_input: str = "profiles_only",
     ) -> None:
         super().__init__()
         self.profile_method = profile_method
         self.num_demonstrators = num_demonstrators
         
+        # Validate and override input modes for no_profile method
+        if profile_method == "no_profile":
+            if theta_head_input != "query_only":
+                print(f"Warning: profile_method='no_profile', forcing theta_head_input='query_only'")
+                theta_head_input = "query_only"
+            if demo_beliefs_head_input != "query_only":
+                print(f"Warning: profile_method='no_profile', forcing demo_beliefs_head_input='query_only'")
+                demo_beliefs_head_input = "query_only"
+            if experience_head_input != "query_only":
+                print(f"Warning: profile_method='no_profile', forcing experience_head_input='query_only'")
+                experience_head_input = "query_only"
+        
+        # Store for later use
+        self.theta_head_input = theta_head_input
+        self.demo_beliefs_head_input = demo_beliefs_head_input
+        self.experience_head_input = experience_head_input
+        
         self.embed = EventEmbedder(d_model, num_bandits, num_agents, num_arms, dropout)
         self.backbone = CausalTransformerEncoder(d_model, nhead, num_layers, dim_feedforward, dropout)
         
-        # Separate heads for predictions
-        self.bandit_payoffs_head = BanditPayoffsHead(d_model, num_arms)
+        # Separate heads with configurable input modes
+        self.bandit_payoffs_head = BanditPayoffsHead(
+            d_model, num_arms,
+            input_mode=theta_head_input,
+            num_demonstrators=num_demonstrators
+        )
         self.demo_beliefs_head = DemoBeliefsHead(
-            d_model, num_arms, num_demonstrators, 
-            use_profiles=(profile_method != "no_profile")
+            d_model, num_arms, num_demonstrators,
+            input_mode=demo_beliefs_head_input
         )
         
-        # Profile extractor and experience head (only for profile methods)
+        # Profile extractor and experience head
         if profile_method != "no_profile":
             if profile_method == "learned_profile":
                 self.profile_extractor = LearnedProfileExtractor(d_model, num_demonstrators)
@@ -433,11 +530,18 @@ class SBIPosteriorTransformer(nn.Module):
                 raise ValueError(f"Unknown profile_method: {profile_method}")
             
             self.demo_experience_head = DemoExperienceHead(
-                d_model, num_demonstrators, output_type=experience_head_loss_type
+                d_model, num_demonstrators,
+                output_type=experience_head_loss_type,
+                input_mode=experience_head_input
             )
         else:
             self.profile_extractor = None
-            self.demo_experience_head = None
+            # Still create experience head for no_profile (uses query_only)
+            self.demo_experience_head = DemoExperienceHead(
+                d_model, num_demonstrators,
+                output_type=experience_head_loss_type,
+                input_mode="query_only"
+            )
         
         # Keep old heads for compatibility with old checkpoints
         self.heads = Heads(d_model, num_arms, num_demonstrators)
@@ -479,30 +583,62 @@ class SBIPosteriorTransformer(nn.Module):
             pad_mask=batch["pad_mask"],
         )
         
-        # For learned_profile: append profile tokens before transformer
+        # For learned_profile: insert profile tokens before each QUERY
         if self.profile_method == "learned_profile":
             B = x.shape[0]
             device = x.device
-            profile_tokens = self.profile_extractor.get_profile_tokens(B, device)  # [B, D, d_model]
-            x = torch.cat([x, profile_tokens], dim=1)  # [B, T+D, d_model]
             
-            # Extend pad_mask to cover profile tokens (they're not padded)
+            # Find QUERY positions in original sequence
+            query_mask = (batch["special_ids"] == 1)  # [B, T]
+            # Assuming uniform structure across batch
+            query_positions_list = query_mask[0].nonzero(as_tuple=False).squeeze(-1).tolist()
+            num_queries = len(query_positions_list)
+            
+            # Get profile tokens (learned parameters)
+            profile_tokens = self.profile_extractor.get_profile_tokens(B, device)  # [B, D, d_model]
+            
+            # Insert profile tokens before each QUERY
+            pieces = []
+            last_idx = 0
+            
+            for q_pos in query_positions_list:
+                # Add tokens up to (but not including) QUERY
+                if q_pos > last_idx:
+                    pieces.append(x[:, last_idx:q_pos, :])
+                # Insert profiles before QUERY
+                pieces.append(profile_tokens)
+                last_idx = q_pos
+            
+            # Add remaining tokens (QUERYs and anything after)
+            if last_idx < x.shape[1]:
+                pieces.append(x[:, last_idx:, :])
+            
+            # Concatenate all pieces
+            x = torch.cat(pieces, dim=1)  # [B, T + num_queries*D, d_model]
+            
+            # Extend pad_mask for inserted profile tokens
             if batch["pad_mask"] is not None:
-                profile_mask = torch.zeros(B, self.num_demonstrators, dtype=torch.bool, device=device)
-                extended_pad_mask = torch.cat([batch["pad_mask"], profile_mask], dim=1)
+                extended_pad_mask = batch["pad_mask"].clone()
+                for q_idx, q_pos in enumerate(query_positions_list):
+                    # Calculate insertion position (accounting for previously inserted profiles)
+                    insert_pos = q_pos + q_idx * self.num_demonstrators
+                    # Insert D False values (profiles are not padding)
+                    profile_mask = torch.zeros(B, self.num_demonstrators, dtype=torch.bool, device=device)
+                    extended_pad_mask = torch.cat([
+                        extended_pad_mask[:, :insert_pos],
+                        profile_mask,
+                        extended_pad_mask[:, insert_pos:]
+                    ], dim=1)
             else:
                 extended_pad_mask = None
             
-            # Extend attention mask if provided
+            # Custom attention mask extension (if provided)
+            # Profiles use standard causal attention
             if custom_attn_mask is not None:
-                T = custom_attn_mask.shape[0]
-                D = self.num_demonstrators
-                new_size = T + D
-                extended_mask = torch.zeros(new_size, new_size, dtype=torch.bool, device=device)
-                # Copy existing mask for event tokens
-                extended_mask[:T, :T] = custom_attn_mask
-                # Profile tokens can attend to all event tokens (but not future)
-                extended_mask[T:, T:] = torch.triu(torch.ones(D, D, dtype=torch.bool, device=device), diagonal=1)
+                # Rebuild mask for new sequence length
+                T_new = x.shape[1]
+                extended_mask = torch.triu(torch.ones(T_new, T_new, dtype=torch.bool, device=device), diagonal=1)
+                # Profiles get standard causal (already set by triu)
                 custom_attn_mask = extended_mask
         else:
             extended_pad_mask = batch["pad_mask"]
@@ -510,44 +646,67 @@ class SBIPosteriorTransformer(nn.Module):
         # Run transformer
         h = self.backbone(x, pad_mask=extended_pad_mask, custom_attn_mask=custom_attn_mask)
         
-        # Find all QUERY positions
-        query_positions = self._find_query_positions(batch["special_ids"])  # [B, num_queries]
-        B, num_queries = query_positions.shape
+        # Find QUERY positions (in potentially extended sequence)
+        if self.profile_method == "learned_profile":
+            # QUERY positions shifted by inserted profiles
+            # Original QUERY at pos Q is now at Q + q_idx * D + D (profiles before it)
+            query_mask_orig = (batch["special_ids"] == 1)
+            query_positions_orig_list = query_mask_orig[0].nonzero(as_tuple=False).squeeze(-1).tolist()
+            num_queries = len(query_positions_orig_list)
+            B = h.shape[0]
+        else:
+            # QUERY positions unchanged
+            query_positions = self._find_query_positions(batch["special_ids"])  # [B, num_queries]
+            B, num_queries = query_positions.shape
         
-        # Extract profile embeddings (if using profiles)
-        profiles = None
-        if self.profile_method != "no_profile":
-            profiles = self.profile_extractor(h, batch)  # [B, D, d_model]
+        # Extract global profiles for non-learned methods
+        if self.profile_method != "no_profile" and self.profile_method != "learned_profile":
+            profiles_global = self.profile_extractor(h, batch)  # [B, D, d_model]
         
-        # Extract QUERY embeddings and run predictions for each
+        # Run predictions for each QUERY
         alpha_theta_all = []
         beta_theta_all = []
         alpha_demo_all = []
         beta_demo_all = []
+        query_embs_all = []  # Store for experience head
+        profiles_for_exp = None  # Will be set to last profiles
         
         for q in range(num_queries):
-            # Get QUERY positions for this query index
-            query_pos_q = query_positions[:, q]  # [B]
+            if self.profile_method == "learned_profile":
+                # Calculate actual QUERY position (shifted by profile insertions)
+                query_pos_orig = query_positions_orig_list[q]
+                query_pos_actual = query_pos_orig + q * self.num_demonstrators + self.num_demonstrators
+                
+                # Extract QUERY hidden state
+                batch_indices = torch.arange(B, device=h.device)
+                query_emb = h[batch_indices, query_pos_actual]  # [B, d_model]
+                
+                # Extract profiles for this QUERY (D positions before QUERY)
+                profile_start = query_pos_actual - self.num_demonstrators
+                profiles_q = h[:, profile_start:query_pos_actual, :]  # [B, D, d_model]
+                profiles_for_exp = profiles_q  # Update for experience head (use last)
+            else:
+                # Use original QUERY positions
+                query_pos_q = query_positions[:, q]  # [B]
+                batch_indices = torch.arange(B, device=h.device)
+                query_emb = h[batch_indices, query_pos_q]  # [B, d_model]
+                profiles_q = profiles_global if self.profile_method != "no_profile" else None
+                if profiles_q is not None:
+                    profiles_for_exp = profiles_q
             
-            # Extract hidden states at these positions
-            batch_indices = torch.arange(B, device=h.device)
-            query_emb = h[batch_indices, query_pos_q]  # [B, d_model]
+            query_embs_all.append(query_emb)
             
             # Bandit payoffs
-            alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb)
+            alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb, profiles_q)
             alpha_theta_all.append(alpha_theta)
             beta_theta_all.append(beta_theta)
             
             # Demonstrator beliefs
-            if self.profile_method == "no_profile":
-                alpha_demo, beta_demo = self.demo_beliefs_head(query_emb)
-            else:
-                alpha_demo, beta_demo = self.demo_beliefs_head(query_emb, profiles)
-            
+            alpha_demo, beta_demo = self.demo_beliefs_head(query_emb, profiles_q)
             alpha_demo_all.append(alpha_demo)
             beta_demo_all.append(beta_demo)
         
-        # Stack predictions: [B, num_queries, K] or [B, num_queries, D, K]
+        # Stack predictions
         out = {
             "alpha_theta": torch.stack(alpha_theta_all, dim=1),     # [B, num_queries, K]
             "beta_theta": torch.stack(beta_theta_all, dim=1),       # [B, num_queries, K]
@@ -555,9 +714,19 @@ class SBIPosteriorTransformer(nn.Module):
             "beta_demo": torch.stack(beta_demo_all, dim=1),         # [B, num_queries, D, K]
         }
         
-        # Experience head (if using profiles)
-        if self.profile_method != "no_profile":
-            out["N_tot_pred"] = self.demo_experience_head(profiles)  # [B, D]
+        # Experience head
+        # Use last QUERY's context (most informed)
+        query_emb_for_exp = query_embs_all[-1]  # Last QUERY embedding
+        
+        # Call experience head with appropriate inputs based on input_mode
+        if self.experience_head_input == "query_only":
+            # Create dummy profiles for compatibility
+            dummy_profiles = torch.zeros(B, self.num_demonstrators, h.shape[-1], device=h.device)
+            out["N_tot_pred"] = self.demo_experience_head(dummy_profiles, query_emb=query_emb_for_exp)
+        elif self.experience_head_input == "profiles_only":
+            out["N_tot_pred"] = self.demo_experience_head(profiles_for_exp)
+        else:  # query_and_profiles
+            out["N_tot_pred"] = self.demo_experience_head(profiles_for_exp, query_emb=query_emb_for_exp)
         
         return out
 

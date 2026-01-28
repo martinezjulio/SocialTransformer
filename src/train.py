@@ -317,6 +317,12 @@ def train_one_epoch(
     for batch_idx, batch in enumerate(loader):
         if batch_idx == 0:
             print(f"  ✓ First batch loaded! Processing...")
+            print(f"  Debug: bandit_ids range = [{batch['bandit_ids'].min().item()}, {batch['bandit_ids'].max().item()}]")
+            print(f"  Debug: agent_ids range = [{batch['agent_ids'].min().item()}, {batch['agent_ids'].max().item()}]")
+            print(f"  Debug: special_ids range = [{batch['special_ids'].min().item()}, {batch['special_ids'].max().item()}]")
+            print(f"  Debug: special_ids unique values = {batch['special_ids'].unique().tolist()}")
+            print(f"  Debug: num QUERY tokens (special_id=1) = {(batch['special_ids'] == 1).sum().item()}")
+            print(f"  Debug: round_bandit_map range = [{batch['round_bandit_map'].min().item()}, {batch['round_bandit_map'].max().item()}]")
         for k in ["bandit_ids", "agent_ids", "action_ids", "reward_ids", "special_ids", "pad_mask",
                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
             batch[k] = batch[k].to(device)
@@ -507,6 +513,17 @@ def main():
     parser.add_argument("--expert_threshold", type=float, default=30.0,
                         help="N_tot threshold for expert classification (only used for BCE loss)")
     
+    # Head input configurations (Phase 3)
+    parser.add_argument("--theta_head_input", type=str, default="query_only",
+                        choices=["query_only", "query_and_profiles"],
+                        help="Input mode for theta head")
+    parser.add_argument("--demo_beliefs_head_input", type=str, default="query_and_profiles",
+                        choices=["query_only", "profiles_only", "query_and_profiles"],
+                        help="Input mode for demo beliefs head (forced to query_only if profile_method='no_profile')")
+    parser.add_argument("--experience_head_input", type=str, default="profiles_only",
+                        choices=["query_only", "profiles_only", "query_and_profiles"],
+                        help="Input mode for experience head (forced to query_only if profile_method='no_profile')")
+    
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
     parser.add_argument("--warmup_epochs", type=int, default=2, help="Number of epochs for LR warmup")
@@ -640,6 +657,9 @@ def main():
                 "experience_head_loss_weight": args.experience_head_loss_weight,
                 "experience_head_loss_type": args.experience_head_loss_type,
                 "expert_threshold": args.expert_threshold,
+                "theta_head_input": args.theta_head_input,
+                "demo_beliefs_head_input": args.demo_beliefs_head_input,
+                "experience_head_input": args.experience_head_input,
                 "normalize_beliefs": normalize_beliefs,
                 "N_max": N_max,
                 "use_scheduler": args.use_scheduler,
@@ -694,6 +714,9 @@ def main():
         dropout=args.dropout,
         profile_method=args.profile_method,
         experience_head_loss_type=args.experience_head_loss_type,
+        theta_head_input=args.theta_head_input,
+        demo_beliefs_head_input=args.demo_beliefs_head_input,
+        experience_head_input=args.experience_head_input,
     ).to(device)
     
     # Store model configuration for saving in checkpoint
@@ -714,6 +737,9 @@ def main():
         'masking_strategy': args.masking_strategy,
         'profile_method': args.profile_method,
         'experience_head_loss_type': args.experience_head_loss_type,
+        'theta_head_input': args.theta_head_input,
+        'demo_beliefs_head_input': args.demo_beliefs_head_input,
+        'experience_head_input': args.experience_head_input,
     }
 
     # Configure optimizer based on type
@@ -732,27 +758,28 @@ def main():
         if args.scheduler == "cosine":
             num_training_steps = len(train_loader) * args.epochs
             num_warmup_steps = len(train_loader) * args.warmup_epochs
+            min_lr_ratio = args.min_lr / args.lr
             scheduler = get_cosine_schedule_with_warmup(
                 optimizer, 
                 num_warmup_steps=num_warmup_steps,
                 num_training_steps=num_training_steps,
-                min_lr_ratio=args.min_lr_ratio
+                min_lr_ratio=min_lr_ratio
             )
             print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
             print(f"  Total training steps: {num_training_steps}")
             print(f"  Warmup steps: {num_warmup_steps}")
-            print(f"  Min LR ratio: {args.min_lr_ratio}")
+            print(f"  Min LR: {args.min_lr:.2e}")
         elif args.scheduler == "plateau":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode='min',
                 factor=args.factor,
                 patience=args.patience,
-                min_lr=args.lr * args.min_lr_ratio
+                min_lr=args.min_lr
             )
             print(f"Using ReduceLROnPlateau scheduler")
             print(f"  Patience: {args.patience}, Factor: {args.factor}")
-            print(f"  Min LR: {args.lr * args.min_lr_ratio:.2e}")
+            print(f"  Min LR: {args.min_lr:.2e}")
 
     # Initialize training state
     start_epoch = 1
