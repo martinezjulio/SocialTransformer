@@ -209,11 +209,13 @@ def convert_session_to_model_format(
     demo_to_agent = {demo_type: idx + 1 for idx, demo_type in enumerate(demo_types)}
     
     # Build events list: (bandit_id, agent_id, action, reward)
+    # Also add QUERY tokens after each round
     events = []
     segment_boundaries = [0]  # Start positions of each segment
     segment_info = []
     round_boundaries = [0]
     current_round = None
+    rounds_seen = []
     
     for idx, (_, row) in enumerate(visible_df.iterrows()):
         bandit_id = int(row['bandit_id'])
@@ -226,22 +228,36 @@ def convert_session_to_model_format(
         else:  # play
             agent_id = 0  # learner
         
-        events.append((bandit_id, agent_id, action, reward))
-        
-        # Track round boundaries
+        # Check if we're starting a new round
         if current_round is None:
             current_round = row['round_index']
+            rounds_seen.append(current_round)
         elif row['round_index'] != current_round:
-            round_boundaries.append(idx)
+            # Add QUERY token at end of previous round
+            # Use -2 in action field to identify as QUERY (vs -1 for BANDIT_SEP)
+            prev_bandit = int(visible_df.iloc[idx - 1]['bandit_id'])
+            events.append((prev_bandit, -1, -2, -1))
+            segment_boundaries.append(len(events))
+            segment_info.append({
+                'round': current_round,
+                'type': 'query',
+                'bandit': prev_bandit
+            })
+            
+            round_boundaries.append(len(events))
             current_round = row['round_index']
+            rounds_seen.append(current_round)
         
-        # Track segment boundaries (when game_index changes)
+        events.append((bandit_id, agent_id, action, reward))
+        
+        # Track segment boundaries (when game_index changes within round)
         if idx > 0:
             prev_game_idx = visible_df.iloc[idx - 1]['game_index']
-            if row['game_index'] != prev_game_idx:
-                segment_boundaries.append(idx)
+            prev_round = visible_df.iloc[idx - 1]['round_index']
+            if row['game_index'] != prev_game_idx and row['round_index'] == prev_round:
+                segment_boundaries.append(len(events) - 1)  # Before current event
                 segment_info.append({
-                    'round': int(visible_df.iloc[idx - 1]['round_index']),
+                    'round': int(prev_round),
                     'game_index': int(prev_game_idx)
                 })
     
@@ -249,6 +265,16 @@ def convert_session_to_model_format(
     segment_info.append({
         'round': int(visible_df.iloc[-1]['round_index']),
         'game_index': int(visible_df.iloc[-1]['game_index'])
+    })
+    
+    # Add QUERY token at end of last round
+    last_bandit = int(visible_df.iloc[-1]['bandit_id'])
+    events.append((last_bandit, -1, -2, -1))
+    segment_boundaries.append(len(events))
+    segment_info.append({
+        'round': int(visible_df.iloc[-1]['round_index']),
+        'type': 'query',
+        'bandit': last_bandit
     })
     
     round_boundaries.append(len(events))
@@ -292,9 +318,12 @@ def encode_events_to_tensors(
 ) -> Dict[str, torch.Tensor]:
     """
     Encode events to tensor format for model input.
+    Handles structural tokens (BANDIT_SEP and QUERY) which use ag=-1 sentinel.
     
     Args:
         events: List of (bandit_id, agent_id, action, reward) tuples
+                QUERY tokens: (bandit_id, -1, -2, -1)
+                BANDIT_SEP tokens: (bandit_id, -1, -1, -1) 
         num_arms: Number of bandit arms
         num_bandits: Number of unique bandits
         num_agents: Number of agents (for padding)
@@ -310,18 +339,30 @@ def encode_events_to_tensors(
     special_ids = []
     
     for (b, ag, a, r) in events:
-        bandit_ids.append(min(max(b, 0), num_bandits - 1))
-        agent_ids.append(ag)
-        action_ids.append(a if (0 <= a < num_arms) else num_arms)
-        reward_ids.append(r if r in (0, 1) else 2)
-        special_ids.append(SPECIAL["NONE"])
-    
-    # Add QUERY token at the end
-    bandit_ids.append(0)  # For now, keep bandit_id=0
-    agent_ids.append(num_agents)  # padding
-    action_ids.append(num_arms)   # padding
-    reward_ids.append(2)          # padding
-    special_ids.append(SPECIAL["QUERY"])
+        # Check if structural token (uses -1 sentinel)
+        if ag == -1:
+            # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)
+            if a == -2:
+                # QUERY token
+                bandit_ids.append(min(max(b, 0), num_bandits - 1))
+                agent_ids.append(num_agents)  # padding
+                action_ids.append(num_arms)   # padding
+                reward_ids.append(2)          # padding
+                special_ids.append(SPECIAL["QUERY"])
+            else:
+                # BANDIT_SEP token
+                bandit_ids.append(min(max(b, 0), num_bandits - 1))
+                agent_ids.append(num_agents)  # padding
+                action_ids.append(num_arms)   # padding
+                reward_ids.append(2)          # padding
+                special_ids.append(SPECIAL["BANDIT_SEP"])
+        else:
+            # Regular event
+            bandit_ids.append(min(max(b, 0), num_bandits - 1))
+            agent_ids.append(ag)
+            action_ids.append(a if (0 <= a < num_arms) else num_arms)
+            reward_ids.append(r if r in (0, 1) else 2)
+            special_ids.append(SPECIAL["NONE"])
     
     return {
         'bandit_ids': torch.tensor(bandit_ids, dtype=torch.long).unsqueeze(0),  # [1, T]
@@ -564,39 +605,52 @@ def run_inference_on_session(
                 model.eval()
                 outputs = model(tensors, custom_attn_mask=attn_mask)
             
+            # Get current bandit info
+            current_round = game_df.iloc[0]['round_index']
+            current_zone = game_df.iloc[0]['zone_global_index']
+            current_bandit_id = model_input['zone_to_bandit'][current_zone]
+            
+            # Extract predictions for the current bandit
+            # outputs are [B, num_queries, K] or [B, num_queries, D, K]
+            # Use current_bandit_id to index into predictions
+            pred_alpha_theta_cur = outputs['alpha_theta'][0, current_bandit_id]  # [K]
+            pred_beta_theta_cur = outputs['beta_theta'][0, current_bandit_id]    # [K]
+            pred_alpha_demo_cur = outputs['alpha_demo'][0, current_bandit_id]    # [D, K]
+            pred_beta_demo_cur = outputs['beta_demo'][0, current_bandit_id]      # [D, K]
+            
             # Serialize all three types of beta predictions for recording
             theta_betas_str = serialize_betas(
-                outputs['alpha_theta'][0, :], 
-                outputs['beta_theta'][0, :]
+                pred_alpha_theta_cur, 
+                pred_beta_theta_cur
             )
             
             novice_demo_idx = demo_order_map['novice']
             novice_betas_str = serialize_betas(
-                outputs['alpha_demo'][0, novice_demo_idx, :],
-                outputs['beta_demo'][0, novice_demo_idx, :]
+                pred_alpha_demo_cur[novice_demo_idx, :],
+                pred_beta_demo_cur[novice_demo_idx, :]
             )
             
             expert_demo_idx = demo_order_map['expert']
             expert_betas_str = serialize_betas(
-                outputs['alpha_demo'][0, expert_demo_idx, :],
-                outputs['beta_demo'][0, expert_demo_idx, :]
+                pred_alpha_demo_cur[expert_demo_idx, :],
+                pred_beta_demo_cur[expert_demo_idx, :]
             )
             
             # Select beta parameters based on beta_method
             if beta_method == "theta_betas":
                 # Use predicted bandit payoff beliefs (theta)
-                pred_alpha = outputs['alpha_theta'][0, :]  # [K]
-                pred_beta = outputs['beta_theta'][0, :]    # [K]
+                pred_alpha = pred_alpha_theta_cur  # [K]
+                pred_beta = pred_beta_theta_cur    # [K]
             elif beta_method == "novice_betas":
                 # Use novice demonstrator's beliefs
                 novice_demo_idx = demo_order_map['novice']
-                pred_alpha = outputs['alpha_demo'][0, novice_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, novice_demo_idx, :]    # [K]
+                pred_alpha = pred_alpha_demo_cur[novice_demo_idx, :]  # [K]
+                pred_beta = pred_beta_demo_cur[novice_demo_idx, :]    # [K]
             elif beta_method == "expert_betas":
                 # Use expert demonstrator's beliefs
                 expert_demo_idx = demo_order_map['expert']
-                pred_alpha = outputs['alpha_demo'][0, expert_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, expert_demo_idx, :]    # [K]
+                pred_alpha = pred_alpha_demo_cur[expert_demo_idx, :]  # [K]
+                pred_beta = pred_beta_demo_cur[expert_demo_idx, :]    # [K]
             elif beta_method == "recent_betas":
                 # Use the most recent demonstrator's beliefs
                 # Find the last demo segment before current learner
@@ -606,14 +660,12 @@ def run_inference_on_session(
                 
                 # Get the model index for this demonstrator
                 recent_demo_idx = demo_order_map[last_demo_type]
-                pred_alpha = outputs['alpha_demo'][0, recent_demo_idx, :]  # [K]
-                pred_beta = outputs['beta_demo'][0, recent_demo_idx, :]    # [K]
+                pred_alpha = pred_alpha_demo_cur[recent_demo_idx, :]  # [K]
+                pred_beta = pred_beta_demo_cur[recent_demo_idx, :]    # [K]
             else:
                 raise ValueError(f"Unknown beta_method: {beta_method}")
             
             # Get current bandit payoffs
-            current_round = game_df.iloc[0]['round_index']
-            current_zone = game_df.iloc[0]['zone_global_index']
             bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
             
             # Run Thompson sampling

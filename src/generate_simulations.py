@@ -334,6 +334,12 @@ def simulate_rounds_run(
             segment_boundaries.append(len(all_events))
             segment_info.append({"round": round_idx, "type": seg_type, "agent": agent_id})
         
+        # Add QUERY token at end of round (after all segments)
+        # Use -2 in action field to distinguish from BANDIT_SEP (-1)
+        all_events.append((bandit_idx, -1, -2, -1))
+        segment_boundaries.append(len(all_events))
+        segment_info.append({"round": round_idx, "type": "query", "agent": -1, "bandit": bandit_idx})
+        
         # Record boundary for next round
         round_boundaries.append(len(all_events))
     
