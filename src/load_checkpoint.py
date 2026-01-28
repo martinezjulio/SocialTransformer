@@ -249,6 +249,11 @@ def main():
         num_layers=model_config['num_layers'],
         dim_feedforward=model_config['dim_feedforward'],
         dropout=model_config['dropout'],
+        profile_method=model_config.get('profile_method', 'no_profile'),
+        experience_head_loss_type=model_config.get('experience_head_loss_type', 'mse'),
+        theta_head_input=model_config.get('theta_head_input', 'query_only'),
+        demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
+        experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
     )
     
     # Load model state

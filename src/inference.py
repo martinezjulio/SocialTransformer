@@ -816,6 +816,9 @@ def main():
         dropout=model_config['dropout'],
         profile_method=profile_method,
         experience_head_loss_type=experience_head_loss_type,
+        theta_head_input=model_config.get('theta_head_input', 'query_only'),
+        demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
+        experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
     ).to(device)
     
     # Load checkpoint state
