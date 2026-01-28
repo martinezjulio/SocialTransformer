@@ -442,6 +442,31 @@ class SBIPosteriorTransformer(nn.Module):
         # Keep old heads for compatibility with old checkpoints
         self.heads = Heads(d_model, num_arms, num_demonstrators)
 
+    def _find_query_positions(self, special_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Find positions of QUERY tokens in sequence.
+        
+        Args:
+            special_ids: [B, T] tensor of special IDs
+        
+        Returns:
+            query_positions: [B, num_queries] tensor of QUERY positions (-1 for padding)
+        """
+        # QUERY has special_id = 1
+        query_mask = (special_ids == 1)  # [B, T]
+        
+        # Get positions for each batch item
+        B, T = special_ids.shape
+        max_queries = query_mask.sum(dim=1).max().item()
+        
+        query_positions = torch.full((B, max_queries), -1, dtype=torch.long, device=special_ids.device)
+        
+        for b in range(B):
+            query_pos_b = query_mask[b].nonzero(as_tuple=False).squeeze(-1)
+            query_positions[b, :len(query_pos_b)] = query_pos_b
+        
+        return query_positions
+
     def forward(self, batch: Dict[str, torch.Tensor], 
                 custom_attn_mask: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         # Embed events
@@ -485,31 +510,53 @@ class SBIPosteriorTransformer(nn.Module):
         # Run transformer
         h = self.backbone(x, pad_mask=extended_pad_mask, custom_attn_mask=custom_attn_mask)
         
-        # Extract QUERY token embedding
-        query_emb = h[:, -1, :]  # [B, d_model]
+        # Find all QUERY positions
+        query_positions = self._find_query_positions(batch["special_ids"])  # [B, num_queries]
+        B, num_queries = query_positions.shape
         
-        # Bandit payoffs (always computed)
-        out = {}
-        alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb)
-        out["alpha_theta"] = alpha_theta
-        out["beta_theta"] = beta_theta
-        
-        # Demonstrator beliefs and experience
-        if self.profile_method == "no_profile":
-            # No profile embeddings
-            alpha_demo, beta_demo = self.demo_beliefs_head(query_emb)
-            out["alpha_demo"] = alpha_demo
-            out["beta_demo"] = beta_demo
-        else:
-            # Extract profile embeddings
+        # Extract profile embeddings (if using profiles)
+        profiles = None
+        if self.profile_method != "no_profile":
             profiles = self.profile_extractor(h, batch)  # [B, D, d_model]
+        
+        # Extract QUERY embeddings and run predictions for each
+        alpha_theta_all = []
+        beta_theta_all = []
+        alpha_demo_all = []
+        beta_demo_all = []
+        
+        for q in range(num_queries):
+            # Get QUERY positions for this query index
+            query_pos_q = query_positions[:, q]  # [B]
             
-            # Demonstrator beliefs conditioned on profiles
-            alpha_demo, beta_demo = self.demo_beliefs_head(query_emb, profiles)
-            out["alpha_demo"] = alpha_demo
-            out["beta_demo"] = beta_demo
+            # Extract hidden states at these positions
+            batch_indices = torch.arange(B, device=h.device)
+            query_emb = h[batch_indices, query_pos_q]  # [B, d_model]
             
-            # Direct N_tot prediction
+            # Bandit payoffs
+            alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb)
+            alpha_theta_all.append(alpha_theta)
+            beta_theta_all.append(beta_theta)
+            
+            # Demonstrator beliefs
+            if self.profile_method == "no_profile":
+                alpha_demo, beta_demo = self.demo_beliefs_head(query_emb)
+            else:
+                alpha_demo, beta_demo = self.demo_beliefs_head(query_emb, profiles)
+            
+            alpha_demo_all.append(alpha_demo)
+            beta_demo_all.append(beta_demo)
+        
+        # Stack predictions: [B, num_queries, K] or [B, num_queries, D, K]
+        out = {
+            "alpha_theta": torch.stack(alpha_theta_all, dim=1),     # [B, num_queries, K]
+            "beta_theta": torch.stack(beta_theta_all, dim=1),       # [B, num_queries, K]
+            "alpha_demo": torch.stack(alpha_demo_all, dim=1),       # [B, num_queries, D, K]
+            "beta_demo": torch.stack(beta_demo_all, dim=1),         # [B, num_queries, D, K]
+        }
+        
+        # Experience head (if using profiles)
+        if self.profile_method != "no_profile":
             out["N_tot_pred"] = self.demo_experience_head(profiles)  # [B, D]
         
         return out

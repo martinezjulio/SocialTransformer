@@ -29,9 +29,10 @@ def _remap_agent_ids_local(
     num_agents: int = 4
 ) -> Tuple[List[Tuple[int,int,int,int]], int]:
     """
-    Process agent IDs and handle BANDIT_SEP sentinel.
+    Process agent IDs and handle structural token sentinels.
     Agent IDs are already correct from generation (learner=0, demos=1,2,...).
-    Only need to handle BANDIT_SEP sentinel (-1) -> num_agents for padding.
+    Structural tokens (BANDIT_SEP and QUERY) use ag=-1 sentinel -> num_agents for padding.
+    They are distinguished by action field: -1=BANDIT_SEP, -2=QUERY.
     
     Returns:
       processed_events, num_agents_used (<= num_agents)
@@ -45,11 +46,12 @@ def _remap_agent_ids_local(
             f"Example has {num_agents_used} agents, but num_agents={num_agents}"
         )
 
-    # Process events: just replace BANDIT_SEP sentinel (-1) with padding
+    # Process events: replace structural token sentinel (-1) with padding
+    # Keep action field intact to distinguish BANDIT_SEP (-1) from QUERY (-2)
     out: List[Tuple[int,int,int,int]] = []
     for (b, ag, a, r) in events:
         if ag == -1:
-            # BANDIT_SEP - use num_agents as padding
+            # Structural token (BANDIT_SEP or QUERY) - use num_agents as padding
             out.append((b, num_agents, a, r))
         else:
             # Regular event or learner - IDs already correct
@@ -77,7 +79,7 @@ class BanditSequenceDataset(Dataset):
 
     Builds one token sequence per example with five channels:
       bandit_id, agent_id, action_id, reward_id, special_id
-    Plus a QUERY token at the end.
+    QUERY tokens are included in the events (one per round).
 
     Notes:
       - agent_id is remapped locally per example to a compact [0..D] space, with learner at index 0.
@@ -111,14 +113,23 @@ class BanditSequenceDataset(Dataset):
         """
         bandit_ids, agent_ids, action_ids, reward_ids, special_ids = [], [], [], [], []
         for (b, ag, a, r) in stream:
-            # Check if this is BANDIT_SEP (agent_id was set to num_agents in remapping)
+            # Check if this is structural token (agent_id was set to num_agents in remapping)
             if ag == self.num_agents:
-                # BANDIT_SEP
-                bandit_ids.append(min(max(b, 0), self.num_bandits - 1))
-                agent_ids.append(self.num_agents)  # padding
-                action_ids.append(self.num_arms)   # padding
-                reward_ids.append(2)               # padding
-                special_ids.append(SPECIAL["BANDIT_SEP"])
+                # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)
+                if a == -2:
+                    # QUERY token
+                    bandit_ids.append(min(max(b, 0), self.num_bandits - 1))
+                    agent_ids.append(self.num_agents)  # padding
+                    action_ids.append(self.num_arms)   # padding
+                    reward_ids.append(2)               # padding
+                    special_ids.append(SPECIAL["QUERY"])
+                else:
+                    # BANDIT_SEP token (a=-1)
+                    bandit_ids.append(min(max(b, 0), self.num_bandits - 1))
+                    agent_ids.append(self.num_agents)  # padding
+                    action_ids.append(self.num_arms)   # padding
+                    reward_ids.append(2)               # padding
+                    special_ids.append(SPECIAL["BANDIT_SEP"])
                 continue
 
             # Real event
@@ -143,15 +154,15 @@ class BanditSequenceDataset(Dataset):
         events = ex["events"]
         remapped_events, num_agents_used = _remap_agent_ids_local(events, num_agents=self.num_agents)
 
-        # Encode the remapped events
+        # Encode the remapped events (includes QUERY tokens from raw data)
         enc = self._encode_stream(remapped_events)
 
-        # Append QUERY token at the very end for readout
-        bandit_ids = enc["bandit_ids"] + [0]  # For now, keep bandit_id=0
-        agent_ids = enc["agent_ids"] + [self.num_agents]  # padding
-        action_ids = enc["action_ids"] + [self.num_arms]  # padding
-        reward_ids = enc["reward_ids"] + [2]              # padding
-        special_ids = enc["special_ids"] + [SPECIAL["QUERY"]]
+        # Use encoded tokens directly (QUERY tokens already in data)
+        bandit_ids = enc["bandit_ids"]
+        agent_ids = enc["agent_ids"]
+        action_ids = enc["action_ids"]
+        reward_ids = enc["reward_ids"]
+        special_ids = enc["special_ids"]
 
         # Extract labels for all demonstrators and all bandits
         labels = ex["labels"]

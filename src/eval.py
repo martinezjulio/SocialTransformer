@@ -117,7 +117,7 @@ def prepare_single_example_batch(
     events = example["events"]
     remapped_events, _ = _remap_agent_ids_local(events, num_agents=num_agents)
     
-    # Encode events
+    # Encode events (includes QUERY tokens from raw data)
     bandit_ids = []
     agent_ids = []
     action_ids = []
@@ -125,18 +125,30 @@ def prepare_single_example_batch(
     special_ids = []
     
     for (b, ag, a, r) in remapped_events:
-        bandit_ids.append(b)
-        agent_ids.append(ag)
-        action_ids.append(a if (0 <= a < num_arms) else num_arms)
-        reward_ids.append(r if r in (0, 1) else 2)
-        special_ids.append(SPECIAL["NONE"])
-    
-    # Add QUERY token
-    bandit_ids.append(0)
-    agent_ids.append(num_agents)  # padding
-    action_ids.append(num_arms)   # padding
-    reward_ids.append(2)          # padding
-    special_ids.append(SPECIAL["QUERY"])
+        # Check if this is structural token (agent_id was set to num_agents in remapping)
+        if ag == num_agents:
+            # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)
+            if a == -2:
+                # QUERY token
+                bandit_ids.append(b)
+                agent_ids.append(num_agents)  # padding
+                action_ids.append(num_arms)   # padding
+                reward_ids.append(2)          # padding
+                special_ids.append(SPECIAL["QUERY"])
+            else:
+                # BANDIT_SEP token
+                bandit_ids.append(b)
+                agent_ids.append(num_agents)  # padding
+                action_ids.append(num_arms)   # padding
+                reward_ids.append(2)          # padding
+                special_ids.append(SPECIAL["BANDIT_SEP"])
+        else:
+            # Regular event
+            bandit_ids.append(b)
+            agent_ids.append(ag)
+            action_ids.append(a if (0 <= a < num_arms) else num_arms)
+            reward_ids.append(r if r in (0, 1) else 2)
+            special_ids.append(SPECIAL["NONE"])
     
     # Convert to tensors with batch dimension
     batch = {
@@ -227,11 +239,12 @@ def evaluate_single_example(
         true_alpha_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["alpha0"], dtype=torch.float32)
         true_beta_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["beta0"], dtype=torch.float32)
         
-        # Get predictions
-        pred_alpha_theta = outputs["alpha_theta"][0].cpu()  # [K]
-        pred_beta_theta = outputs["beta_theta"][0].cpu()    # [K]
-        pred_alpha_demo = outputs["alpha_demo"][0].cpu()    # [num_demos, K]
-        pred_beta_demo = outputs["beta_demo"][0].cpu()      # [num_demos, K]
+        # Get predictions for this bandit
+        # outputs are [B, num_queries, K] or [B, num_queries, D, K]
+        pred_alpha_theta = outputs["alpha_theta"][0, bandit_id].cpu()  # [K]
+        pred_beta_theta = outputs["beta_theta"][0, bandit_id].cpu()    # [K]
+        pred_alpha_demo = outputs["alpha_demo"][0, bandit_id].cpu()    # [num_demos, K]
+        pred_beta_demo = outputs["beta_demo"][0, bandit_id].cpu()      # [num_demos, K]
         
         # Denormalize if needed
         if normalizer:

@@ -369,18 +369,26 @@ def train_one_epoch(
         y_alpha_target = batch["y_alpha_demo"][batch_indices, target_bandits_tensor]  # [B, num_demos, K]
         y_beta_target = batch["y_beta_demo"][batch_indices, target_bandits_tensor]   # [B, num_demos, K]
         
+        # Extract predictions for target bandits
+        # out["alpha_theta"] is [B, num_queries, K]
+        # target_bandits_tensor is [B] with bandit indices
+        pred_alpha_theta = out["alpha_theta"][batch_indices, target_bandits_tensor]  # [B, K]
+        pred_beta_theta = out["beta_theta"][batch_indices, target_bandits_tensor]    # [B, K]
+        pred_alpha_demo = out["alpha_demo"][batch_indices, target_bandits_tensor]    # [B, D, K]
+        pred_beta_demo = out["beta_demo"][batch_indices, target_bandits_tensor]      # [B, D, K]
+        
         # Compute losses
-        loss_theta = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_target)
+        loss_theta = beta_nll_of_true_theta(pred_alpha_theta, pred_beta_theta, y_theta_target)
         
         # Denormalize predictions if normalization was used
-        pred_alpha = out["alpha_demo"]
-        pred_beta = out["beta_demo"]
         if normalizer is not None:
-            pred_alpha = normalizer.denormalize_alpha(pred_alpha)
-            pred_beta = normalizer.denormalize_beta(pred_beta)
+            pred_alpha = normalizer.denormalize_alpha(pred_alpha_demo)
+            pred_beta = normalizer.denormalize_beta(pred_beta_demo)
             target_alpha_denorm = normalizer.denormalize_alpha(y_alpha_target)
             target_beta_denorm = normalizer.denormalize_beta(y_beta_target)
         else:
+            pred_alpha = pred_alpha_demo
+            pred_beta = pred_beta_demo
             target_alpha_denorm = y_alpha_target
             target_beta_denorm = y_beta_target
         
@@ -877,21 +885,28 @@ def main():
                 y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
                 y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
                 
+                # Extract predictions for last bandit
+                # out["alpha_theta"] is [B, num_queries, K]
+                pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
+                pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
+                pred_alpha_demo_val = out["alpha_demo"][batch_indices, last_bandit_idx]    # [B, D, K]
+                pred_beta_demo_val = out["beta_demo"][batch_indices, last_bandit_idx]      # [B, D, K]
+                
                 # Denormalize predictions if needed
-                pred_alpha_val = out["alpha_demo"]
-                pred_beta_val = out["beta_demo"]
                 if normalizer is not None:
-                    pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_val)
-                    pred_beta_val = normalizer.denormalize_beta(pred_beta_val)
+                    pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_demo_val)
+                    pred_beta_val = normalizer.denormalize_beta(pred_beta_demo_val)
                     target_alpha_val = normalizer.denormalize_alpha(y_alpha_demo_last)
                     target_beta_val = normalizer.denormalize_beta(y_beta_demo_last)
                 else:
+                    pred_alpha_val = pred_alpha_demo_val
+                    pred_beta_val = pred_beta_demo_val
                     target_alpha_val = y_alpha_demo_last
                     target_beta_val = y_beta_demo_last
                 
                 # Per-demonstrator loss
                 num_demonstrators = y_alpha_demo_last.shape[1]
-                lt = beta_nll_of_true_theta(out["alpha_theta"], out["beta_theta"], y_theta_last)
+                lt = beta_nll_of_true_theta(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
                 
                 ld = 0.0
                 for demo_id in range(num_demonstrators):
