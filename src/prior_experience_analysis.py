@@ -440,6 +440,73 @@ def run_oracle_social_condition(
     return recorded_rewards, recorded_actions, recorded_step_rewards
 
 
+def run_oracle_greedy_social_condition(
+    thetas: List[float],
+    N: int,
+    T_d: int,
+    T_p_values: List[int],
+    K: int = 12
+) -> Tuple[Dict[int, float], Dict[int, List[int]], Dict[int, float]]:
+    """
+    Run oracle greedy social learning: use expert's true final beliefs with greedy selection.
+    
+    Gets the expert's actual beliefs after N + T_d steps (including
+    latent experience), then greedily selects arms.
+    
+    Args:
+        thetas: True payoff probabilities
+        N: Expert's latent experience
+        T_d: Number of observed demonstration steps
+        T_p_values: List of play lengths to record
+        K: Number of arms
+    
+    Returns:
+        recorded_rewards: Dict mapping T_p to cumulative rewards
+        recorded_actions: Dict mapping T_p to list of actions taken
+        recorded_step_rewards: Dict mapping T_p to reward at that specific step
+    """
+    # Step 1: Expert plays with N latent + T_d observed steps
+    # Get the expert's FINAL beliefs (oracle knowledge)
+    _, _, expert_final_alphas, expert_final_betas = simulate_expert(thetas, N, T_d, K)
+    
+    # Step 2: Learner uses oracle beliefs (expert's true final beliefs)
+    learner_alphas = expert_final_alphas.copy()
+    learner_betas = expert_final_betas.copy()
+    
+    # Step 3: Learner plays greedily for max(T_p_values) steps
+    max_T_p = max(T_p_values)
+    actions = []
+    rewards = []
+    
+    alphas = learner_alphas.copy()
+    betas = learner_betas.copy()
+    
+    for step in range(1, max_T_p + 1):
+        # Greedy selection
+        arm = greedy_select(alphas, betas)
+        reward = pull_arm(arm, thetas)
+        
+        actions.append(arm)
+        rewards.append(reward)
+        
+        # Update beliefs
+        alphas[arm] += reward
+        betas[arm] += (1 - reward)
+    
+    # Record at checkpoints
+    recorded_rewards = {}
+    recorded_actions = {}
+    recorded_step_rewards = {}
+    
+    for T_p in T_p_values:
+        cumulative = sum(rewards[:T_p])
+        recorded_rewards[T_p] = cumulative
+        recorded_actions[T_p] = actions[:T_p]
+        recorded_step_rewards[T_p] = rewards[T_p - 1]
+    
+    return recorded_rewards, recorded_actions, recorded_step_rewards
+
+
 # ============================================================================
 # Main Experiment
 # ============================================================================
@@ -487,19 +554,22 @@ def run_experiment(
     # Structure: results[condition][T_d][T_p] = list of values
     results = {
         'individual': defaultdict(lambda: defaultdict(list)),
-        'naive_social': defaultdict(lambda: defaultdict(list)),
-        'greedy_social': defaultdict(lambda: defaultdict(list)),
-        'oracle_social': defaultdict(lambda: defaultdict(list)),
+        'naive_thompson_social': defaultdict(lambda: defaultdict(list)),
+        'naive_greedy_social': defaultdict(lambda: defaultdict(list)),
+        'oracle_thompson_social': defaultdict(lambda: defaultdict(list)),
+        'oracle_greedy_social': defaultdict(lambda: defaultdict(list)),
         # Actions
         'individual_actions': defaultdict(lambda: defaultdict(list)),
-        'naive_social_actions': defaultdict(lambda: defaultdict(list)),
-        'greedy_social_actions': defaultdict(lambda: defaultdict(list)),
-        'oracle_social_actions': defaultdict(lambda: defaultdict(list)),
+        'naive_thompson_social_actions': defaultdict(lambda: defaultdict(list)),
+        'naive_greedy_social_actions': defaultdict(lambda: defaultdict(list)),
+        'oracle_thompson_social_actions': defaultdict(lambda: defaultdict(list)),
+        'oracle_greedy_social_actions': defaultdict(lambda: defaultdict(list)),
         # Step rewards
         'individual_step_rewards': defaultdict(lambda: defaultdict(list)),
-        'naive_social_step_rewards': defaultdict(lambda: defaultdict(list)),
-        'greedy_social_step_rewards': defaultdict(lambda: defaultdict(list)),
-        'oracle_social_step_rewards': defaultdict(lambda: defaultdict(list))
+        'naive_thompson_social_step_rewards': defaultdict(lambda: defaultdict(list)),
+        'naive_greedy_social_step_rewards': defaultdict(lambda: defaultdict(list)),
+        'oracle_thompson_social_step_rewards': defaultdict(lambda: defaultdict(list)),
+        'oracle_greedy_social_step_rewards': defaultdict(lambda: defaultdict(list))
     }
     
     if verbose:
@@ -526,26 +596,33 @@ def run_experiment(
                 results['individual_actions'][T_d][T_p].append(individual_actions[T_p])
                 results['individual_step_rewards'][T_d][T_p].append(individual_step_rewards[T_p])
             
-            # Naive social learning condition (renamed from 'social')
-            naive_rewards, naive_actions, naive_step_rewards = run_social_condition(thetas, N, T_d, T_p_values, K)
+            # Naive Thompson social learning condition
+            naive_thompson_rewards, naive_thompson_actions, naive_thompson_step_rewards = run_social_condition(thetas, N, T_d, T_p_values, K)
             for T_p in T_p_values:
-                results['naive_social'][T_d][T_p].append(naive_rewards[T_p])
-                results['naive_social_actions'][T_d][T_p].append(naive_actions[T_p])
-                results['naive_social_step_rewards'][T_d][T_p].append(naive_step_rewards[T_p])
+                results['naive_thompson_social'][T_d][T_p].append(naive_thompson_rewards[T_p])
+                results['naive_thompson_social_actions'][T_d][T_p].append(naive_thompson_actions[T_p])
+                results['naive_thompson_social_step_rewards'][T_d][T_p].append(naive_thompson_step_rewards[T_p])
             
-            # Greedy social learning condition (NEW)
-            greedy_rewards, greedy_actions, greedy_step_rewards = run_greedy_social_condition(thetas, N, T_d, T_p_values, K)
+            # Naive Greedy social learning condition
+            naive_greedy_rewards, naive_greedy_actions, naive_greedy_step_rewards = run_greedy_social_condition(thetas, N, T_d, T_p_values, K)
             for T_p in T_p_values:
-                results['greedy_social'][T_d][T_p].append(greedy_rewards[T_p])
-                results['greedy_social_actions'][T_d][T_p].append(greedy_actions[T_p])
-                results['greedy_social_step_rewards'][T_d][T_p].append(greedy_step_rewards[T_p])
+                results['naive_greedy_social'][T_d][T_p].append(naive_greedy_rewards[T_p])
+                results['naive_greedy_social_actions'][T_d][T_p].append(naive_greedy_actions[T_p])
+                results['naive_greedy_social_step_rewards'][T_d][T_p].append(naive_greedy_step_rewards[T_p])
             
-            # Oracle social learning condition (NEW)
-            oracle_rewards, oracle_actions, oracle_step_rewards = run_oracle_social_condition(thetas, N, T_d, T_p_values, K)
+            # Oracle Thompson social learning condition
+            oracle_thompson_rewards, oracle_thompson_actions, oracle_thompson_step_rewards = run_oracle_social_condition(thetas, N, T_d, T_p_values, K)
             for T_p in T_p_values:
-                results['oracle_social'][T_d][T_p].append(oracle_rewards[T_p])
-                results['oracle_social_actions'][T_d][T_p].append(oracle_actions[T_p])
-                results['oracle_social_step_rewards'][T_d][T_p].append(oracle_step_rewards[T_p])
+                results['oracle_thompson_social'][T_d][T_p].append(oracle_thompson_rewards[T_p])
+                results['oracle_thompson_social_actions'][T_d][T_p].append(oracle_thompson_actions[T_p])
+                results['oracle_thompson_social_step_rewards'][T_d][T_p].append(oracle_thompson_step_rewards[T_p])
+            
+            # Oracle Greedy social learning condition (NEW)
+            oracle_greedy_rewards, oracle_greedy_actions, oracle_greedy_step_rewards = run_oracle_greedy_social_condition(thetas, N, T_d, T_p_values, K)
+            for T_p in T_p_values:
+                results['oracle_greedy_social'][T_d][T_p].append(oracle_greedy_rewards[T_p])
+                results['oracle_greedy_social_actions'][T_d][T_p].append(oracle_greedy_actions[T_p])
+                results['oracle_greedy_social_step_rewards'][T_d][T_p].append(oracle_greedy_step_rewards[T_p])
     
     if verbose:
         print(f"Completed all {num_bandits} bandits!")
@@ -554,17 +631,20 @@ def run_experiment(
     # Convert to regular dicts for serialization
     results_dict = {
         'individual': {T_d: dict(results['individual'][T_d]) for T_d in T_d_values},
-        'naive_social': {T_d: dict(results['naive_social'][T_d]) for T_d in T_d_values},
-        'greedy_social': {T_d: dict(results['greedy_social'][T_d]) for T_d in T_d_values},
-        'oracle_social': {T_d: dict(results['oracle_social'][T_d]) for T_d in T_d_values},
+        'naive_thompson_social': {T_d: dict(results['naive_thompson_social'][T_d]) for T_d in T_d_values},
+        'naive_greedy_social': {T_d: dict(results['naive_greedy_social'][T_d]) for T_d in T_d_values},
+        'oracle_thompson_social': {T_d: dict(results['oracle_thompson_social'][T_d]) for T_d in T_d_values},
+        'oracle_greedy_social': {T_d: dict(results['oracle_greedy_social'][T_d]) for T_d in T_d_values},
         'individual_actions': {T_d: dict(results['individual_actions'][T_d]) for T_d in T_d_values},
-        'naive_social_actions': {T_d: dict(results['naive_social_actions'][T_d]) for T_d in T_d_values},
-        'greedy_social_actions': {T_d: dict(results['greedy_social_actions'][T_d]) for T_d in T_d_values},
-        'oracle_social_actions': {T_d: dict(results['oracle_social_actions'][T_d]) for T_d in T_d_values},
+        'naive_thompson_social_actions': {T_d: dict(results['naive_thompson_social_actions'][T_d]) for T_d in T_d_values},
+        'naive_greedy_social_actions': {T_d: dict(results['naive_greedy_social_actions'][T_d]) for T_d in T_d_values},
+        'oracle_thompson_social_actions': {T_d: dict(results['oracle_thompson_social_actions'][T_d]) for T_d in T_d_values},
+        'oracle_greedy_social_actions': {T_d: dict(results['oracle_greedy_social_actions'][T_d]) for T_d in T_d_values},
         'individual_step_rewards': {T_d: dict(results['individual_step_rewards'][T_d]) for T_d in T_d_values},
-        'naive_social_step_rewards': {T_d: dict(results['naive_social_step_rewards'][T_d]) for T_d in T_d_values},
-        'greedy_social_step_rewards': {T_d: dict(results['greedy_social_step_rewards'][T_d]) for T_d in T_d_values},
-        'oracle_social_step_rewards': {T_d: dict(results['oracle_social_step_rewards'][T_d]) for T_d in T_d_values}
+        'naive_thompson_social_step_rewards': {T_d: dict(results['naive_thompson_social_step_rewards'][T_d]) for T_d in T_d_values},
+        'naive_greedy_social_step_rewards': {T_d: dict(results['naive_greedy_social_step_rewards'][T_d]) for T_d in T_d_values},
+        'oracle_thompson_social_step_rewards': {T_d: dict(results['oracle_thompson_social_step_rewards'][T_d]) for T_d in T_d_values},
+        'oracle_greedy_social_step_rewards': {T_d: dict(results['oracle_greedy_social_step_rewards'][T_d]) for T_d in T_d_values}
     }
     
     # Add metadata
@@ -628,7 +708,8 @@ def compute_summary_statistics(results: Dict) -> Dict:
     T_d_values = metadata['T_d_values']
     T_p_values = metadata['T_p_values']
     
-    conditions = ['individual', 'naive_social', 'greedy_social', 'oracle_social']
+    conditions = ['individual', 'naive_thompson_social', 'naive_greedy_social', 
+                  'oracle_thompson_social', 'oracle_greedy_social']
     
     summary = {
         'mean_rewards': {cond: defaultdict(dict) for cond in conditions},
@@ -650,12 +731,12 @@ def compute_summary_statistics(results: Dict) -> Dict:
                 summary['mean_rewards'][condition][T_d][T_p] = np.mean(rewards)
                 summary['std_rewards'][condition][T_d][T_p] = np.std(rewards)
     
-    # Compute social advantage (naive_social - individual)
+    # Compute social advantage (naive_thompson_social - individual)
     for T_d in T_d_values:
         for T_p in T_p_values:
-            naive_social_mean = summary['mean_rewards']['naive_social'][T_d][T_p]
+            naive_thompson_mean = summary['mean_rewards']['naive_thompson_social'][T_d][T_p]
             individual_mean = summary['mean_rewards']['individual'][T_d][T_p]
-            summary['social_advantage'][T_d][T_p] = naive_social_mean - individual_mean
+            summary['social_advantage'][T_d][T_p] = naive_thompson_mean - individual_mean
     
     # Find crossover point for each T_p (where individual catches up to naive social)
     for T_p in T_p_values:
@@ -748,48 +829,57 @@ def plot_results(results: Dict, summary: Dict, output_path: str = "prior_experie
     for idx, T_p in enumerate(T_p_values):
         ax = axes[idx]
         
-        # Extract data for all 4 conditions
+        # Extract data for all 5 conditions
         individual_means = [summary['mean_rewards']['individual'][T_d][T_p] for T_d in T_d_values]
-        naive_means = [summary['mean_rewards']['naive_social'][T_d][T_p] for T_d in T_d_values]
-        greedy_means = [summary['mean_rewards']['greedy_social'][T_d][T_p] for T_d in T_d_values]
-        oracle_means = [summary['mean_rewards']['oracle_social'][T_d][T_p] for T_d in T_d_values]
+        naive_thompson_means = [summary['mean_rewards']['naive_thompson_social'][T_d][T_p] for T_d in T_d_values]
+        naive_greedy_means = [summary['mean_rewards']['naive_greedy_social'][T_d][T_p] for T_d in T_d_values]
+        oracle_thompson_means = [summary['mean_rewards']['oracle_thompson_social'][T_d][T_p] for T_d in T_d_values]
+        oracle_greedy_means = [summary['mean_rewards']['oracle_greedy_social'][T_d][T_p] for T_d in T_d_values]
         
         individual_stds = [summary['std_rewards']['individual'][T_d][T_p] for T_d in T_d_values]
-        naive_stds = [summary['std_rewards']['naive_social'][T_d][T_p] for T_d in T_d_values]
-        greedy_stds = [summary['std_rewards']['greedy_social'][T_d][T_p] for T_d in T_d_values]
-        oracle_stds = [summary['std_rewards']['oracle_social'][T_d][T_p] for T_d in T_d_values]
+        naive_thompson_stds = [summary['std_rewards']['naive_thompson_social'][T_d][T_p] for T_d in T_d_values]
+        naive_greedy_stds = [summary['std_rewards']['naive_greedy_social'][T_d][T_p] for T_d in T_d_values]
+        oracle_thompson_stds = [summary['std_rewards']['oracle_thompson_social'][T_d][T_p] for T_d in T_d_values]
+        oracle_greedy_stds = [summary['std_rewards']['oracle_greedy_social'][T_d][T_p] for T_d in T_d_values]
         
         # Compute standard error
         n = metadata['num_bandits']
         individual_se = np.array(individual_stds) / np.sqrt(n)
-        naive_se = np.array(naive_stds) / np.sqrt(n)
-        greedy_se = np.array(greedy_stds) / np.sqrt(n)
-        oracle_se = np.array(oracle_stds) / np.sqrt(n)
+        naive_thompson_se = np.array(naive_thompson_stds) / np.sqrt(n)
+        naive_greedy_se = np.array(naive_greedy_stds) / np.sqrt(n)
+        oracle_thompson_se = np.array(oracle_thompson_stds) / np.sqrt(n)
+        oracle_greedy_se = np.array(oracle_greedy_stds) / np.sqrt(n)
         
-        # Plot all 4 curves with error shading
+        # Plot all 5 curves with error shading
         ax.plot(T_d_values, individual_means, color='#ff7f0e', linewidth=2, label='Individual')
         ax.fill_between(T_d_values,
                         np.array(individual_means) - individual_se,
                         np.array(individual_means) + individual_se,
                         color='#ff7f0e', alpha=0.2)
         
-        ax.plot(T_d_values, naive_means, color='#1f77b4', linewidth=2, label='Naive Social')
+        ax.plot(T_d_values, naive_thompson_means, color='#1f77b4', linewidth=2, label='Naive Thompson Social')
         ax.fill_between(T_d_values, 
-                        np.array(naive_means) - naive_se,
-                        np.array(naive_means) + naive_se,
+                        np.array(naive_thompson_means) - naive_thompson_se,
+                        np.array(naive_thompson_means) + naive_thompson_se,
                         color='#1f77b4', alpha=0.2)
         
-        ax.plot(T_d_values, greedy_means, color='#2ca02c', linewidth=2, label='Greedy Social')
+        ax.plot(T_d_values, naive_greedy_means, color='#2ca02c', linewidth=2, label='Naive Greedy Social')
         ax.fill_between(T_d_values,
-                        np.array(greedy_means) - greedy_se,
-                        np.array(greedy_means) + greedy_se,
+                        np.array(naive_greedy_means) - naive_greedy_se,
+                        np.array(naive_greedy_means) + naive_greedy_se,
                         color='#2ca02c', alpha=0.2)
         
-        ax.plot(T_d_values, oracle_means, color='#d62728', linewidth=2, label='Oracle Social')
+        ax.plot(T_d_values, oracle_thompson_means, color='#d62728', linewidth=2, label='Oracle Thompson Social')
         ax.fill_between(T_d_values,
-                        np.array(oracle_means) - oracle_se,
-                        np.array(oracle_means) + oracle_se,
+                        np.array(oracle_thompson_means) - oracle_thompson_se,
+                        np.array(oracle_thompson_means) + oracle_thompson_se,
                         color='#d62728', alpha=0.2)
+        
+        ax.plot(T_d_values, oracle_greedy_means, color='#9467bd', linewidth=2, label='Oracle Greedy Social')
+        ax.fill_between(T_d_values,
+                        np.array(oracle_greedy_means) - oracle_greedy_se,
+                        np.array(oracle_greedy_means) + oracle_greedy_se,
+                        color='#9467bd', alpha=0.2)
         
         # Formatting
         ax.set_xlabel('Demonstration Length (T_d)', fontsize=12)
@@ -836,28 +926,32 @@ def plot_step_rewards(results: Dict, summary: Dict, output_path: str):
     for idx, T_p in enumerate(T_p_values):
         ax = axes[idx]
         
-        # Extract average reward at timestep T_p for all 4 conditions
+        # Extract average reward at timestep T_p for all 5 conditions
         individual_means = [summary['mean_step_rewards']['individual'][T_d][T_p] 
                            for T_d in T_d_values]
-        naive_means = [summary['mean_step_rewards']['naive_social'][T_d][T_p] 
-                       for T_d in T_d_values]
-        greedy_means = [summary['mean_step_rewards']['greedy_social'][T_d][T_p] 
-                        for T_d in T_d_values]
-        oracle_means = [summary['mean_step_rewards']['oracle_social'][T_d][T_p] 
-                        for T_d in T_d_values]
+        naive_thompson_means = [summary['mean_step_rewards']['naive_thompson_social'][T_d][T_p] 
+                                for T_d in T_d_values]
+        naive_greedy_means = [summary['mean_step_rewards']['naive_greedy_social'][T_d][T_p] 
+                              for T_d in T_d_values]
+        oracle_thompson_means = [summary['mean_step_rewards']['oracle_thompson_social'][T_d][T_p] 
+                                 for T_d in T_d_values]
+        oracle_greedy_means = [summary['mean_step_rewards']['oracle_greedy_social'][T_d][T_p] 
+                               for T_d in T_d_values]
         
         # Standard error
         n = metadata['num_bandits']
         individual_se = [summary['std_step_rewards']['individual'][T_d][T_p] / np.sqrt(n)
                         for T_d in T_d_values]
-        naive_se = [summary['std_step_rewards']['naive_social'][T_d][T_p] / np.sqrt(n)
-                    for T_d in T_d_values]
-        greedy_se = [summary['std_step_rewards']['greedy_social'][T_d][T_p] / np.sqrt(n)
-                     for T_d in T_d_values]
-        oracle_se = [summary['std_step_rewards']['oracle_social'][T_d][T_p] / np.sqrt(n)
-                     for T_d in T_d_values]
+        naive_thompson_se = [summary['std_step_rewards']['naive_thompson_social'][T_d][T_p] / np.sqrt(n)
+                             for T_d in T_d_values]
+        naive_greedy_se = [summary['std_step_rewards']['naive_greedy_social'][T_d][T_p] / np.sqrt(n)
+                           for T_d in T_d_values]
+        oracle_thompson_se = [summary['std_step_rewards']['oracle_thompson_social'][T_d][T_p] / np.sqrt(n)
+                              for T_d in T_d_values]
+        oracle_greedy_se = [summary['std_step_rewards']['oracle_greedy_social'][T_d][T_p] / np.sqrt(n)
+                            for T_d in T_d_values]
         
-        # Plot all 4 curves with error shading
+        # Plot all 5 curves with error shading
         ax.plot(T_d_values, individual_means, color='#ff7f0e', linewidth=2,
                 label='Individual')
         ax.fill_between(T_d_values,
@@ -865,26 +959,33 @@ def plot_step_rewards(results: Dict, summary: Dict, output_path: str):
                         np.array(individual_means) + individual_se,
                         color='#ff7f0e', alpha=0.2)
         
-        ax.plot(T_d_values, naive_means, color='#1f77b4', linewidth=2, 
-                label='Naive Social')
+        ax.plot(T_d_values, naive_thompson_means, color='#1f77b4', linewidth=2, 
+                label='Naive Thompson Social')
         ax.fill_between(T_d_values, 
-                        np.array(naive_means) - naive_se,
-                        np.array(naive_means) + naive_se,
+                        np.array(naive_thompson_means) - naive_thompson_se,
+                        np.array(naive_thompson_means) + naive_thompson_se,
                         color='#1f77b4', alpha=0.2)
         
-        ax.plot(T_d_values, greedy_means, color='#2ca02c', linewidth=2,
-                label='Greedy Social')
+        ax.plot(T_d_values, naive_greedy_means, color='#2ca02c', linewidth=2,
+                label='Naive Greedy Social')
         ax.fill_between(T_d_values,
-                        np.array(greedy_means) - greedy_se,
-                        np.array(greedy_means) + greedy_se,
+                        np.array(naive_greedy_means) - naive_greedy_se,
+                        np.array(naive_greedy_means) + naive_greedy_se,
                         color='#2ca02c', alpha=0.2)
         
-        ax.plot(T_d_values, oracle_means, color='#d62728', linewidth=2,
-                label='Oracle Social')
+        ax.plot(T_d_values, oracle_thompson_means, color='#d62728', linewidth=2,
+                label='Oracle Thompson Social')
         ax.fill_between(T_d_values,
-                        np.array(oracle_means) - oracle_se,
-                        np.array(oracle_means) + oracle_se,
+                        np.array(oracle_thompson_means) - oracle_thompson_se,
+                        np.array(oracle_thompson_means) + oracle_thompson_se,
                         color='#d62728', alpha=0.2)
+        
+        ax.plot(T_d_values, oracle_greedy_means, color='#9467bd', linewidth=2,
+                label='Oracle Greedy Social')
+        ax.fill_between(T_d_values,
+                        np.array(oracle_greedy_means) - oracle_greedy_se,
+                        np.array(oracle_greedy_means) + oracle_greedy_se,
+                        color='#9467bd', alpha=0.2)
         
         # Formatting
         ax.set_xlabel('Demonstration Length (T_d)', fontsize=12)
@@ -925,28 +1026,32 @@ def plot_entropy(results: Dict, summary: Dict, output_path: str):
     for idx, T_p in enumerate(T_p_values):
         ax = axes[idx]
         
-        # Extract entropy data for all 4 conditions
+        # Extract entropy data for all 5 conditions
         individual_entropies = [summary['mean_entropy']['individual'][T_d][T_p]
                                 for T_d in T_d_values]
-        naive_entropies = [summary['mean_entropy']['naive_social'][T_d][T_p] 
-                           for T_d in T_d_values]
-        greedy_entropies = [summary['mean_entropy']['greedy_social'][T_d][T_p]
-                            for T_d in T_d_values]
-        oracle_entropies = [summary['mean_entropy']['oracle_social'][T_d][T_p]
-                            for T_d in T_d_values]
+        naive_thompson_entropies = [summary['mean_entropy']['naive_thompson_social'][T_d][T_p] 
+                                    for T_d in T_d_values]
+        naive_greedy_entropies = [summary['mean_entropy']['naive_greedy_social'][T_d][T_p]
+                                  for T_d in T_d_values]
+        oracle_thompson_entropies = [summary['mean_entropy']['oracle_thompson_social'][T_d][T_p]
+                                     for T_d in T_d_values]
+        oracle_greedy_entropies = [summary['mean_entropy']['oracle_greedy_social'][T_d][T_p]
+                                   for T_d in T_d_values]
         
         # Standard error
         n = metadata['num_bandits']
         individual_se = [summary['std_entropy']['individual'][T_d][T_p] / np.sqrt(n)
                          for T_d in T_d_values]
-        naive_se = [summary['std_entropy']['naive_social'][T_d][T_p] / np.sqrt(n)
-                     for T_d in T_d_values]
-        greedy_se = [summary['std_entropy']['greedy_social'][T_d][T_p] / np.sqrt(n)
-                      for T_d in T_d_values]
-        oracle_se = [summary['std_entropy']['oracle_social'][T_d][T_p] / np.sqrt(n)
-                      for T_d in T_d_values]
+        naive_thompson_se = [summary['std_entropy']['naive_thompson_social'][T_d][T_p] / np.sqrt(n)
+                             for T_d in T_d_values]
+        naive_greedy_se = [summary['std_entropy']['naive_greedy_social'][T_d][T_p] / np.sqrt(n)
+                           for T_d in T_d_values]
+        oracle_thompson_se = [summary['std_entropy']['oracle_thompson_social'][T_d][T_p] / np.sqrt(n)
+                              for T_d in T_d_values]
+        oracle_greedy_se = [summary['std_entropy']['oracle_greedy_social'][T_d][T_p] / np.sqrt(n)
+                            for T_d in T_d_values]
         
-        # Plot all 4 curves
+        # Plot all 5 curves
         ax.plot(T_d_values, individual_entropies, color='#ff7f0e', linewidth=2,
                 label='Individual')
         ax.fill_between(T_d_values,
@@ -954,26 +1059,33 @@ def plot_entropy(results: Dict, summary: Dict, output_path: str):
                         np.array(individual_entropies) + individual_se,
                         color='#ff7f0e', alpha=0.2)
         
-        ax.plot(T_d_values, naive_entropies, color='#1f77b4', linewidth=2,
-                label='Naive Social')
+        ax.plot(T_d_values, naive_thompson_entropies, color='#1f77b4', linewidth=2,
+                label='Naive Thompson Social')
         ax.fill_between(T_d_values,
-                        np.array(naive_entropies) - naive_se,
-                        np.array(naive_entropies) + naive_se,
+                        np.array(naive_thompson_entropies) - naive_thompson_se,
+                        np.array(naive_thompson_entropies) + naive_thompson_se,
                         color='#1f77b4', alpha=0.2)
         
-        ax.plot(T_d_values, greedy_entropies, color='#2ca02c', linewidth=2,
-                label='Greedy Social')
+        ax.plot(T_d_values, naive_greedy_entropies, color='#2ca02c', linewidth=2,
+                label='Naive Greedy Social')
         ax.fill_between(T_d_values,
-                        np.array(greedy_entropies) - greedy_se,
-                        np.array(greedy_entropies) + greedy_se,
+                        np.array(naive_greedy_entropies) - naive_greedy_se,
+                        np.array(naive_greedy_entropies) + naive_greedy_se,
                         color='#2ca02c', alpha=0.2)
         
-        ax.plot(T_d_values, oracle_entropies, color='#d62728', linewidth=2,
-                label='Oracle Social')
+        ax.plot(T_d_values, oracle_thompson_entropies, color='#d62728', linewidth=2,
+                label='Oracle Thompson Social')
         ax.fill_between(T_d_values,
-                        np.array(oracle_entropies) - oracle_se,
-                        np.array(oracle_entropies) + oracle_se,
+                        np.array(oracle_thompson_entropies) - oracle_thompson_se,
+                        np.array(oracle_thompson_entropies) + oracle_thompson_se,
                         color='#d62728', alpha=0.2)
+        
+        ax.plot(T_d_values, oracle_greedy_entropies, color='#9467bd', linewidth=2,
+                label='Oracle Greedy Social')
+        ax.fill_between(T_d_values,
+                        np.array(oracle_greedy_entropies) - oracle_greedy_se,
+                        np.array(oracle_greedy_entropies) + oracle_greedy_se,
+                        color='#9467bd', alpha=0.2)
         
         # Add reference line for maximum entropy (uniform distribution)
         K = metadata['K']
@@ -1006,7 +1118,8 @@ def save_results(results: Dict, output_path: str = "prior_experience_results.pkl
 
 def save_results_json(results: Dict, summary: Dict, output_path: str = "prior_experience_results.json"):
     """Save results and summary to JSON file (without raw data for size)."""
-    conditions = ['individual', 'naive_social', 'greedy_social', 'oracle_social']
+    conditions = ['individual', 'naive_thompson_social', 'naive_greedy_social', 
+                  'oracle_thompson_social', 'oracle_greedy_social']
     
     output = {
         'metadata': results['metadata'],
@@ -1041,7 +1154,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Analyze social vs individual learning in Thompson sampling'
     )
-    parser.add_argument('--num_bandits', type=int, default=100,
+    parser.add_argument('--num_bandits', type=int, default=256,
                        help='Number of random bandits to test (default: 1000)')
     parser.add_argument('--N', type=int, default=128,
                        help='Expert latent prior experience (default: 128)')
@@ -1049,12 +1162,12 @@ def main():
                        help='Number of arms per bandit (default: 12)')
     parser.add_argument('--T_d_min', type=int, default=1,
                        help='Minimum demonstration length (default: 1)')
-    parser.add_argument('--T_d_max', type=int, default=60,
-                       help='Maximum demonstration length (default: 20)')
+    parser.add_argument('--T_d_max', type=int, default=20,
+                       help='Maximum demonstration length (default: 100)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed (default: 42)')
     parser.add_argument('--figures_dir', type=str, default=None,
-                       help='Output directory for figures (default: figures/)')
+                       help='Output directory for figures (default: figures/prior_experience_analysis_results/)')
     parser.add_argument('--data_dir', type=str, default=None,
                        help='Output directory for data files (default: data/prior_experience_analysis_results/)')
     parser.add_argument('--quick_test', action='store_true',
@@ -1077,7 +1190,7 @@ def main():
     
     # Set default paths relative to project root
     if args.figures_dir is None:
-        figures_dir = os.path.join(project_root, 'figures')
+        figures_dir = os.path.join(project_root, 'figures', 'prior_experience_analysis_results')
     else:
         figures_dir = args.figures_dir
     
@@ -1097,7 +1210,7 @@ def main():
     
     # Setup
     T_d_values = list(range(args.T_d_min, args.T_d_max + 1))
-    T_p_values = [1,2,4,8, 16, 32]
+    T_p_values = [2, 4, 8, 16]
     payoffs = [0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8]
     
     # Run experiment
