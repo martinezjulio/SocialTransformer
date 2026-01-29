@@ -8,7 +8,7 @@ conda activate SocialTransformer
 
 # Set parameters
 TEST_MANIFEST="data/demonstrations_data_02/test/manifest.json"
-OUTPUT_PATH="data/evaluation/test_evaluation.csv"
+# Note: Output paths are now managed automatically by eval.py (current_run/results/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
@@ -41,7 +41,7 @@ echo "=================================="
 echo "Evaluation Configuration"
 echo "=================================="
 echo "Test manifest: $TEST_MANIFEST"
-echo "Output path: $OUTPUT_PATH"
+echo "Output path: Managed automatically (current_run/results/evaluation/)"
 echo "Device: $DEVICE"
 if [ -n "$MAX_EXAMPLES" ]; then
     echo "Max examples: $MAX_EXAMPLES"
@@ -88,11 +88,7 @@ else
     exit 1
 fi
 
-# Create output directory if it doesn't exist
-OUTPUT_DIR=$(dirname "$OUTPUT_PATH")
-mkdir -p "$OUTPUT_DIR"
-
-# Build python command based on checkpoint source
+# Build python command based on checkpoint source (output dirs created by Python)
 echo "Starting evaluation..."
 
 # Build max_examples flag
@@ -117,7 +113,6 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --checkpoint_path "$CHECKPOINT_PATH" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
         $MASKING_STRATEGY_FLAG \
@@ -126,7 +121,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_artifact "$WANDB_ARTIFACT" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
         $MASKING_STRATEGY_FLAG \
@@ -135,7 +129,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
     python src/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_sweep "$WANDB_SWEEP" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
         $MASKING_STRATEGY_FLAG \
@@ -148,17 +141,12 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Evaluation completed successfully!"
     echo "=================================="
-    echo "Results saved to: $OUTPUT_PATH"
+    echo "Results saved to: current_run/results/evaluation/"
     echo ""
     echo "The output contains per-cutoff metrics for:"
     echo "  - Theta (payoff) prediction accuracy"
     echo "  - Expert demonstrator belief accuracy"
     echo "  - Novice demonstrator belief accuracy"
-    echo ""
-    echo "Analyze with R:"
-    echo "  eval_df <- read_csv('$OUTPUT_PATH')"
-    echo "  # Plot theta correlation vs cutoff"
-    echo "  # Compare expert vs novice prediction accuracy"
     echo ""
 else
     echo ""

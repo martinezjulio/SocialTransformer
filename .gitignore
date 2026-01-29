@@ -1,5 +1,8 @@
+# Symlinks (worktree structure)
+current_run
+data
+
 # Data directories
-data/
 neptune/
 datasets/
 raw_data/

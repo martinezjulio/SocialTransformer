@@ -3,6 +3,7 @@ import argparse
 from typing import Dict
 import math
 import os
+import sys
 import json
 import random
 from pathlib import Path
@@ -16,6 +17,7 @@ from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_ba
 from models.BetaModel import SBIPosteriorTransformer
 from transforms import BeliefNormalizer
 from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log, get_experience_head_loss
+from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 import wandb
 
@@ -673,11 +675,31 @@ def main():
                 "overfitting_window": args.overfitting_window,
             },
         )
-        # Append run ID to checkpoint directory for organization
-        args.checkpoint_dir = os.path.join(args.checkpoint_dir, run.id)
-        print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
     else:
         run = None
+    
+    # Set up run directory structure
+    run_id = get_run_id(use_wandb=args.use_wandb, wandb_run=run)
+    run_dir = setup_run_directory(run_id)
+    print(f"Run directory: {run_dir}")
+    print(f"Run ID: {run_id}")
+    
+    # Write run metadata
+    metadata = {
+        'run_id': run_id,
+        'script': 'train.py',
+        'command': ' '.join(sys.argv),
+        'dataset_path': args.dataset_path,
+    }
+    if args.use_wandb and run:
+        metadata['wandb_url'] = run.get_url()
+        metadata['wandb_id'] = run.id
+    write_run_yaml(run_dir, metadata)
+    write_config_yaml(run_dir, vars(args))
+    
+    # Update checkpoint directory to use run directory
+    args.checkpoint_dir = str(run_dir / 'checkpoints')
+    print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
 
     # Build datasets with normalization
     train_ds = BanditSequenceDataset(
@@ -858,7 +880,8 @@ def main():
     print(f"Validation batches: {len(val_loader)}")
     print(f"\nNote: First batch load may take 2-3 seconds (loading shard from disk)...")
     
-    for epoch in range(start_epoch, args.epochs + 1):
+    try:
+        for epoch in range(start_epoch, args.epochs + 1):
         print(f"\n{'='*50}")
         print(f"Starting Epoch {epoch}/{args.epochs}")
         print(f"{'='*50}")
@@ -1185,6 +1208,25 @@ def main():
         )
     else:
         print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
+        
+        # Training completed successfully
+        finalize_run_yaml(run_dir, status='completed')
+        print(f"\n{'='*50}")
+        print("Training completed successfully!")
+        print(f"{'='*50}")
+        
+    except KeyboardInterrupt:
+        print(f"\n{'='*50}")
+        print("Training interrupted by user")
+        print(f"{'='*50}")
+        finalize_run_yaml(run_dir, status='interrupted')
+        raise
+    except Exception as e:
+        print(f"\n{'='*50}")
+        print(f"Training failed with error: {e}")
+        print(f"{'='*50}")
+        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        raise
 
 
 if __name__ == "__main__":

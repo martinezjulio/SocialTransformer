@@ -47,7 +47,7 @@ WANDB_PROJECT="social-belief-modeling"
 WANDB_ENTITY="juliomartinez-individual"
 
 # Checkpoint configuration
-CHECKPOINT_DIR="checkpoints"
+# Note: Checkpoint directory is now managed automatically by train.py
 ARTIFACT_NAME="sbi-transformer"
 SAVE_EVERY=1  # Save only best and final (set to N to save every N epochs)
 
@@ -114,7 +114,7 @@ echo "  Project: $WANDB_PROJECT"
 echo "  Entity: $WANDB_ENTITY"
 echo ""
 echo "Checkpoints:"
-echo "  Directory: $CHECKPOINT_DIR"
+echo "  Directory: Managed automatically (current_run/runs/<run_id>/checkpoints/)"
 echo "  Save every: $SAVE_EVERY epochs"
 echo "  Artifact name: $ARTIFACT_NAME"
 echo ""
@@ -197,7 +197,6 @@ python src/train.py \
     --use_wandb \
     --wandb_project "$WANDB_PROJECT" \
     --wandb_entity "$WANDB_ENTITY" \
-    --checkpoint_dir "$CHECKPOINT_DIR" \
     --save_every $SAVE_EVERY \
     --artifact_name "$ARTIFACT_NAME" \
     $SCHEDULER_FLAG \
@@ -216,17 +215,18 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Training completed successfully!"
     echo "=================================="
-    echo "Model state dict saved to: sbi_transformer.pt"
-    echo "Checkpoints saved to: $CHECKPOINT_DIR/{run-id}/"
+    echo "Checkpoints saved to: current_run/runs/<run_id>/checkpoints/"
     echo "  - best_model.pt (best validation loss)"
     echo "  - final_model.pt (final epoch)"
     if [ "$SAVE_EVERY" -gt 0 ]; then
         echo "  - checkpoint_epoch_N.pt (periodic checkpoints)"
     fi
     echo ""
-    echo "Note: When using --use_wandb, checkpoints are organized by run ID"
-    echo "All checkpoints logged to wandb artifacts!"
-    echo "View at: https://wandb.ai/$WANDB_ENTITY/$WANDB_PROJECT/artifacts"
+    echo "Note: All checkpoints and results organized in experiments directory"
+    if [ "$USE_WANDB" = "true" ]; then
+        echo "Wandb artifacts logged!"
+        echo "View at: https://wandb.ai/$WANDB_ENTITY/$WANDB_PROJECT/artifacts"
+    fi
     echo ""
 else
     echo ""
