@@ -15,11 +15,14 @@ import numpy as np
 import random
 import pickle
 import json
+import sys
 from collections import defaultdict
 from scipy.stats import beta as beta_dist
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Dict
 import argparse
+from pathlib import Path
+from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 
 # ============================================================================
@@ -1175,6 +1178,28 @@ def main():
     
     args = parser.parse_args()
     
+    # Set up run directory structure (no wandb for this script)
+    run_id = get_run_id(use_wandb=False)
+    run_dir = setup_run_directory(run_id)
+    print(f"Run directory: {run_dir}")
+    print(f"Run ID: {run_id}")
+    
+    # Write run metadata
+    metadata = {
+        'run_id': run_id,
+        'script': 'prior_experience_analysis.py',
+        'command': ' '.join(sys.argv),
+        'num_bandits': args.num_bandits,
+        'N': args.N,
+        'K': args.K,
+        'T_d_min': args.T_d_min,
+        'T_d_max': args.T_d_max,
+        'seed': args.seed,
+        'quick_test': args.quick_test,
+    }
+    write_run_yaml(run_dir, metadata)
+    write_config_yaml(run_dir, vars(args))
+    
     # Quick test mode
     if args.quick_test:
         print("Running in QUICK TEST mode (10 bandits, T_d up to 20)")
@@ -1184,71 +1209,87 @@ def main():
     # Setup output directories
     import os
     
-    # Get script directory (assuming we're in src/)
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    
-    # Set default paths relative to project root
+    # Set default paths to use run directory
     if args.figures_dir is None:
-        figures_dir = os.path.join(project_root, 'figures', 'prior_experience_analysis_results')
+        figures_dir = str(run_dir / 'results' / 'figures')
     else:
         figures_dir = args.figures_dir
     
     if args.data_dir is None:
-        data_dir = os.path.join(project_root, 'data', 'prior_experience_analysis_results')
+        data_dir = str(run_dir / 'results')
     else:
         data_dir = args.data_dir
     
     # Create directories if they don't exist
-    os.makedirs(figures_dir, exist_ok=True)
-    os.makedirs(data_dir, exist_ok=True)
+    Path(figures_dir).mkdir(parents=True, exist_ok=True)
+    Path(data_dir).mkdir(parents=True, exist_ok=True)
     
     print(f"Output directories:")
     print(f"  Figures: {figures_dir}")
     print(f"  Data: {data_dir}")
     print()
     
-    # Setup
-    T_d_values = list(range(args.T_d_min, args.T_d_max + 1))
-    T_p_values = [2, 4, 8, 16]
-    payoffs = [0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8]
-    
-    # Run experiment
-    results = run_experiment(
-        num_bandits=args.num_bandits,
-        N=args.N,
-        T_d_values=T_d_values,
-        T_p_values=T_p_values,
-        K=args.K,
-        payoffs=payoffs,
-        seed=args.seed,
-        verbose=True
-    )
-    
-    # Compute summary statistics
-    summary = compute_summary_statistics(results)
-    
-    # Generate plots
-    # 1. Cumulative rewards
-    figure_path_cumulative = os.path.join(figures_dir, 'prior_experience_analysis_cumulative.png')
-    plot_results(results, summary, figure_path_cumulative)
-    
-    # 2. Step rewards
-    figure_path_step = os.path.join(figures_dir, 'prior_experience_analysis_step_reward.png')
-    plot_step_rewards(results, summary, figure_path_step)
-    
-    # 3. Entropy
-    figure_path_entropy = os.path.join(figures_dir, 'prior_experience_analysis_entropy.png')
-    plot_entropy(results, summary, figure_path_entropy)
-    
-    # Save results
-    pkl_path = os.path.join(data_dir, 'prior_experience_results.pkl')
-    save_results(results, pkl_path)
-    
-    json_path = os.path.join(data_dir, 'prior_experience_results.json')
-    save_results_json(results, summary, json_path)
-    
-    print("\nAnalysis complete!")
+    try:
+        # Setup
+        T_d_values = list(range(args.T_d_min, args.T_d_max + 1))
+        T_p_values = [2, 4, 8, 16]
+        payoffs = [0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8]
+        
+        # Run experiment
+        results = run_experiment(
+            num_bandits=args.num_bandits,
+            N=args.N,
+            T_d_values=T_d_values,
+            T_p_values=T_p_values,
+            K=args.K,
+            payoffs=payoffs,
+            seed=args.seed,
+            verbose=True
+        )
+        
+        # Compute summary statistics
+        summary = compute_summary_statistics(results)
+        
+        # Generate plots
+        # 1. Cumulative rewards
+        figure_path_cumulative = os.path.join(figures_dir, 'prior_experience_analysis_cumulative.png')
+        plot_results(results, summary, figure_path_cumulative)
+        
+        # 2. Step rewards
+        figure_path_step = os.path.join(figures_dir, 'prior_experience_analysis_step_reward.png')
+        plot_step_rewards(results, summary, figure_path_step)
+        
+        # 3. Entropy
+        figure_path_entropy = os.path.join(figures_dir, 'prior_experience_analysis_entropy.png')
+        plot_entropy(results, summary, figure_path_entropy)
+        
+        # Save results
+        pkl_path = os.path.join(data_dir, 'prior_experience_results.pkl')
+        save_results(results, pkl_path)
+        
+        json_path = os.path.join(data_dir, 'prior_experience_results.json')
+        save_results_json(results, summary, json_path)
+        
+        print("\nAnalysis complete!")
+        
+        # Analysis completed successfully
+        finalize_run_yaml(run_dir, status='completed')
+        print(f"\n{'='*60}")
+        print("Analysis completed successfully!")
+        print(f"{'='*60}")
+        
+    except KeyboardInterrupt:
+        print(f"\n{'='*60}")
+        print("Analysis interrupted by user")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='interrupted')
+        raise
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"Analysis failed with error: {e}")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        raise
 
 
 if __name__ == '__main__':

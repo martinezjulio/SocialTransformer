@@ -11,6 +11,7 @@ This script:
 
 import argparse
 import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import random
@@ -24,6 +25,7 @@ from tqdm import tqdm
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
+from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
@@ -739,12 +741,35 @@ def main():
     
     args = parser.parse_args()
     
+    # Set up run directory structure (inference doesn't use wandb)
+    run_id = get_run_id(use_wandb=False)
+    run_dir = setup_run_directory(run_id)
+    print(f"Run directory: {run_dir}")
+    print(f"Run ID: {run_id}")
+    
+    # Write run metadata
+    metadata = {
+        'run_id': run_id,
+        'script': 'inference.py',
+        'command': ' '.join(sys.argv),
+        'experiment_data_path': args.experiment_data_path,
+        'num_rollouts': args.num_rollouts,
+        'seed': args.seed,
+    }
+    write_run_yaml(run_dir, metadata)
+    write_config_yaml(run_dir, vars(args))
+    
+    # Update output path to use run directory if it's still default
+    if args.output_path == "data/model_predictions/hybrid_model_predictions.csv":
+        args.output_path = str(run_dir / 'results' / 'predictions' / 'hybrid_model_predictions.csv')
+    
     # Set device
     device = torch.device(args.device)
     print(f"Using device: {device}")
     
-    # Load experiment data
-    df = load_and_preprocess_data(args.experiment_data_path)
+    try:
+        # Load experiment data
+        df = load_and_preprocess_data(args.experiment_data_path)
     
     # Check if we have data
     if len(df) == 0:
@@ -913,10 +938,29 @@ def main():
     print(f"\nSaving results to {args.output_path}...")
     final_df.to_csv(args.output_path, index=False)
     
-    print(f"\nDone! Generated {len(final_df)} rows for {final_df['session_id'].nunique()} sessions")
-    print(f"  - 8 combinations × {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
-    print(f"  - Rows per combination-rollout: {len(final_df) // (8 * args.num_rollouts)}")
-    print(f"Output saved to: {args.output_path}")
+        print(f"\nDone! Generated {len(final_df)} rows for {final_df['session_id'].nunique()} sessions")
+        print(f"  - 8 combinations × {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
+        print(f"  - Rows per combination-rollout: {len(final_df) // (8 * args.num_rollouts)}")
+        print(f"Output saved to: {args.output_path}")
+        
+        # Inference completed successfully
+        finalize_run_yaml(run_dir, status='completed')
+        print(f"\n{'='*60}")
+        print("Inference completed successfully!")
+        print(f"{'='*60}")
+        
+    except KeyboardInterrupt:
+        print(f"\n{'='*60}")
+        print("Inference interrupted by user")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='interrupted')
+        raise
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"Inference failed with error: {e}")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        raise
 
 
 if __name__ == "__main__":

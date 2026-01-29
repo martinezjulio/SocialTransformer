@@ -11,6 +11,7 @@ This script:
 
 import argparse
 import os
+import sys
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -26,6 +27,7 @@ from models.BetaModel import SBIPosteriorTransformer
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
 from dataloader import BanditSequenceDataset
+from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 # Set style for plots
 sns.set_style("whitegrid")
@@ -625,14 +627,37 @@ def main():
     
     args = parser.parse_args()
     
+    # Set up run directory structure (eval doesn't use wandb)
+    run_id = get_run_id(use_wandb=False)
+    run_dir = setup_run_directory(run_id)
+    print(f"Run directory: {run_dir}")
+    print(f"Run ID: {run_id}")
+    
+    # Write run metadata
+    metadata = {
+        'run_id': run_id,
+        'script': 'eval.py',
+        'command': ' '.join(sys.argv),
+        'test_manifest': args.test_manifest,
+    }
+    write_run_yaml(run_dir, metadata)
+    write_config_yaml(run_dir, vars(args))
+    
+    # Update output paths to use run directory if they're still defaults
+    if args.output_path == "data/evaluation/test_evaluation.csv":
+        args.output_path = str(run_dir / 'results' / 'evaluation' / 'test_evaluation.csv')
+    if args.plot_output_dir == "figures/evaluation":
+        args.plot_output_dir = str(run_dir / 'results' / 'figures' / 'evaluation')
+    
     # Set device
     device = torch.device(args.device)
     print(f"Using device: {device}")
     
-    # Load checkpoint
-    print("\n" + "="*60)
-    print("Loading Model Checkpoint")
-    print("="*60)
+    try:
+        # Load checkpoint
+        print("\n" + "="*60)
+        print("Loading Model Checkpoint")
+        print("="*60)
     
     if args.checkpoint_path:
         checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
@@ -825,13 +850,32 @@ def main():
     print(f"  N_tot true (computed): {df['novice_N_tot_true'].mean():.1f}")
     print(f"  N_tot pred: {df['novice_N_tot_pred'].mean():.1f}")
     
-    print(f"\n✓ Evaluation complete! Results saved to {args.output_path}")
-    
-    # Generate visualization if requested
-    if not args.skip_plot:
-        plot_evaluation_results(df, args.plot_output_dir)
-    else:
-        print("\nSkipping visualization (--skip_plot flag set)")
+        print(f"\n✓ Evaluation complete! Results saved to {args.output_path}")
+        
+        # Generate visualization if requested
+        if not args.skip_plot:
+            plot_evaluation_results(df, args.plot_output_dir)
+        else:
+            print("\nSkipping visualization (--skip_plot flag set)")
+        
+        # Evaluation completed successfully
+        finalize_run_yaml(run_dir, status='completed')
+        print(f"\n{'='*60}")
+        print("Evaluation completed successfully!")
+        print(f"{'='*60}")
+        
+    except KeyboardInterrupt:
+        print(f"\n{'='*60}")
+        print("Evaluation interrupted by user")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='interrupted')
+        raise
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"Evaluation failed with error: {e}")
+        print(f"{'='*60}")
+        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        raise
 
 
 if __name__ == "__main__":
