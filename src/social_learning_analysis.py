@@ -211,7 +211,7 @@ def generate_plot_data(input_csv, output_csv):
 
 def plot_reward_by_td_and_tp(csv_file, output_file):
     """
-    Create a figure with 4 subplots showing average reward vs T_D for different T_P values.
+    Create a figure with 3x4 subplots showing reward, cumulative reward, and entropy vs T_D.
     
     Args:
         csv_file: Path to the aggregated plot data CSV
@@ -223,8 +223,8 @@ def plot_reward_by_td_and_tp(csv_file, output_file):
     # Define the T_P values for each subplot
     t_p_values = [2, 4, 8, 16]
     
-    # Create figure with 4 subplots in a row
-    fig, axes = plt.subplots(1, 4, figsize=(20, 4), sharey=True)
+    # Create figure with 3 rows and 4 columns
+    fig, axes = plt.subplots(3, 4, figsize=(20, 12))
     
     # Get unique agent types and sort them for consistent ordering
     agent_types = sorted(df['agent_type'].unique())
@@ -246,47 +246,82 @@ def plot_reward_by_td_and_tp(csv_file, output_file):
     markers = ['o', 's', '^', 'D', 'v', '<']
     marker_map = {agent_type: markers[i % len(markers)] for i, agent_type in enumerate(agent_types)}
     
-    # Plot each T_P value in a separate subplot
-    for idx, t_p in enumerate(t_p_values):
-        ax = axes[idx]
+    # Define metrics for each row
+    metrics = [
+        ('rewards_mean', 'rewards_se', 'Average Reward'),
+        ('cumulative_rewards_mean', 'cumulative_rewards_se', 'Cumulative Reward'),
+        ('entropy_mean', 'entropy_se', 'Entropy')
+    ]
+    
+    # First pass: compute y-axis limits for each row
+    row_ylims = []
+    for row_idx, (metric_mean, metric_se, ylabel) in enumerate(metrics):
+        y_min = float('inf')
+        y_max = float('-inf')
         
-        # Filter data for this T_P value
-        df_tp = df[df['T_P'] == t_p]
+        for t_p in t_p_values:
+            df_tp = df[df['T_P'] == t_p]
+            # Get min and max across all agent types for this T_P
+            y_min = min(y_min, (df_tp[metric_mean] - df_tp[metric_se]).min())
+            y_max = max(y_max, (df_tp[metric_mean] + df_tp[metric_se]).max())
         
-        # Plot each agent type
-        for agent_type in agent_types:
-            df_agent = df_tp[df_tp['agent_type'] == agent_type]
+        # Add some padding (5% on each side)
+        y_range = y_max - y_min
+        y_padding = y_range * 0.05
+        row_ylims.append((y_min - y_padding, y_max + y_padding))
+    
+    # Second pass: plot each metric (row) and T_P value (column)
+    for row_idx, (metric_mean, metric_se, ylabel) in enumerate(metrics):
+        for col_idx, t_p in enumerate(t_p_values):
+            ax = axes[row_idx, col_idx]
             
-            # Sort by T_D for proper line plotting
-            df_agent = df_agent.sort_values('T_D')
+            # Filter data for this T_P value
+            df_tp = df[df['T_P'] == t_p]
             
-            # Plot with error bars
-            ax.errorbar(df_agent['T_D'], 
-                       df_agent['rewards_mean'],
-                       yerr=df_agent['rewards_se'],
-                       label=agent_type,
-                       color=colors[agent_type],
-                       marker=marker_map[agent_type],
-                       capsize=3,
-                       capthick=1,
-                       linewidth=2,
-                       markersize=4,
-                       alpha=0.8)
-        
-        # Configure subplot
-        ax.set_xlabel('T_D (Demonstration Steps)', fontsize=11)
-        ax.set_title(f'T_P = {t_p}', fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim(0, 21)
-        
-        # Only show legend on first subplot
-        if idx == 0:
-            ax.set_ylabel('Average Reward', fontsize=11)
-            ax.legend(fontsize=9, loc='best')
+            # Plot each agent type
+            for agent_type in agent_types:
+                df_agent = df_tp[df_tp['agent_type'] == agent_type]
+                
+                # Sort by T_D for proper line plotting
+                df_agent = df_agent.sort_values('T_D')
+                
+                # Plot with error bars
+                ax.errorbar(df_agent['T_D'], 
+                           df_agent[metric_mean],
+                           yerr=df_agent[metric_se],
+                           label=agent_type,
+                           color=colors[agent_type],
+                           marker=marker_map[agent_type],
+                           capsize=3,
+                           capthick=1,
+                           linewidth=2,
+                           markersize=4,
+                           alpha=0.8)
+            
+            # Configure subplot
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(0, 21)
+            ax.set_ylim(row_ylims[row_idx])  # Set consistent y-axis for this row
+            
+            # Column titles (only on top row)
+            if row_idx == 0:
+                ax.set_title(f'T_P = {t_p}', fontsize=12, fontweight='bold')
+            
+            # X-axis label (only on bottom row)
+            if row_idx == 2:
+                ax.set_xlabel('T_D (Demonstration Steps)', fontsize=11)
+            
+            # Y-axis label (only on leftmost column)
+            if col_idx == 0:
+                ax.set_ylabel(ylabel, fontsize=11)
+            
+            # Legend (only on first subplot)
+            if row_idx == 0 and col_idx == 0:
+                ax.legend(fontsize=8, loc='best')
     
     # Overall title
-    fig.suptitle('Average Reward vs Demonstration Steps (T_D) for Different Play Lengths (T_P)', 
-                 fontsize=14, fontweight='bold', y=1.02)
+    fig.suptitle('Social Learning Analysis: Reward, Cumulative Reward, and Entropy vs Demonstration Steps', 
+                 fontsize=14, fontweight='bold', y=0.995)
     
     plt.tight_layout()
     
