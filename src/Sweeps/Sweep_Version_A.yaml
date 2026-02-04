@@ -9,7 +9,7 @@ metric:
 parameters:
   # Fixed parameters
   dataset_path:
-    value: "data/demonstrations_data_02"
+    value: "data/demonstrations_data_00"
   epochs:
     value: 500
   device:
