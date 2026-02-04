@@ -47,16 +47,16 @@ NUM_DEMONSTRATORS=2
 NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
 ORDER=2
-NUM_TRAIN_RUNS=120000  
-NUM_VALID_RUNS=6000  
-NUM_TEST_RUNS=6000   
+NUM_TRAIN_RUNS=360000 #120000  
+NUM_VALID_RUNS=18000 #6000  
+NUM_TEST_RUNS=18000 #6000   
 T_DEMO=6
 T_LEARNER=6
 SHARD_SIZE=2000
 MAX_CONTEXT=144
-DEMO_STRATEGY="expert_thompson_novice_random"  # Expert uses Thompson, novice uses random exclusion
-EXPERT_N_MIN=72  # Fixed expert experience
-EXPERT_N_MAX=72  # Fixed expert experience
+DEMO_STRATEGY="expert_novice_thompson"  # expert_novice_thompson, uniform_thompson, expert_thompson_novice_random
+EXPERT_N_MIN=128  # Fixed expert experience
+EXPERT_N_MAX=128  # Fixed expert experience
 BANDIT_STRATEGY="permute"  # Use permutation-based bandit generation
 BANDIT_PAYOFFS="0.0,0.1,0.2,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.75,0.8"  # Fixed payoffs to permute (must have exactly K=12 values)
 
@@ -77,8 +77,8 @@ echo "T_demo: $T_DEMO"
 echo "T_learner: $T_LEARNER"
 echo "N_max: $N_MAX"
 echo "Demo strategy: $DEMO_STRATEGY"
-echo "Expert N_min: $EXPERT_N_MIN (FIXED at 72)"
-echo "Expert N_max: $EXPERT_N_MAX (FIXED at 72)"
+echo "Expert N_min: $EXPERT_N_MIN"
+echo "Expert N_max: $EXPERT_N_MAX"
 echo "Bandit strategy: $BANDIT_STRATEGY"
 echo "Bandit payoffs: $BANDIT_PAYOFFS"
 echo "Shard size: $SHARD_SIZE"

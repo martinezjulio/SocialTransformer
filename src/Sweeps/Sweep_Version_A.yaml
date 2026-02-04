@@ -27,18 +27,18 @@ parameters:
   weight_decay:
     values: [0.0, 0.001, 0.01, 0.1]
   batch_size:
-    values: [64, 128]
+    values: [128]
   dropout:
-    values: [0.0, 0.1, 0.2, 0.3]
+    values: [0.2]
   num_layers:
     values: [4, 8]
   dim_feedforward:
-    values: [512, 1024]
+    values: [1024]
   # d_model and nhead - using distribution to enforce constraint
   d_model:
     values: [256, 512]
   nhead:
-    values: [4, 8, 16]
+    values: [4, 8]
   demo_loss_weight:
     values: 1.0
   demo_belief_loss:
@@ -50,18 +50,18 @@ parameters:
   profile_method:
     values: "no_profile" # ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
   experience_head_loss_weight:
-    values: 1.0
+    values: 0.0
   experience_head_loss_type:
     values: "bce" # ["mse", "bce"]
   expert_threshold:
     value: 30.0
   # Head input configurations (Phase 3)
   theta_head_input:
-    values: ["query_only", "query_and_profiles"]
+    values: ["query_only"] # ["query_only", "query_and_profiles"]
   demo_beliefs_head_input:
-    values: ["query_only", "profiles_only", "query_and_profiles"]
+    values: ["query_only"] # ["query_only", "profiles_only", "query_and_profiles"]
   experience_head_input:
-    values: ["query_only", "profiles_only", "query_and_profiles"]
+    values: ["query_only"] # ["query_only", "profiles_only", "query_and_profiles"]
   # Scheduler parameters
   scheduler :
     values: "plateau" # ["cosine", "plateau"]
