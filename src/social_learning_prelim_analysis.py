@@ -8,7 +8,7 @@ from scipy.stats import entropy
 import matplotlib.pyplot as plt
 from typing import List
 from pathlib import Path
-from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_run_id, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 class Bandit: 
     def __init__(self, payoffs: List[float]):
@@ -416,6 +416,10 @@ def run_social_learning_analysis(run_dir, config):
     raw_csv = results_dir / 'social_learning_analysis.csv'
     plot_csv = results_dir / 'social_learning_analysis_plot_data.csv'
     
+    # Create only the directories we need
+    results_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    
     print(f"Starting social learning analysis...")
     print(f"Parameters: K={K}, T_E={T_E}, T_D={T_D}, T_P={T_P}, n_trials={n_trials}")
     print(f"Output directory: {run_dir}")
@@ -606,7 +610,8 @@ def main():
     
     # Setup run directory
     run_id = get_run_id(use_wandb=False)
-    run_dir = setup_run_directory(run_id)
+    run_dir = Path('current_run') / 'runs' / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Run ID: {run_id}")
     print(f"Run directory: {run_dir}")
@@ -616,7 +621,6 @@ def main():
     
     metadata = {
         'run_id': run_id,
-        'script': 'social_learning_analysis.py',
         'command': ' '.join(sys.argv),
     }
     write_run_yaml(run_dir, metadata)
