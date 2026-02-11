@@ -6,6 +6,9 @@ from pathlib import Path
 from datetime import datetime
 import yaml
 
+def get_special_characters():
+    SPECIAL = {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2, "LEARNER_RAW_ID": 99}
+    return SPECIAL
 
 def generate_run_id():
     """Generate a 10-character UUID for runs without wandb."""
