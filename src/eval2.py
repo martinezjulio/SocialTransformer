@@ -24,6 +24,7 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
 from models.BetaModel import SBIPosteriorTransformer
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
@@ -171,6 +172,105 @@ def prepare_single_example_batch(
     
     return batch
 
+
+def evaluate_single_example(
+    example: Dict,
+    model: nn.Module,
+    device: torch.device,
+    num_arms: int,
+    num_agents: int,
+    num_bandits: int,
+    SPECIAL: Dict,
+    normalizer=None,
+    alpha0: float = 1.0,
+    beta0: float = 1.0,
+    masking_strategy: str = "all_bandits"
+) -> List[Dict]:
+    """
+    Evaluate model on single example at multiple segment cutoffs.
+    Returns list of metric dicts, one per cutoff position.
+    """
+    # Get ground truth
+    labels = example["labels"]
+    bandits = labels["bandits"]
+    num_segments = len(example["segment_info"])
+    
+    results = []
+    
+    # Prepare batch once
+    batch = prepare_single_example_batch(
+        example, num_arms, num_agents, num_bandits, SPECIAL
+    )
+    
+    # Move to device
+    for k in batch:
+        batch[k] = batch[k].to(device)
+    
+    seq_len = batch["bandit_ids"].shape[1]
+    
+    # Evaluate at each possible cutoff
+    for cutoff in range(1, num_segments + 1):
+        seg_info = example["segment_info"][cutoff - 1]
+        round_idx = seg_info["round"]
+        bandit_id = int(example["round_bandit_map"][round_idx])
+        
+        # Create attention mask for this cutoff
+        attn_mask = create_segment_mask_single(
+            example["segment_boundaries"],
+            cutoff,
+            seq_len,
+            device,
+            masking_strategy=masking_strategy,
+            segment_info=example["segment_info"],
+            round_bandit_map=example["round_bandit_map"]
+        )
+        
+        # Run model
+        model.eval()
+        with torch.no_grad():
+            outputs = model(batch, custom_attn_mask=attn_mask)
+        
+        # Get ground truth for this bandit
+        bandit_info = bandits[bandit_id]
+        true_theta = torch.tensor(bandit_info["theta"], dtype=torch.float32)
+        
+        # Get predictions for this round's QUERY
+        pred_alpha_theta = outputs["alpha_theta"][0, round_idx].cpu()  # [K]
+        pred_beta_theta = outputs["beta_theta"][0, round_idx].cpu()    # [K]
+        
+        # Compute expected payoffs
+        pred_theta_expected = pred_alpha_theta / (pred_alpha_theta + pred_beta_theta)
+        
+        # Compute theta correlation
+        theta_corr = torch.corrcoef(
+            torch.stack([pred_theta_expected, true_theta])
+        )[0, 1].item()
+        
+        # Compute additional metrics
+        theta_mse = F.mse_loss(pred_theta_expected, true_theta).item()
+        theta_variance = pred_theta_expected.var().item()
+        theta_range = (pred_theta_expected.max() - pred_theta_expected.min()).item()
+        
+        # Compile metrics
+        metrics = {
+            "cutoff": cutoff,
+            "segment_type": seg_info["type"],
+            "agent": seg_info.get("agent", -1),
+            "round_index": round_idx,
+            "bandit_id": int(bandit_id),
+            
+            # Theta metrics
+            "theta_correlation": theta_corr,
+            "theta_mse": theta_mse,
+            "theta_variance": theta_variance,
+            "theta_range": theta_range,
+        }
+        
+        results.append(metrics)
+    
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate model on test set")
     parser.add_argument("--test_manifest", type=str, required=True,
@@ -231,6 +331,10 @@ def main():
     print(f"  d_model: {model_config['d_model']}")
     print(f"  nhead: {model_config['nhead']}")
     print(f"  num_layers: {model_config['num_layers']}")
+    
+    # Extract masking strategy
+    masking_strategy = model_config.get('masking_strategy', 'all_bandits')
+    print(f"  masking_strategy: {masking_strategy}")
     
     # Create model
     model = SBIPosteriorTransformer(
@@ -303,10 +407,81 @@ def main():
     all_results = []
     
     for ex_idx, example in enumerate(tqdm(all_examples, desc="Evaluating examples")):
-        
-        batch = prepare_single_example_batch(example, model_config['num_arms'], model_config['num_agents'], model_config['num_bandits'], SPECIAL)
-        print(batch)
-        break
+        # Evaluate this example at all segment cutoffs
+        example_results = evaluate_single_example(
+            example=example,
+            model=model,
+            device=device,
+            num_arms=model_config['num_arms'],
+            num_agents=model_config['num_agents'],
+            num_bandits=model_config['num_bandits'],
+            SPECIAL=SPECIAL,
+            normalizer=normalizer,
+            alpha0=alpha0,
+            beta0=beta0,
+            masking_strategy=masking_strategy
+        )
+        all_results.extend(example_results)
+    
+    # Convert to DataFrame
+    df_results = pd.DataFrame(all_results)
+    
+    # Save full results CSV
+    print("\n" + "="*60)
+    print("Saving Results")
+    print("="*60)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    df_results.to_csv(output_path, index=False)
+    print(f"\n✓ Saved results CSV: {output_path}")
+    print(f"  Total evaluations: {len(df_results)}")
+    print(f"  Unique cutoffs: {df_results['cutoff'].nunique()}")
+    
+    # Create theta correlation figure
+    print("\n" + "="*60)
+    print("Generating Visualization")
+    print("="*60)
+    
+    # Aggregate by cutoff
+    cutoff_stats = df_results.groupby('cutoff').agg({
+        'theta_correlation': ['mean', 'std', 'count']
+    }).reset_index()
+    
+    # Flatten column names
+    cutoff_stats.columns = ['_'.join(col).strip('_') for col in cutoff_stats.columns.values]
+    
+    # Compute standard error
+    n = cutoff_stats['theta_correlation_count']
+    cutoff_stats['theta_correlation_se'] = cutoff_stats['theta_correlation_std'] / (n ** 0.5)
+    
+    # Create single figure
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.errorbar(
+        cutoff_stats['cutoff'],
+        cutoff_stats['theta_correlation_mean'],
+        yerr=cutoff_stats['theta_correlation_se'],
+        marker='o', capsize=5, capthick=2, linewidth=2
+    )
+    ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, label='Random (0)')
+    ax.axhline(y=0.5, color='green', linestyle='--', alpha=0.5, label='Good (0.5)')
+    ax.set_xlabel('Segment Cutoff (Context Length)', fontsize=12)
+    ax.set_ylabel('Correlation', fontsize=12)
+    ax.set_title('Theta Prediction Accuracy', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    
+    # Save
+    plot_path = Path(plot_output_dir) / 'theta_accuracy_vs_cutoff.png'
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"\n✓ Saved plot: {plot_path}")
+    
+    # Finalize run metadata
+    finalize_run_yaml(run_dir, status='completed')
+    print(f"\n{'='*60}")
+    print("Evaluation completed successfully!")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main()
