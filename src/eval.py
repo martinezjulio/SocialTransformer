@@ -27,15 +27,14 @@ from models.BetaModel import SBIPosteriorTransformer
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
 from dataloader import BanditSequenceDataset
-from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_special_characters, get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 # Set style for plots
 sns.set_style("whitegrid")
 plt.rcParams['figure.facecolor'] = 'white'
 
 
-SPECIAL = {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2}
-LEARNER_RAW_ID = 99
+SPECIAL = get_special_characters()
 
 
 def create_segment_mask_single(
@@ -127,6 +126,7 @@ def prepare_single_example_batch(
     special_ids = []
     
     for (b, ag, a, r) in remapped_events:
+        assert 0 <= b < num_bandits, f"Invalid bandit_id {b}, must be in [0, {num_bandits})"
         # Check if this is structural token (agent_id was set to num_agents in remapping)
         if ag == num_agents:
             # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)

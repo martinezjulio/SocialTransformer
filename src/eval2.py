@@ -234,9 +234,30 @@ def evaluate_single_example(
         bandit_info = bandits[bandit_id]
         true_theta = torch.tensor(bandit_info["theta"], dtype=torch.float32)
         
+        # Identify which demo_id is expert vs novice by checking N_tot
+        demo0_N = bandit_info["demonstrators"][0]["N_tot"]
+        demo1_N = bandit_info["demonstrators"][1]["N_tot"]
+        
+        if demo0_N > demo1_N:
+            expert_id, novice_id = 0, 1
+        else:
+            expert_id, novice_id = 1, 0
+        
+        true_alpha_expert = torch.tensor(bandit_info["demonstrators"][expert_id]["alpha0"], dtype=torch.float32)
+        true_beta_expert = torch.tensor(bandit_info["demonstrators"][expert_id]["beta0"], dtype=torch.float32)
+        true_alpha_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["alpha0"], dtype=torch.float32)
+        true_beta_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["beta0"], dtype=torch.float32)
+        
         # Get predictions for this round's QUERY
         pred_alpha_theta = outputs["alpha_theta"][0, round_idx].cpu()  # [K]
         pred_beta_theta = outputs["beta_theta"][0, round_idx].cpu()    # [K]
+        pred_alpha_demo = outputs["alpha_demo"][0, round_idx].cpu()    # [D, K]
+        pred_beta_demo = outputs["beta_demo"][0, round_idx].cpu()      # [D, K]
+        
+        # Denormalize demo predictions if needed
+        if normalizer:
+            pred_alpha_demo = normalizer.denormalize_alpha(pred_alpha_demo)
+            pred_beta_demo = normalizer.denormalize_beta(pred_beta_demo)
         
         # Compute expected payoffs
         pred_theta_expected = pred_alpha_theta / (pred_alpha_theta + pred_beta_theta)
@@ -250,6 +271,34 @@ def evaluate_single_example(
         theta_mse = F.mse_loss(pred_theta_expected, true_theta).item()
         theta_variance = pred_theta_expected.var().item()
         theta_range = (pred_theta_expected.max() - pred_theta_expected.min()).item()
+        theta_tot = (pred_alpha_theta.sum() + pred_beta_theta.sum()).item()
+        
+        # Match predictions to ground truth based on expert/novice identification
+        pred_alpha_expert = pred_alpha_demo[expert_id]
+        pred_beta_expert = pred_beta_demo[expert_id]
+        pred_alpha_novice = pred_alpha_demo[novice_id]
+        pred_beta_novice = pred_beta_demo[novice_id]
+        
+        # Compute demonstrator alpha/beta correlations
+        expert_alpha_corr = torch.corrcoef(
+            torch.stack([pred_alpha_expert, true_alpha_expert])
+        )[0, 1].item()
+        expert_beta_corr = torch.corrcoef(
+            torch.stack([pred_beta_expert, true_beta_expert])
+        )[0, 1].item()
+        novice_alpha_corr = torch.corrcoef(
+            torch.stack([pred_alpha_novice, true_alpha_novice])
+        )[0, 1].item()
+        novice_beta_corr = torch.corrcoef(
+            torch.stack([pred_beta_novice, true_beta_novice])
+        )[0, 1].item()
+        
+        # Compute N_tot (effective experience count, subtracting prior)
+        K = num_arms
+        pred_expert_N = (pred_alpha_expert.sum() + pred_beta_expert.sum() - alpha0*K - beta0*K).item()
+        true_expert_N = (true_alpha_expert.sum() + true_beta_expert.sum() - alpha0*K - beta0*K).item()
+        pred_novice_N = (pred_alpha_novice.sum() + pred_beta_novice.sum() - alpha0*K - beta0*K).item()
+        true_novice_N = (true_alpha_novice.sum() + true_beta_novice.sum() - alpha0*K - beta0*K).item()
         
         # Compile metrics
         metrics = {
@@ -264,6 +313,19 @@ def evaluate_single_example(
             "theta_mse": theta_mse,
             "theta_variance": theta_variance,
             "theta_range": theta_range,
+            "theta_tot": theta_tot,
+            
+            # Demonstrator metrics
+            "expert_alpha_corr": expert_alpha_corr,
+            "expert_beta_corr": expert_beta_corr,
+            "novice_alpha_corr": novice_alpha_corr,
+            "novice_beta_corr": novice_beta_corr,
+            "expert_N_tot_pred": pred_expert_N,
+            "expert_N_tot_true": true_expert_N,
+            "expert_N_tot_error": abs(pred_expert_N - true_expert_N),
+            "novice_N_tot_pred": pred_novice_N,
+            "novice_N_tot_true": true_novice_N,
+            "novice_N_tot_error": abs(pred_novice_N - true_novice_N),
         }
         
         results.append(metrics)
@@ -441,39 +503,175 @@ def main():
     print("Generating Visualization")
     print("="*60)
     
+    # Compute ground truth statistics
+    true_payoffs = [0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8]
+    true_variance = pd.Series(true_payoffs).var()
+    true_range = max(true_payoffs) - min(true_payoffs)
+    
     # Aggregate by cutoff
     cutoff_stats = df_results.groupby('cutoff').agg({
-        'theta_correlation': ['mean', 'std', 'count']
+        'theta_correlation': ['mean', 'std', 'count'],
+        'theta_variance': ['mean', 'std'],
+        'theta_range': ['mean', 'std'],
+        'theta_tot': ['mean', 'std'],
+        'expert_alpha_corr': ['mean', 'std'],
+        'expert_beta_corr': ['mean', 'std'],
+        'novice_alpha_corr': ['mean', 'std'],
+        'novice_beta_corr': ['mean', 'std'],
+        'expert_N_tot_pred': ['mean', 'std'],
+        'novice_N_tot_pred': ['mean', 'std'],
+        'expert_N_tot_error': ['mean', 'std'],
+        'novice_N_tot_error': ['mean', 'std'],
     }).reset_index()
     
     # Flatten column names
     cutoff_stats.columns = ['_'.join(col).strip('_') for col in cutoff_stats.columns.values]
     
-    # Compute standard error
+    # Compute standard errors
     n = cutoff_stats['theta_correlation_count']
     cutoff_stats['theta_correlation_se'] = cutoff_stats['theta_correlation_std'] / (n ** 0.5)
+    cutoff_stats['theta_variance_se'] = cutoff_stats['theta_variance_std'] / (n ** 0.5)
+    cutoff_stats['theta_range_se'] = cutoff_stats['theta_range_std'] / (n ** 0.5)
+    cutoff_stats['theta_tot_se'] = cutoff_stats['theta_tot_std'] / (n ** 0.5)
+    cutoff_stats['expert_alpha_corr_se'] = cutoff_stats['expert_alpha_corr_std'] / (n ** 0.5)
+    cutoff_stats['expert_beta_corr_se'] = cutoff_stats['expert_beta_corr_std'] / (n ** 0.5)
+    cutoff_stats['novice_alpha_corr_se'] = cutoff_stats['novice_alpha_corr_std'] / (n ** 0.5)
+    cutoff_stats['novice_beta_corr_se'] = cutoff_stats['novice_beta_corr_std'] / (n ** 0.5)
+    cutoff_stats['expert_N_tot_pred_se'] = cutoff_stats['expert_N_tot_pred_std'] / (n ** 0.5)
+    cutoff_stats['novice_N_tot_pred_se'] = cutoff_stats['novice_N_tot_pred_std'] / (n ** 0.5)
+    cutoff_stats['expert_N_tot_error_se'] = cutoff_stats['expert_N_tot_error_std'] / (n ** 0.5)
+    cutoff_stats['novice_N_tot_error_se'] = cutoff_stats['novice_N_tot_error_std'] / (n ** 0.5)
     
-    # Create single figure
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.errorbar(
-        cutoff_stats['cutoff'],
-        cutoff_stats['theta_correlation_mean'],
-        yerr=cutoff_stats['theta_correlation_se'],
-        marker='o', capsize=5, capthick=2, linewidth=2
-    )
+    # Create combined 2x4 figure
+    num_arms_K = model_config['num_arms']
+    prior_tot = num_arms_K * (alpha0 + beta0)
+    true_expert_N_ref = df_results['expert_N_tot_true'].mean()
+    true_novice_N_ref = df_results['novice_N_tot_true'].mean()
+    
+    fig, axes = plt.subplots(2, 4, figsize=(28, 12))
+    fig.suptitle('Model Evaluation Summary (error bars = ±1 SE)', fontsize=18, fontweight='bold')
+    
+    # Row 1, Col 0: Theta Prediction Accuracy
+    ax = axes[0, 0]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['theta_correlation_mean'],
+                yerr=cutoff_stats['theta_correlation_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5)
     ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, label='Random (0)')
     ax.axhline(y=0.5, color='green', linestyle='--', alpha=0.5, label='Good (0.5)')
-    ax.set_xlabel('Segment Cutoff (Context Length)', fontsize=12)
-    ax.set_ylabel('Correlation', fontsize=12)
-    ax.set_title('Theta Prediction Accuracy', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Correlation', fontsize=10)
+    ax.set_title('Theta Prediction Accuracy', fontsize=12, fontweight='bold')
     ax.grid(True, alpha=0.3)
-    ax.legend()
+    ax.legend(fontsize=8)
+    
+    # Row 1, Col 1: Theta Variance
+    ax = axes[0, 1]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['theta_variance_mean'],
+                yerr=cutoff_stats['theta_variance_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='orange', label='Predicted')
+    ax.axhline(y=true_variance, color='green', linestyle='--', linewidth=2, alpha=0.7,
+               label=f'True variance ({true_variance:.4f})')
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Variance of Expected Payoffs', fontsize=10)
+    ax.set_title('Theta Prediction Informativeness', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
+    # Row 1, Col 2: Theta Range
+    ax = axes[0, 2]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['theta_range_mean'],
+                yerr=cutoff_stats['theta_range_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='green', label='Predicted')
+    ax.axhline(y=true_range, color='purple', linestyle='--', linewidth=2, alpha=0.7,
+               label=f'True range ({true_range:.2f})')
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Range (max - min)', fontsize=10)
+    ax.set_title('Theta Prediction Range', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
+    # Row 1, Col 3: Theta Tot
+    ax = axes[0, 3]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['theta_tot_mean'],
+                yerr=cutoff_stats['theta_tot_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='blue', label='Predicted')
+    ax.axhline(y=prior_tot, color='red', linestyle='--', linewidth=2, alpha=0.7,
+               label=f'Prior K*(a0+b0) = {prior_tot:.1f}')
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Theta Tot (sum of all a + b)', fontsize=10)
+    ax.set_title('Theta Head Parameter Magnitude', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
+    # Row 2, Col 0: Alpha Correlation
+    ax = axes[1, 0]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['expert_alpha_corr_mean'],
+                yerr=cutoff_stats['expert_alpha_corr_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='blue', label='Expert', alpha=0.8)
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_alpha_corr_mean'],
+                yerr=cutoff_stats['novice_alpha_corr_se'],
+                marker='s', capsize=4, capthick=1.5, linewidth=1.5, color='red', label='Novice', alpha=0.8)
+    ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Correlation', fontsize=10)
+    ax.set_title('Alpha Prediction Accuracy', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
+    # Row 2, Col 1: Beta Correlation
+    ax = axes[1, 1]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['expert_beta_corr_mean'],
+                yerr=cutoff_stats['expert_beta_corr_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='blue', label='Expert', alpha=0.8)
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_beta_corr_mean'],
+                yerr=cutoff_stats['novice_beta_corr_se'],
+                marker='s', capsize=4, capthick=1.5, linewidth=1.5, color='red', label='Novice', alpha=0.8)
+    ax.axhline(y=0, color='black', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Correlation', fontsize=10)
+    ax.set_title('Beta Prediction Accuracy', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
+    # Row 2, Col 2: N_tot Predictions vs Ground Truth
+    ax = axes[1, 2]
+    ax.axhline(y=true_expert_N_ref, color='lightblue', linestyle='--', linewidth=2, alpha=0.7,
+               label=f'True Expert ({true_expert_N_ref:.0f})', zorder=1)
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['expert_N_tot_pred_mean'],
+                yerr=cutoff_stats['expert_N_tot_pred_se'],
+                marker='o', linewidth=1.5, color='blue', label='Pred Expert',
+                markersize=5, capsize=3, alpha=0.8, zorder=3)
+    ax.axhline(y=true_novice_N_ref, color='lightcoral', linestyle='--', linewidth=2, alpha=0.7,
+               label=f'True Novice ({true_novice_N_ref:.0f})', zorder=1)
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_N_tot_pred_mean'],
+                yerr=cutoff_stats['novice_N_tot_pred_se'],
+                marker='s', linewidth=1.5, color='red', label='Pred Novice',
+                markersize=5, capsize=3, alpha=0.8, zorder=3)
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('N_tot (Total Experience)', fontsize=10)
+    ax.set_title('N_tot Predictions vs Ground Truth', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=7)
+    
+    # Row 2, Col 3: N_tot Absolute Error
+    ax = axes[1, 3]
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['expert_N_tot_error_mean'],
+                yerr=cutoff_stats['expert_N_tot_error_se'],
+                marker='o', capsize=4, capthick=1.5, linewidth=1.5, color='blue', label='Expert', alpha=0.8)
+    ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_N_tot_error_mean'],
+                yerr=cutoff_stats['novice_N_tot_error_se'],
+                marker='s', capsize=4, capthick=1.5, linewidth=1.5, color='red', label='Novice', alpha=0.8)
+    ax.set_xlabel('Segment Cutoff', fontsize=10)
+    ax.set_ylabel('Absolute Error in N_tot', fontsize=10)
+    ax.set_title('N_tot Prediction Error', fontsize=12, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    
     plt.tight_layout()
     
-    # Save
-    plot_path = Path(plot_output_dir) / 'theta_accuracy_vs_cutoff.png'
+    plot_path = Path(plot_output_dir) / 'evaluation_summary.png'
     plot_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"\n✓ Saved plot: {plot_path}")
     
