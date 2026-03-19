@@ -25,7 +25,7 @@ from tqdm import tqdm
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
-from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
@@ -60,13 +60,32 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     cols_to_keep = [
         'session_id', 'session_index', 'anonymous_id', 'position', 'action',
         'game', 'game_sequence', 'game_index', 'round_index', 'demonstrator_type', 
-        'demonstrator_trajectory', 'zone_bandit', 'zone_global_index', 
-        'reward_generated'
+        'zone_bandit', 'zone_global_index', 'reward_generated'
     ]
     df_filtered = df_filtered[cols_to_keep]
     
     # Sort by session_id and game_index to maintain temporal order
     df_filtered = df_filtered.sort_values(['session_id', 'round_index', 'game_index']).reset_index(drop=True)
+    
+    # Remove sessions with incomplete round structure
+    expected_rounds = {0, 1, 2}
+    expected_games_per_round = 4  # watch, play, watch, play
+    incomplete_sessions = []
+    for sid in df_filtered['session_id'].unique():
+        sdf = df_filtered[df_filtered['session_id'] == sid]
+        rounds = set(int(r) for r in sdf['round_index'].unique())
+        n_games = sdf['game_index'].nunique()
+        if rounds != expected_rounds or n_games != expected_games_per_round * len(expected_rounds):
+            incomplete_sessions.append(sid)
+    
+    if incomplete_sessions:
+        print(f"\nRemoving {len(incomplete_sessions)} session(s) with incomplete data:")
+        for sid in incomplete_sessions:
+            sdf = df_filtered[df_filtered['session_id'] == sid]
+            rounds = sorted(int(r) for r in sdf['round_index'].unique())
+            n_games = sdf['game_index'].nunique()
+            print(f"  {sid}: rounds={rounds}, games={n_games}")
+        df_filtered = df_filtered[~df_filtered['session_id'].isin(incomplete_sessions)].reset_index(drop=True)
     
     print(f"Filtered to {len(df_filtered)} shot events from {df_filtered['session_id'].nunique()} sessions")
     
@@ -96,7 +115,8 @@ def parse_bandit_payoffs(zone_bandit_str: str) -> List[float]:
     Returns:
         List of payoff probabilities
     """
-    return [float(x) for x in zone_bandit_str.split(',')]
+    cleaned = zone_bandit_str.strip().strip('[]')
+    return [float(x) for x in cleaned.split(',')]
 
 
 def parse_demonstrator_order(game_sequence: str) -> Dict[str, int]:
@@ -210,13 +230,14 @@ def convert_session_to_model_format(
     
     demo_to_agent = {demo_type: idx + 1 for idx, demo_type in enumerate(demo_types)}
     
-    # Build events list: (bandit_id, agent_id, action, reward)
-    # Also add QUERY tokens after each round
+    # Build events list with segment boundaries matching training data format:
+    # Each segment (watch/play game) gets a boundary, plus QUERY tokens at end of each round
     events = []
-    segment_boundaries = [0]  # Start positions of each segment
+    segment_boundaries = [0]
     segment_info = []
     round_boundaries = [0]
     current_round = None
+    current_game_idx = None
     rounds_seen = []
     
     for idx, (_, row) in enumerate(visible_df.iterrows()):
@@ -224,71 +245,89 @@ def convert_session_to_model_format(
         action = int(row['position'])
         reward = 1 if row['reward_generated'] else 0
         
-        # Determine agent_id
         if row['game'] == 'watch':
             agent_id = demo_to_agent[row['demonstrator_type']]
-        else:  # play
-            agent_id = 0  # learner
+            seg_type = "demo"
+        else:
+            agent_id = 0
+            seg_type = "learner"
         
-        # Check if we're starting a new round
         if current_round is None:
             current_round = row['round_index']
+            current_game_idx = row['game_index']
             rounds_seen.append(current_round)
         elif row['round_index'] != current_round:
-            # Add QUERY token at end of previous round
-            # Use -2 in action field to identify as QUERY (vs -1 for BANDIT_SEP)
+            # End of previous segment
+            segment_boundaries.append(len(events))
+            prev_row = visible_df.iloc[idx - 1]
+            prev_agent = demo_to_agent[prev_row['demonstrator_type']] if prev_row['game'] == 'watch' else 0
+            segment_info.append({
+                "round": int(current_round),
+                "type": "demo" if prev_row['game'] == 'watch' else "learner",
+                "agent": prev_agent
+            })
+            
+            # QUERY token at end of previous round
             prev_bandit = int(visible_df.iloc[idx - 1]['bandit_id'])
             events.append((prev_bandit, -1, -2, -1))
             segment_boundaries.append(len(events))
             segment_info.append({
-                'round': current_round,
-                'type': 'query',
-                'bandit': prev_bandit
+                "round": int(current_round),
+                "type": "query",
+                "agent": -1,
+                "bandit": prev_bandit
             })
             
             round_boundaries.append(len(events))
             current_round = row['round_index']
+            current_game_idx = row['game_index']
             rounds_seen.append(current_round)
+        elif row['game_index'] != current_game_idx:
+            # New segment within same round
+            segment_boundaries.append(len(events))
+            prev_row = visible_df.iloc[idx - 1]
+            prev_agent = demo_to_agent[prev_row['demonstrator_type']] if prev_row['game'] == 'watch' else 0
+            segment_info.append({
+                "round": int(current_round),
+                "type": "demo" if prev_row['game'] == 'watch' else "learner",
+                "agent": prev_agent
+            })
+            current_game_idx = row['game_index']
         
         events.append((bandit_id, agent_id, action, reward))
-        
-        # Track segment boundaries (when game_index changes within round)
-        if idx > 0:
-            prev_game_idx = visible_df.iloc[idx - 1]['game_index']
-            prev_round = visible_df.iloc[idx - 1]['round_index']
-            if row['game_index'] != prev_game_idx and row['round_index'] == prev_round:
-                segment_boundaries.append(len(events) - 1)  # Before current event
-                segment_info.append({
-                    'round': int(prev_round),
-                    'game_index': int(prev_game_idx)
-                })
     
-    # Add final segment info
+    # Final segment info for last segment
+    last_row = visible_df.iloc[-1]
+    last_agent = demo_to_agent[last_row['demonstrator_type']] if last_row['game'] == 'watch' else 0
+    segment_boundaries.append(len(events))
     segment_info.append({
-        'round': int(visible_df.iloc[-1]['round_index']),
-        'game_index': int(visible_df.iloc[-1]['game_index'])
+        "round": int(last_row['round_index']),
+        "type": "demo" if last_row['game'] == 'watch' else "learner",
+        "agent": last_agent
     })
     
-    # Add QUERY token at end of last round
-    last_bandit = int(visible_df.iloc[-1]['bandit_id'])
+    # QUERY token at end of last round
+    last_bandit = int(last_row['bandit_id'])
     events.append((last_bandit, -1, -2, -1))
     segment_boundaries.append(len(events))
     segment_info.append({
-        'round': int(visible_df.iloc[-1]['round_index']),
-        'type': 'query',
-        'bandit': last_bandit
+        "round": int(last_row['round_index']),
+        "type": "query",
+        "agent": -1,
+        "bandit": last_bandit
     })
     
     round_boundaries.append(len(events))
     
-    # Get round-bandit mapping
-    round_bandit_map = []
-    for round_idx in sorted(visible_df['round_index'].unique()):
-        round_df = visible_df[visible_df['round_index'] == round_idx]
-        bandit_id = int(round_df.iloc[0]['bandit_id'])
-        round_bandit_map.append(bandit_id)
+    # Round-to-query-index mapping (each round produces one QUERY, indexed 0, 1, 2...)
+    sorted_rounds = sorted(visible_df['round_index'].unique())
+    round_to_index = {r: i for i, r in enumerate(sorted_rounds)}
     
-    # Get bandit payoffs for each unique bandit
+    round_bandit_map = []
+    for round_idx in sorted_rounds:
+        round_df = visible_df[visible_df['round_index'] == round_idx]
+        round_bandit_map.append(int(round_df.iloc[0]['bandit_id']))
+    
     bandits_info = []
     for zone_idx in sorted(zone_to_bandit.keys()):
         zone_df = visible_df[visible_df['zone_global_index'] == zone_idx]
@@ -304,6 +343,7 @@ def convert_session_to_model_format(
         'segment_info': segment_info,
         'round_boundaries': round_boundaries,
         'round_bandit_map': round_bandit_map,
+        'round_to_index': round_to_index,
         'bandits_info': bandits_info,
         'zone_to_bandit': zone_to_bandit,
         'demo_to_agent': demo_to_agent,
@@ -514,175 +554,137 @@ def run_inference_on_session(
         
         # Process games in order
         for game_idx in game_indices:
-        game_df = session_df[session_df['game_index'] == game_idx].copy()
-        
+            game_df = session_df[session_df['game_index'] == game_idx].copy()
+            
             if game_idx in demo_games:
-                # This is a demonstration segment - keep as is
                 for _, row in game_df.iterrows():
                     row_dict = row.to_dict()
-                    # Add metadata columns
                     row_dict['rollout_id'] = rollout_id
                     row_dict['learner_segment_input'] = learner_segment_input
                     row_dict['beta_method'] = beta_method
-                    # Add NaN for beta predictions (no model inference for demos)
                     row_dict['theta_betas'] = np.nan
                     row_dict['expert_betas'] = np.nan
                     row_dict['novice_betas'] = np.nan
                     result_rows.append(row_dict)
-                    
-                    # Add to accumulated events for model context
-                    bandit_id = 0  # Will be properly mapped later
-                    demo_type = row['demonstrator_type']
-                    action = int(row['position'])
-                    reward = 1 if row['reward_generated'] else 0
-                    # Events will be properly formatted when we do inference
                 
                 current_segment_idx += 1
                 
             elif game_idx in learner_games:
-                # This is a learner segment - simulate it using model predictions
-                
-                # Convert accumulated context to model format
                 visible_games = [g for g in game_indices if g < game_idx]
                 
                 if len(visible_games) == 0:
-                    # No context yet, shouldn't happen in proper game sequences
                     print(f"Warning: Learner segment before any demo in session {session_df.iloc[0]['session_id']}")
                     continue
                 
-                # Prepare context: either original human data or combine with simulated data
                 if learner_segment_input == "model" and len(simulated_data_rows) > 0:
-                # Combine original demos with previously simulated learner segments
-                simulated_df = pd.DataFrame(simulated_data_rows)
-                # Keep only demos from original (filter to visible games only)
-                demos_df = session_df[
-                    (session_df['game'] == 'watch') & 
-                    (session_df['game_index'].isin(visible_games))
-                ].copy()
-                # Combine demos and simulated learner data
-                context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
-                # Sort to maintain temporal order
-                context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
-            else:
-                # Use original human data
-                context_df = session_df
-            
-            model_input = convert_session_to_model_format(
-                context_df, 
-                visible_games,
-                num_arms
-            )
-            
-            # Encode to tensors
-            tensors = encode_events_to_tensors(
-                model_input['events'],
-                num_arms,
-                len(model_input['bandits_info']),
-                num_agents,
-                SPECIAL
-            )
-            
-            # Add padding mask (no padding for single sequence)
-            seq_len = tensors['bandit_ids'].shape[1]
-            tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
-            
-            # Move to device
-            for k in tensors:
-                tensors[k] = tensors[k].to(device)
-            
-            # Create segment mask to only see visible segments
-            num_visible_segments = len(visible_games)
-            attn_mask = create_segment_mask(
-                model_input['segment_boundaries'] + [seq_len],  # Add end position
-                num_visible_segments,
-                seq_len,
-                device,
-                masking_strategy=masking_strategy,
-                segment_info=model_input['segment_info'],
-                round_bandit_map=model_input['round_bandit_map']
-            )
-            
-            # Run model inference
-            with torch.no_grad():
-                model.eval()
-                outputs = model(tensors, custom_attn_mask=attn_mask)
-            
-            # Get current bandit info
-            current_round = game_df.iloc[0]['round_index']
-            current_zone = game_df.iloc[0]['zone_global_index']
-            current_bandit_id = model_input['zone_to_bandit'][current_zone]
-            
-            # Extract predictions for the current bandit
-            # outputs are [B, num_queries, K] or [B, num_queries, D, K]
-            # Use current_bandit_id to index into predictions
-            pred_alpha_theta_cur = outputs['alpha_theta'][0, current_bandit_id]  # [K]
-            pred_beta_theta_cur = outputs['beta_theta'][0, current_bandit_id]    # [K]
-            pred_alpha_demo_cur = outputs['alpha_demo'][0, current_bandit_id]    # [D, K]
-            pred_beta_demo_cur = outputs['beta_demo'][0, current_bandit_id]      # [D, K]
-            
-            # Serialize all three types of beta predictions for recording
-            theta_betas_str = serialize_betas(
-                pred_alpha_theta_cur, 
-                pred_beta_theta_cur
-            )
-            
-            novice_demo_idx = demo_order_map['novice']
-            novice_betas_str = serialize_betas(
-                pred_alpha_demo_cur[novice_demo_idx, :],
-                pred_beta_demo_cur[novice_demo_idx, :]
-            )
-            
-            expert_demo_idx = demo_order_map['expert']
-            expert_betas_str = serialize_betas(
-                pred_alpha_demo_cur[expert_demo_idx, :],
-                pred_beta_demo_cur[expert_demo_idx, :]
-            )
-            
-            # Select beta parameters based on beta_method
-            if beta_method == "theta_betas":
-                # Use predicted bandit payoff beliefs (theta)
-                pred_alpha = pred_alpha_theta_cur  # [K]
-                pred_beta = pred_beta_theta_cur    # [K]
-            elif beta_method == "novice_betas":
-                # Use novice demonstrator's beliefs
-                novice_demo_idx = demo_order_map['novice']
-                pred_alpha = pred_alpha_demo_cur[novice_demo_idx, :]  # [K]
-                pred_beta = pred_beta_demo_cur[novice_demo_idx, :]    # [K]
-            elif beta_method == "expert_betas":
-                # Use expert demonstrator's beliefs
-                expert_demo_idx = demo_order_map['expert']
-                pred_alpha = pred_alpha_demo_cur[expert_demo_idx, :]  # [K]
-                pred_beta = pred_beta_demo_cur[expert_demo_idx, :]    # [K]
-            elif beta_method == "recent_betas":
-                # Use the most recent demonstrator's beliefs
-                # Find the last demo segment before current learner
-                last_demo_game_idx = visible_games[-1]  # Most recent visible game
-                last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
-                last_demo_type = last_demo_df.iloc[0]['demonstrator_type']  # 'novice' or 'expert'
+                    simulated_df = pd.DataFrame(simulated_data_rows)
+                    demos_df = session_df[
+                        (session_df['game'] == 'watch') & 
+                        (session_df['game_index'].isin(visible_games))
+                    ].copy()
+                    context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
+                    context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
+                else:
+                    context_df = session_df
                 
-                # Get the model index for this demonstrator
-                recent_demo_idx = demo_order_map[last_demo_type]
-                pred_alpha = pred_alpha_demo_cur[recent_demo_idx, :]  # [K]
-                pred_beta = pred_beta_demo_cur[recent_demo_idx, :]    # [K]
-            else:
-                raise ValueError(f"Unknown beta_method: {beta_method}")
-            
-            # Get current bandit payoffs
-            bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
-            
-            # Run Thompson sampling
-            trajectory = thompson_sampling_step(
-                pred_alpha.cpu(),
-                pred_beta.cpu(),
-                bandit_payoffs,
-                learner_steps
-            )
-            
-                # Create rows for simulated learner segment
+                model_input = convert_session_to_model_format(
+                    context_df, 
+                    visible_games,
+                    num_arms
+                )
+                
+                tensors = encode_events_to_tensors(
+                    model_input['events'],
+                    num_arms,
+                    len(model_input['bandits_info']),
+                    num_agents,
+                    SPECIAL
+                )
+                
+                seq_len = tensors['bandit_ids'].shape[1]
+                tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
+                
+                for k in tensors:
+                    tensors[k] = tensors[k].to(device)
+                
+                num_visible_segments = len(model_input['segment_info'])
+                attn_mask = create_segment_mask(
+                    model_input['segment_boundaries'],
+                    num_visible_segments,
+                    seq_len,
+                    device,
+                    masking_strategy=masking_strategy,
+                    segment_info=model_input['segment_info'],
+                    round_bandit_map=model_input['round_bandit_map']
+                )
+                
+                with torch.no_grad():
+                    model.eval()
+                    outputs = model(tensors, custom_attn_mask=attn_mask)
+                
+                current_round = int(game_df.iloc[0]['round_index'])
+                current_zone = int(game_df.iloc[0]['zone_global_index'])
+                
+                # Use round index to index model outputs (one prediction per QUERY per round)
+                if current_round in model_input['round_to_index']:
+                    current_round_idx = model_input['round_to_index'][current_round]
+                else:
+                    # Incomplete session: current round not in visible context, use last QUERY
+                    print(f"  Warning: Round {current_round} not in visible context for session "
+                          f"{session_df.iloc[0]['session_id']}, game_idx={game_idx}. Using last available QUERY.")
+                    current_round_idx = len(model_input['round_to_index']) - 1
+                
+                pred_alpha_theta_cur = outputs['alpha_theta'][0, current_round_idx]  # [K]
+                pred_beta_theta_cur = outputs['beta_theta'][0, current_round_idx]    # [K]
+                pred_alpha_demo_cur = outputs['alpha_demo'][0, current_round_idx]    # [D, K]
+                pred_beta_demo_cur = outputs['beta_demo'][0, current_round_idx]      # [D, K]
+                
+                theta_betas_str = serialize_betas(pred_alpha_theta_cur, pred_beta_theta_cur)
+                
+                novice_demo_idx = demo_order_map['novice']
+                novice_betas_str = serialize_betas(
+                    pred_alpha_demo_cur[novice_demo_idx, :],
+                    pred_beta_demo_cur[novice_demo_idx, :]
+                )
+                
+                expert_demo_idx = demo_order_map['expert']
+                expert_betas_str = serialize_betas(
+                    pred_alpha_demo_cur[expert_demo_idx, :],
+                    pred_beta_demo_cur[expert_demo_idx, :]
+                )
+                
+                if beta_method == "theta_betas":
+                    pred_alpha = pred_alpha_theta_cur
+                    pred_beta = pred_beta_theta_cur
+                elif beta_method == "novice_betas":
+                    pred_alpha = pred_alpha_demo_cur[demo_order_map['novice'], :]
+                    pred_beta = pred_beta_demo_cur[demo_order_map['novice'], :]
+                elif beta_method == "expert_betas":
+                    pred_alpha = pred_alpha_demo_cur[demo_order_map['expert'], :]
+                    pred_beta = pred_beta_demo_cur[demo_order_map['expert'], :]
+                elif beta_method == "recent_betas":
+                    last_demo_game_idx = max(g for g in visible_games if g in demo_games)
+                    last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
+                    last_demo_type = last_demo_df.iloc[0]['demonstrator_type']
+                    recent_demo_idx = demo_order_map[last_demo_type]
+                    pred_alpha = pred_alpha_demo_cur[recent_demo_idx, :]
+                    pred_beta = pred_beta_demo_cur[recent_demo_idx, :]
+                else:
+                    raise ValueError(f"Unknown beta_method: {beta_method}")
+                
+                bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
+                
+                trajectory = thompson_sampling_step(
+                    pred_alpha.cpu(),
+                    pred_beta.cpu(),
+                    bandit_payoffs,
+                    learner_steps
+                )
+                
                 for step_idx, (action_idx, reward) in enumerate(trajectory):
                     row = {
                         'rollout_id': rollout_id,
-                            'session_id': session_df.iloc[0]['session_id'],
+                        'session_id': session_df.iloc[0]['session_id'],
                         'session_index': session_df.iloc[0]['session_index'],
                         'anonymous_id': session_df.iloc[0]['anonymous_id'],
                         'position': action_idx,
@@ -692,7 +694,6 @@ def run_inference_on_session(
                         'game_index': game_idx,
                         'round_index': current_round,
                         'demonstrator_type': np.nan,
-                        'demonstrator_trajectory': np.nan,
                         'zone_bandit': game_df.iloc[0]['zone_bandit'],
                         'zone_global_index': current_zone,
                         'reward_generated': bool(reward),
@@ -703,12 +704,10 @@ def run_inference_on_session(
                         'novice_betas': novice_betas_str
                     }
                     result_rows.append(row)
-                    # Also store in simulated_data for potential use in next iteration
                     simulated_data_rows.append(row)
                 
                 current_segment_idx += 1
         
-        # Collect results from this rollout
         all_rollout_rows.extend(result_rows)
     
     return pd.DataFrame(all_rollout_rows)
@@ -770,180 +769,145 @@ def main():
     try:
         # Load experiment data
         df = load_and_preprocess_data(args.experiment_data_path)
-    
-    # Check if we have data
-    if len(df) == 0:
-        print("\nERROR: No data after filtering!")
-        print("Please check that:")
-        print("  1. The CSV file has rows where shot==True")
-        print("  2. The game column contains 'watch' or 'play' values")
-        return
-    
-    # Load checkpoint based on source
-    print("\n" + "="*60)
-    print("Loading Model Checkpoint")
-    print("="*60)
-    
-    if args.checkpoint_path:
-        checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
-    elif args.wandb_artifact:
-        download_dir = "checkpoints/wandb_downloads"
-        checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-            args.wandb_artifact, download_dir
-        )
-    elif args.wandb_sweep:
-        download_dir = "checkpoints/wandb_downloads"
-        checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
-            args.wandb_sweep, download_dir
-        )
-    else:
-        raise ValueError("No checkpoint source specified")
-    
-    # Extract model configuration from checkpoint
-    if 'model_config' not in checkpoint:
-        raise ValueError(
-            f"Checkpoint does not contain 'model_config'. "
-            "This checkpoint was saved with an older version of the training script. "
-            "Please retrain your model to generate a checkpoint with the required configuration."
-        )
-    
-    model_config = checkpoint['model_config']
-    
-    print(f"Loaded model configuration from checkpoint:")
-    print(f"  num_arms: {model_config['num_arms']}")
-    print(f"  num_agents: {model_config['num_agents']}")
-    print(f"  num_bandits: {model_config['num_bandits']}")
-    print(f"  num_demonstrators: {model_config['num_demonstrators']}")
-    print(f"  d_model: {model_config['d_model']}")
-    print(f"  nhead: {model_config['nhead']}")
-    print(f"  num_layers: {model_config['num_layers']}")
-    print(f"  dim_feedforward: {model_config['dim_feedforward']}")
-    print(f"  dropout: {model_config['dropout']}")
-    print(f"  T_demo: {model_config['T_demo']}")
-    print(f"  T_learner: {model_config['T_learner']}")
-    
-    # Extract constants from checkpoint to ensure consistency with training
-    SPECIAL = model_config['SPECIAL']
-    LEARNER_RAW_ID = model_config['LEARNER_RAW_ID']
-    print(f"  SPECIAL tokens: {SPECIAL}")
-    print(f"  LEARNER_RAW_ID: {LEARNER_RAW_ID}")
-    
-    # Create model with configuration
-    model = SBIPosteriorTransformer(
-        num_arms=model_config['num_arms'],
-        num_agents=model_config['num_agents'],
-        num_bandits=model_config['num_bandits'],
-        num_demonstrators=model_config['num_demonstrators'],
-        d_model=model_config['d_model'],
-        nhead=model_config['nhead'],
-        num_layers=model_config['num_layers'],
-        dim_feedforward=model_config['dim_feedforward'],
-        dropout=model_config['dropout'],
-        profile_method=profile_method,
-        experience_head_loss_type=experience_head_loss_type,
-        theta_head_input=model_config.get('theta_head_input', 'query_only'),
-        demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
-        experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
-    ).to(device)
-    
-    # Load checkpoint state
-    model.load_state_dict(checkpoint['model_state_dict'])
-    print("Checkpoint loaded successfully!")
-    
-    # Get normalization parameters (required)
-    if 'normalization' not in checkpoint:
-        raise ValueError(
-            "Checkpoint does not contain 'normalization' parameters. "
-            "This checkpoint was saved with an older version of the training script. "
-            "Please retrain your model to generate a checkpoint with the required parameters."
-        )
-    
-    normalization = checkpoint['normalization']
-    alpha0 = normalization['alpha0']
-    beta0 = normalization['beta0']
-    print(f"Using alpha0={alpha0}, beta0={beta0}")
-    
-    # Get masking strategy (from checkpoint or override)
-    if args.masking_strategy_override:
-        masking_strategy = args.masking_strategy_override
-        print(f"\n✓ Using overridden masking strategy: {masking_strategy}")
-    else:
-        masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
-        print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
-    
-    # Get profile method (from checkpoint or override)
-    if args.profile_method_override:
-        profile_method = args.profile_method_override
-        print(f"✓ Using overridden profile method: {profile_method}")
-    else:
-        profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
-        print(f"✓ Using profile method from checkpoint: {profile_method}")
-    
-    experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
-    print(f"✓ Experience head loss type: {experience_head_loss_type}")
-    
-    # Run inference on each session for all 8 combinations
-    print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) × 8 combinations...")
-    print("Combinations: learner_segment_input × beta_method × rollouts")
-    print("  - human × theta_betas")
-    print("  - human × novice_betas")
-    print("  - human × expert_betas")
-    print("  - human × recent_betas")
-    print("  - model × theta_betas")
-    print("  - model × novice_betas")
-    print("  - model × expert_betas")
-    print("  - model × recent_betas")
-    
-    all_results = []
-    
-    # Loop over all combinations
-    for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
-        for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"], 
-                                desc=f"Beta method ({learner_input})", position=1, leave=False):
-            
-            session_ids = df['session_id'].unique()
-            for session_id in tqdm(session_ids, 
-                                  desc=f"Sessions ({learner_input}, {beta_method})", 
-                                  position=2, leave=False):
-                session_df = df[df['session_id'] == session_id].copy()
+        
+        if len(df) == 0:
+            print("\nERROR: No data after filtering!")
+            print("Please check that:")
+            print("  1. The CSV file has rows where shot==True")
+            print("  2. The game column contains 'watch' or 'play' values")
+            return
+        
+        # Load checkpoint
+        print("\n" + "="*60)
+        print("Loading Model Checkpoint")
+        print("="*60)
+        
+        if args.checkpoint_path:
+            checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
+        elif args.wandb_artifact:
+            download_dir = str(run_dir / 'checkpoints' / 'wandb_downloads')
+            checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
+                args.wandb_artifact, download_dir
+            )
+        elif args.wandb_sweep:
+            download_dir = str(run_dir / 'checkpoints' / 'wandb_downloads')
+            checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
+                args.wandb_sweep, download_dir
+            )
+        else:
+            raise ValueError("No checkpoint source specified")
+        
+        if 'model_config' not in checkpoint:
+            raise ValueError("Checkpoint missing 'model_config'")
+        
+        model_config = checkpoint['model_config']
+        
+        print(f"\nModel configuration:")
+        print(f"  num_arms: {model_config['num_arms']}")
+        print(f"  num_agents: {model_config['num_agents']}")
+        print(f"  num_bandits: {model_config['num_bandits']}")
+        print(f"  num_demonstrators: {model_config['num_demonstrators']}")
+        print(f"  d_model: {model_config['d_model']}")
+        print(f"  nhead: {model_config['nhead']}")
+        print(f"  num_layers: {model_config['num_layers']}")
+        
+        SPECIAL = get_special_characters()
+        
+        # Extract config BEFORE model creation to avoid forward-reference
+        masking_strategy = model_config.get('masking_strategy', 'all_bandits')
+        profile_method = model_config.get('profile_method', 'learned_profile')
+        experience_head_loss_type = model_config.get('experience_head_loss_type', 'mse')
+        
+        # Apply overrides if specified
+        if args.masking_strategy_override:
+            masking_strategy = args.masking_strategy_override
+            print(f"  masking_strategy: {masking_strategy} (override)")
+        else:
+            print(f"  masking_strategy: {masking_strategy}")
+        
+        if args.profile_method_override:
+            profile_method = args.profile_method_override
+            print(f"  profile_method: {profile_method} (override)")
+        else:
+            print(f"  profile_method: {profile_method}")
+        
+        print(f"  experience_head_loss_type: {experience_head_loss_type}")
+        
+        model = SBIPosteriorTransformer(
+            num_arms=model_config['num_arms'],
+            num_agents=model_config['num_agents'],
+            num_bandits=model_config['num_bandits'],
+            num_demonstrators=model_config['num_demonstrators'],
+            d_model=model_config['d_model'],
+            nhead=model_config['nhead'],
+            num_layers=model_config['num_layers'],
+            dim_feedforward=model_config['dim_feedforward'],
+            dropout=model_config['dropout'],
+            profile_method=profile_method,
+            experience_head_loss_type=experience_head_loss_type,
+            theta_head_input=model_config.get('theta_head_input', 'query_only'),
+            demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
+            experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
+        ).to(device)
+        
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        print("Model loaded successfully!")
+        
+        if 'normalization' not in checkpoint:
+            raise ValueError("Checkpoint missing 'normalization' parameters")
+        
+        alpha0 = checkpoint['normalization']['alpha0']
+        beta0 = checkpoint['normalization']['beta0']
+        print(f"  alpha0={alpha0}, beta0={beta0}")
+        
+        # Run inference on each session for all 8 combinations
+        print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) x 8 combinations...")
+        
+        all_results = []
+        
+        for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
+            for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"], 
+                                    desc=f"Beta method ({learner_input})", position=1, leave=False):
                 
-                result_df = run_inference_on_session(
-                    session_df,
-                    model,
-                    device,
-                    alpha0,
-                    beta0,
-                    model_config['num_arms'],
-                    model_config['num_agents'],
-                    model_config['T_learner'],
-                    SPECIAL,
-                    learner_segment_input=learner_input,
-                    beta_method=beta_method,
-                    num_rollouts=args.num_rollouts,
-                    seed=args.seed,
-                    masking_strategy=masking_strategy
-                )
-                
-                all_results.append(result_df)
-    
-    # Combine all results
-    print("\nCombining all results...")
-    final_df = pd.concat(all_results, ignore_index=True)
-    
-    # Create output directory if needed
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Save to CSV
-    print(f"\nSaving results to {args.output_path}...")
-    final_df.to_csv(args.output_path, index=False)
-    
+                session_ids = df['session_id'].unique()
+                for session_id in tqdm(session_ids, 
+                                      desc=f"Sessions ({learner_input}, {beta_method})", 
+                                      position=2, leave=False):
+                    session_df = df[df['session_id'] == session_id].copy()
+                    
+                    result_df = run_inference_on_session(
+                        session_df,
+                        model,
+                        device,
+                        alpha0,
+                        beta0,
+                        model_config['num_arms'],
+                        model_config['num_agents'],
+                        model_config['T_learner'],
+                        SPECIAL,
+                        learner_segment_input=learner_input,
+                        beta_method=beta_method,
+                        num_rollouts=args.num_rollouts,
+                        seed=args.seed,
+                        masking_strategy=masking_strategy
+                    )
+                    
+                    all_results.append(result_df)
+        
+        print("\nCombining all results...")
+        final_df = pd.concat(all_results, ignore_index=True)
+        
+        output_path = Path(args.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        print(f"\nSaving results to {args.output_path}...")
+        final_df.to_csv(args.output_path, index=False)
+        
         print(f"\nDone! Generated {len(final_df)} rows for {final_df['session_id'].nunique()} sessions")
-        print(f"  - 8 combinations × {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
-        print(f"  - Rows per combination-rollout: {len(final_df) // (8 * args.num_rollouts)}")
+        print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
         print(f"Output saved to: {args.output_path}")
         
-        # Inference completed successfully
         finalize_run_yaml(run_dir, status='completed')
         print(f"\n{'='*60}")
         print("Inference completed successfully!")
