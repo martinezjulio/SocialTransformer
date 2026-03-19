@@ -8,9 +8,9 @@ source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
 # Set parameters
-EXPERIMENT_DATA_PATH="data/experiment_data/transfer_bandits_choice_textbox/pilot_C/preprocessed_data.csv"
+EXPERIMENT_DATA_PATH="data/experiment_data/transfer_bandits_choice_textbox/pilot_D/preprocessed_data.csv"
 OUTPUT_PATH="data/model_predictions/hybrid_model_predictions.csv"
-DEVICE="cpu"  # Options: cuda, cpu
+DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
 
@@ -30,7 +30,7 @@ SEED=42  # Base random seed for reproducibility
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:v106"
+WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
 CHECKPOINT_SOURCE="wandb_artifact"
 
 # Option 3: Load best model from wandb sweep (uncomment to use)
