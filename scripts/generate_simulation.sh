@@ -12,8 +12,12 @@
 source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
+# Load environment configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.env"
+
 # Auto-increment dataset name
-BASE_DATA_DIR="data"
+BASE_DATA_DIR="${DATA_DIR}"
 
 # Find the highest existing dataset number (start at -1 so first dataset is 00)
 MAX_NUM=-1

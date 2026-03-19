@@ -6,6 +6,10 @@
 source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
+# Load environment configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.env"
+
 # Configuration
 WANDB_ENTITY="juliomartinez-individual"
 WANDB_PROJECT="social-belief-modeling"

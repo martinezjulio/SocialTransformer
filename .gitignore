@@ -1,7 +1,3 @@
-# Symlinks (worktree structure)
-current_run
-data
-
 # Data directories
 neptune/
 datasets/
