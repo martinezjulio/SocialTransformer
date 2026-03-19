@@ -475,7 +475,8 @@ def train_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", type=str, default="data/demonstrations_data_00",
+    parser.add_argument("--dataset_path", type=str,
+                        default=os.environ.get("TRAINING_DATA_DIR", "data/demonstrations_data_00"),
                         help="Path to dataset directory containing dataset_metadata.json and train/val subdirectories")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)

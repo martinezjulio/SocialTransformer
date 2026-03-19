@@ -376,7 +376,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Quick demo for bandit dataloader.")
-    parser.add_argument("--manifest", type=str, default="data/demonstrations_data_01/train/manifest.json", help="Path to a streaming manifest.json")
+    default_manifest = os.path.join(os.environ.get("TRAINING_DATA_DIR", "data/demonstrations_data_01"), "train", "manifest.json")
+    parser.add_argument("--manifest", type=str, default=default_manifest, help="Path to a streaming manifest.json")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--shuffle", action="store_true", help="Shuffle batches")
     parser.add_argument("--num-workers", type=int, default=0)

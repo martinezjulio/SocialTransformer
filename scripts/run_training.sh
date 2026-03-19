@@ -7,10 +7,12 @@
 source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
+# Load environment configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.env"
+
 # Set parameters
-DATASET_NAME="demonstrations_data_04"
-BASE_DATA_DIR="data"
-DATASET_PATH="${BASE_DATA_DIR}/${DATASET_NAME}"
+DATASET_PATH="${TRAINING_DATA_DIR}"
 
 # Model hyperparameters
 BATCH_SIZE=128
@@ -75,7 +77,7 @@ OVERFITTING_WINDOW=15          # Window size for moving average trend detection
 echo "=================================="
 echo "Training Configuration"
 echo "=================================="
-echo "Dataset: $DATASET_NAME"
+echo "Dataset: $DATASET_PATH"
 echo "Dataset path: $DATASET_PATH"
 echo ""
 echo "Model Hyperparameters:"
@@ -114,7 +116,7 @@ echo "  Project: $WANDB_PROJECT"
 echo "  Entity: $WANDB_ENTITY"
 echo ""
 echo "Checkpoints:"
-echo "  Directory: Managed automatically (current_run/runs/<run_id>/checkpoints/)"
+echo "  Directory: Managed automatically (\$EXPERIMENTS_DIR/runs/<run_id>/checkpoints/)"
 echo "  Save every: $SAVE_EVERY epochs"
 echo "  Artifact name: $ARTIFACT_NAME"
 echo ""
@@ -215,7 +217,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Training completed successfully!"
     echo "=================================="
-    echo "Checkpoints saved to: current_run/runs/<run_id>/checkpoints/"
+    echo "Checkpoints saved to: $EXPERIMENTS_DIR/runs/<run_id>/checkpoints/"
     echo "  - best_model.pt (best validation loss)"
     echo "  - final_model.pt (final epoch)"
     if [ "$SAVE_EVERY" -gt 0 ]; then

@@ -6,6 +6,12 @@ from pathlib import Path
 from datetime import datetime
 import yaml
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 def get_special_characters():
     SPECIAL = {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2, "LEARNER_RAW_ID": 99}
     return SPECIAL
@@ -46,8 +52,13 @@ def setup_run_directory(run_id, subdirs=None):
     if subdirs is None:
         subdirs = ['checkpoints', 'logs', 'results', 'results/figures', 'derived']
     
-    # Run directory is under current_run/runs/<run_id>/
-    run_dir = Path('current_run') / 'runs' / run_id
+    experiments_dir = os.environ.get('EXPERIMENTS_DIR')
+    if not experiments_dir:
+        raise RuntimeError(
+            "EXPERIMENTS_DIR environment variable is not set. "
+            "Source the .env file or set EXPERIMENTS_DIR before running."
+        )
+    run_dir = Path(experiments_dir) / 'runs' / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     
     # Create subdirectories

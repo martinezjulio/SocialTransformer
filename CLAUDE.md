@@ -15,6 +15,20 @@ conda activate SocialTransformer
 
 Python 3.11, PyTorch 2.9.1+cu130, wandb for experiment tracking.
 
+## Directory Configuration
+
+Out-of-repo directories (data, experiments) are configured via a `.env` file in the repo root. Copy `.env.example` to `.env` and set absolute paths for your machine:
+
+```bash
+cp .env.example .env
+# Edit .env with your paths:
+#   DATA_DIR=/path/to/data
+#   TRAINING_DATA_DIR=/path/to/data/demonstrations_data_04
+#   EXPERIMENTS_DIR=/path/to/experiments/dev
+```
+
+All shell scripts source `.env` automatically. Python scripts use `EXPERIMENTS_DIR` (via `utils.py`) and fall back to `TRAINING_DATA_DIR` for dataset paths.
+
 ## Common Commands
 
 ```bash
@@ -39,9 +53,6 @@ wandb agent <sweep-id>
 
 # Resume incomplete sweep runs after crash/preemption
 ./scripts/complete_sweep.sh <sweep_id>
-
-# Create production worktree for reproducible experiments
-./scripts/setup_run.sh $(git rev-parse HEAD)
 ```
 
 There is no test suite; validation is done via `eval.py` against held-out test sets.
@@ -75,9 +86,7 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 ### Run Management
 
-All scripts write outputs to `current_run/runs/<run_id>/` where `current_run` is a symlink:
-- Development: points to `experiments/dev/`
-- Production worktrees: points to `experiments/by_commit/<sha>/`
+All scripts write outputs to `$EXPERIMENTS_DIR/runs/<run_id>/` where `EXPERIMENTS_DIR` is set in `.env`.
 
 Run IDs: `wandb_<id>` (with wandb) or `uuid_<10char>` (without). Each run directory contains `checkpoints/`, `logs/`, `results/`, `config.yaml`, `run.yaml`.
 
@@ -94,7 +103,7 @@ Checkpoints store model weights, optimizer/scheduler state, training config, and
 
 Events are tuples `(bandit_id, agent_id, action, reward)`:
 - `agent_id`: 0-N for demonstrators, 99 for learner, -1 for BANDIT_SEP tokens
-- Datasets stored as sharded `.pt` files under `data/demonstrations_data_NN/` with train/val/test splits
+- Datasets stored as sharded `.pt` files under `$DATA_DIR/demonstrations_data_NN/` with train/val/test splits
 - Dataset parameters (K, num_demonstrators, num_rounds) are auto-detected from `manifest.json`
 
 ## W&B Integration

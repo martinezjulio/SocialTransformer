@@ -7,9 +7,13 @@
 source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 
+# Load environment configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../.env"
+
 # Set parameters
-EXPERIMENT_DATA_PATH="data/experiment_data/transfer_bandits_choice_textbox/pilot_D/preprocessed_data.csv"
-OUTPUT_PATH="data/model_predictions/hybrid_model_predictions.csv"
+EXPERIMENT_DATA_PATH="${DATA_DIR}/experiment_data/transfer_bandits_choice_textbox/pilot_D/preprocessed_data.csv"
+OUTPUT_PATH="${DATA_DIR}/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
