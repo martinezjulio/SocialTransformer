@@ -244,18 +244,23 @@ def convert_session_to_model_format(
         bandit_id = int(row['bandit_id'])
         action = int(row['position'])
         reward = 1 if row['reward_generated'] else 0
-        
+
         if row['game'] == 'watch':
             agent_id = demo_to_agent[row['demonstrator_type']]
             seg_type = "demo"
         else:
             agent_id = 0
             seg_type = "learner"
-        
+
         if current_round is None:
             current_round = row['round_index']
             current_game_idx = row['game_index']
             rounds_seen.append(current_round)
+
+            # BANDIT_SEP token at start of first round
+            events.append((bandit_id, -1, -1, -1))
+            segment_boundaries.append(len(events))
+            segment_info.append({"round": int(current_round), "type": "bandit_sep", "agent": -1})
         elif row['round_index'] != current_round:
             # End of previous segment
             segment_boundaries.append(len(events))
@@ -266,7 +271,7 @@ def convert_session_to_model_format(
                 "type": "demo" if prev_row['game'] == 'watch' else "learner",
                 "agent": prev_agent
             })
-            
+
             # QUERY token at end of previous round
             prev_bandit = int(visible_df.iloc[idx - 1]['bandit_id'])
             events.append((prev_bandit, -1, -2, -1))
@@ -277,11 +282,16 @@ def convert_session_to_model_format(
                 "agent": -1,
                 "bandit": prev_bandit
             })
-            
+
             round_boundaries.append(len(events))
             current_round = row['round_index']
             current_game_idx = row['game_index']
             rounds_seen.append(current_round)
+
+            # BANDIT_SEP token at start of new round
+            events.append((bandit_id, -1, -1, -1))
+            segment_boundaries.append(len(events))
+            segment_info.append({"round": int(current_round), "type": "bandit_sep", "agent": -1})
         elif row['game_index'] != current_game_idx:
             # New segment within same round
             segment_boundaries.append(len(events))
@@ -293,7 +303,7 @@ def convert_session_to_model_format(
                 "agent": prev_agent
             })
             current_game_idx = row['game_index']
-        
+
         events.append((bandit_id, agent_id, action, reward))
     
     # Final segment info for last segment

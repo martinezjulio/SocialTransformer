@@ -194,7 +194,7 @@ def save_checkpoint(
     artifact_name: str = "model-checkpoint",
     is_best: bool = False,
     normalizer=None,
-    N_max: float = None,
+    max_experience: float = None,
     alpha0: float = None,
     beta0: float = None,
     demo_belief_loss: str = None,
@@ -237,7 +237,7 @@ def save_checkpoint(
         'val_stats': val_stats,
         'normalization': {
             'belief_norm_factor': normalizer.norm_factor if normalizer else None,
-            'N_max': N_max,
+            'expert_N_max': max_experience,
             'alpha0': alpha0,
             'beta0': beta0,
             'normalize_beliefs': normalizer is not None,
@@ -570,15 +570,23 @@ def main():
         dataset_meta = json.load(f)
     
     # Extract normalization parameters
-    N_max = dataset_meta["parameters"]["N_max"]
-    alpha0 = dataset_meta["parameters"].get("alpha0", 1.0)
-    beta0 = dataset_meta["parameters"].get("beta0", 1.0)
-    
-    print(f"Dataset parameters: N_max={N_max}, alpha0={alpha0}, beta0={beta0}")
+    # expert_N_max is the single source of truth; fall back to N_max for old datasets
+    params = dataset_meta["parameters"]
+    if "expert_N_max" in params:
+        max_experience = params["expert_N_max"]
+    elif "N_max" in params:
+        print("WARNING: dataset uses deprecated 'N_max' key. Consider regenerating with updated scripts.")
+        max_experience = params["N_max"]
+    else:
+        raise ValueError("Dataset metadata missing both 'expert_N_max' and 'N_max'")
+    alpha0 = params.get("alpha0", 1.0)
+    beta0 = params.get("beta0", 1.0)
+
+    print(f"Dataset parameters: max_experience(expert_N_max)={max_experience}, alpha0={alpha0}, beta0={beta0}")
     
     # Create normalizer if needed for the chosen loss
     if requires_normalization(args.demo_belief_loss):
-        normalizer = BeliefNormalizer(N_max, alpha0, beta0)
+        normalizer = BeliefNormalizer(max_experience, alpha0, beta0)
         normalize_beliefs = True
         print(f"Using normalization with factor={normalizer.norm_factor} for loss={args.demo_belief_loss}")
     else:
@@ -669,7 +677,7 @@ def main():
             "demo_beliefs_head_input": args.demo_beliefs_head_input,
             "experience_head_input": args.experience_head_input,
             "normalize_beliefs": normalize_beliefs,
-            "N_max": N_max,
+            "expert_N_max": max_experience,
             "use_scheduler": args.use_scheduler,
             "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
             "min_lr": args.min_lr if args.use_scheduler else None,
@@ -1093,7 +1101,7 @@ def main():
                     artifact_name=args.artifact_name,
                     is_best=True,
                     normalizer=normalizer,
-                    N_max=N_max,
+                    max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
                     demo_belief_loss=args.demo_belief_loss,
@@ -1118,7 +1126,7 @@ def main():
                     artifact_name=args.artifact_name,
                     is_best=False,
                     normalizer=normalizer,
-                    N_max=N_max,
+                    max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
                     demo_belief_loss=args.demo_belief_loss,
@@ -1186,7 +1194,7 @@ def main():
                     artifact_name=args.artifact_name,
                     is_best=False,
                     normalizer=normalizer,
-                    N_max=N_max,
+                    max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
                     demo_belief_loss=args.demo_belief_loss,
@@ -1220,7 +1228,7 @@ def main():
                 artifact_name=args.artifact_name,
                 is_best=False,
                 normalizer=normalizer,
-                N_max=N_max,
+                max_experience=max_experience,
                 alpha0=alpha0,
                 beta0=beta0,
                 demo_belief_loss=args.demo_belief_loss,

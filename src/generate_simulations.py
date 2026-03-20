@@ -152,7 +152,6 @@ def simulate_rounds_run(
     T_learner: int = 6,
     alpha0: float = 1.0,
     beta0: float = 1.0,
-    N_max: int = 72,
     demo_strategy: str = "uniform_thompson",
     expert_N_min: int = 60,
     expert_N_max: int = 72,
@@ -161,7 +160,7 @@ def simulate_rounds_run(
 ) -> Dict:
     """
     Simulate a run with multiple rounds of alternating demonstrators and learner.
-    
+
     Args:
         K: number of arms
         num_demonstrators: number of local demonstrators (1, 2, or more)
@@ -172,10 +171,9 @@ def simulate_rounds_run(
         T_demo: timesteps per demonstrator segment
         T_learner: timesteps per learner segment
         alpha0, beta0: prior parameters
-        N_max: maximum pre-episode experience
         demo_strategy: "uniform_thompson", "expert_novice_thompson", or "expert_thompson_novice_random"
         expert_N_min: minimum N_tot for experts (used in expert_novice strategies)
-        expert_N_max: maximum N_tot for experts (used in expert_novice strategies)
+        expert_N_max: maximum N_tot for experts / max experience for uniform_thompson
         bandit_strategy: "sample" for random Beta sampling, "permute" for fixed payoffs permuted
         bandit_payoffs: Fixed payoff values to permute (required if bandit_strategy="permute", must have length K)
     
@@ -200,9 +198,9 @@ def simulate_rounds_run(
     demo_strategies = {}  # Track which strategy each demonstrator uses
     
     if demo_strategy == "uniform_thompson":
-        # Current behavior: random N_tot for all demonstrators
+        # Random N_tot for all demonstrators, sampled from [0, expert_N_max]
         for demo_id in range(num_demonstrators):
-            demo_N_tots[demo_id] = int(torch.randint(low=0, high=N_max + 1, size=(1,)).item())
+            demo_N_tots[demo_id] = int(torch.randint(low=0, high=expert_N_max + 1, size=(1,)).item())
             demo_strategies[demo_id] = "thompson"
     
     elif demo_strategy in ["expert_novice_thompson", "expert_thompson_novice_random"]:
@@ -382,7 +380,6 @@ def simulate_rounds_run(
             "T_learner": T_learner,
             "alpha0": alpha0,
             "beta0": beta0,
-            "N_max": N_max,
             "demo_strategy": demo_strategy,
             "expert_N_min": expert_N_min,
             "expert_N_max": expert_N_max,
@@ -450,7 +447,6 @@ def generate_dataset_streaming(
     T_learner: int = 6,
     alpha0: float = 1.0,
     beta0: float = 1.0,
-    N_max: int = 72,
     demo_strategy: str = "uniform_thompson",
     expert_N_min: int = 60,
     expert_N_max: int = 72,
@@ -497,7 +493,6 @@ def generate_dataset_streaming(
             "T_learner": T_learner,
             "alpha0": alpha0,
             "beta0": beta0,
-            "N_max": N_max,
             "demo_strategy": demo_strategy,
             "expert_N_min": expert_N_min,
             "expert_N_max": expert_N_max,
@@ -530,7 +525,6 @@ def generate_dataset_streaming(
             T_learner=T_learner,
             alpha0=alpha0,
             beta0=beta0,
-            N_max=N_max,
             demo_strategy=demo_strategy,
             expert_N_min=expert_N_min,
             expert_N_max=expert_N_max,
@@ -557,7 +551,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=str, default="data")
     parser.add_argument("--K", type=int, default=12)
-    parser.add_argument("--N_max", type=int, default=72)
     parser.add_argument("--num_demonstrators", type=int, default=2)
     parser.add_argument("--num_rounds", type=int, default=3)
     parser.add_argument("--change_bandits_with_rounds", action="store_true", default=True)
@@ -604,7 +597,6 @@ if __name__ == "__main__":
         order=args.order,
         T_demo=args.T_demo,
         T_learner=args.T_learner,
-        N_max=args.N_max,
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
@@ -624,7 +616,6 @@ if __name__ == "__main__":
         order=args.order,
         T_demo=args.T_demo,
         T_learner=args.T_learner,
-        N_max=args.N_max,
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
@@ -644,7 +635,6 @@ if __name__ == "__main__":
         order=args.order,
         T_demo=args.T_demo,
         T_learner=args.T_learner,
-        N_max=args.N_max,
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
