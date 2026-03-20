@@ -122,3 +122,6 @@ experiments/
 
 # Cursor files
 .cursor/
+
+# Guides
+guides/

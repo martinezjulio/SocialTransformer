@@ -423,10 +423,18 @@ def main():
     # Get normalization parameters
     normalizer = None
     if 'normalization' in checkpoint and checkpoint['normalization'].get('normalize_beliefs', False):
+        norm_dict = checkpoint['normalization']
+        if 'expert_N_max' in norm_dict:
+            max_exp = norm_dict['expert_N_max']
+        elif 'N_max' in norm_dict:
+            print("WARNING: checkpoint uses deprecated 'N_max' key in normalization dict.")
+            max_exp = norm_dict['N_max']
+        else:
+            raise ValueError("Checkpoint normalization missing both 'expert_N_max' and 'N_max'")
         normalizer = BeliefNormalizer(
-            N_max=checkpoint['normalization']['N_max'],
-            alpha0=checkpoint['normalization']['alpha0'],
-            beta0=checkpoint['normalization']['beta0']
+            max_experience=max_exp,
+            alpha0=norm_dict['alpha0'],
+            beta0=norm_dict['beta0']
         )
         print("✓ Using belief normalization")
     

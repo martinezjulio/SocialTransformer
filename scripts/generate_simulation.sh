@@ -46,7 +46,6 @@ echo ""
 
 # Set parameters
 K=12
-N_MAX=72
 NUM_DEMONSTRATORS=2
 NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
@@ -79,7 +78,6 @@ echo "Validation runs: $NUM_VALID_RUNS"
 echo "Test runs: $NUM_TEST_RUNS"
 echo "T_demo: $T_DEMO"
 echo "T_learner: $T_LEARNER"
-echo "N_max: $N_MAX"
 echo "Demo strategy: $DEMO_STRATEGY"
 echo "Expert N_min: $EXPERT_N_MIN"
 echo "Expert N_max: $EXPERT_N_MAX"
@@ -101,7 +99,6 @@ echo "Starting data generation..."
 python src/generate_simulations.py \
     --out "$OUT_DIR" \
     --K $K \
-    --N_max $N_MAX \
     --num_demonstrators $NUM_DEMONSTRATORS \
     --num_rounds $NUM_ROUNDS \
     $CHANGE_BANDITS_FLAG \
@@ -140,7 +137,6 @@ if [ $? -eq 0 ]; then
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "parameters": {
     "K": $K,
-    "N_max": $N_MAX,
     "num_demonstrators": $NUM_DEMONSTRATORS,
     "num_rounds": $NUM_ROUNDS,
     "change_bandits_with_rounds": $CHANGE_BANDITS_WITH_ROUNDS,
