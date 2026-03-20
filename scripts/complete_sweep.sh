@@ -10,10 +10,6 @@ conda activate SocialTransformer
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
 
-# Configuration
-WANDB_ENTITY="juliomartinez-individual"
-WANDB_PROJECT="social-belief-modeling"
-
 # Check if sweep ID provided
 if [ -z "$1" ]; then
     echo "=================================="

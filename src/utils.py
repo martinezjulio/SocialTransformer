@@ -64,11 +64,7 @@ def setup_run_directory(run_id, subdirs=None):
     # Create subdirectories
     for subdir in subdirs:
         (run_dir / subdir).mkdir(parents=True, exist_ok=True)
-    
-    # Create wandb directory if this is a wandb run
-    if run_id.startswith('wandb_'):
-        (run_dir / 'wandb').mkdir(exist_ok=True)
-    
+
     return run_dir
 
 
