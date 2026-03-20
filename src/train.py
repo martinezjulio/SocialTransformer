@@ -483,8 +483,8 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
-    parser.add_argument("--wandb_project", type=str, default="social-belief-modeling", help="W&B project name")
-    parser.add_argument("--wandb_entity", type=str, default="juliomartinez-individual", help="W&B user name or team name")
+    parser.add_argument("--wandb_project", type=str, default=os.environ.get("WANDB_PROJECT", "social-belief-modeling"), help="W&B project name")
+    parser.add_argument("--wandb_entity", type=str, default=os.environ.get("WANDB_ENTITY", "juliomartinez-individual"), help="W&B user name or team name")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--save_every", type=int, default=0, help="Save checkpoint every N epochs (0 = only save best and final)")
     parser.add_argument("--artifact_name", type=str, default="sbi-transformer", help="Name for wandb artifact")
@@ -613,91 +613,104 @@ def main():
     
     # Initialize wandb if requested
     if args.use_wandb:
-        # Determine run ID and resume mode for checkpoint resumption
-        run_id = None
+        # Pre-determine wandb run ID so we can create run_dir before wandb.init()
+        in_sweep = wandb.run is not None
         resume_mode = "never"
-        
-        if args.resume_from_checkpoint and args.resume_run:
-            # When resuming same run, use the checkpoint reference as run ID (if from wandb)
+
+        if in_sweep:
+            # Sweep agent already called wandb.init()
+            wandb_run_id = wandb.run.id
+        elif args.resume_from_checkpoint and args.resume_run:
             if args.checkpoint_source == "wandb":
-                run_id = args.resume_from_checkpoint
+                wandb_run_id = args.resume_from_checkpoint
                 resume_mode = "allow"
-                print(f"Will resume wandb run: {run_id}")
+                print(f"Will resume wandb run: {wandb_run_id}")
             else:
-                # For local checkpoints with --resume_run, warn user
                 print("Warning: --resume_run with local checkpoint creates new run (cannot extract run ID from local file)")
-        
-        # When running in a sweep, wandb.init() is already called by the sweep agent
-        # We pass entity and project only if not already in a sweep context
-        run = wandb.init(
-            id=run_id,
-            resume=resume_mode,
-            entity=args.wandb_entity if not wandb.run else None,
-            project=args.wandb_project if not wandb.run else None,
-            config={
-                "learning_rate": args.lr,
-                "optimizer": args.optimizer,
-                "weight_decay": args.weight_decay,
-                "architecture": "SBIPosteriorTransformer",
-                "dataset_path": args.dataset_path,
-                "epochs": args.epochs,
-                "batch_size": args.batch_size,
-                "num_arms": num_arms,
-                "num_demonstrators": num_demonstrators,
-                "num_agents": num_agents,
-                "num_bandits": num_bandits,
-                "num_rounds": num_rounds,
-                "dropout": args.dropout,
-                "nhead": args.nhead,
-                "num_layers": args.num_layers,
-                "dim_feedforward": args.dim_feedforward,
-                "d_model": args.d_model,
-                "demo_loss_weight": args.demo_loss_weight,
-                "demo_belief_loss": args.demo_belief_loss,
-                "experience_loss_weight": args.experience_loss_weight,
-                "masking_strategy": args.masking_strategy,
-                "profile_method": args.profile_method,
-                "experience_head_loss_weight": args.experience_head_loss_weight,
-                "experience_head_loss_type": args.experience_head_loss_type,
-                "expert_threshold": args.expert_threshold,
-                "theta_head_input": args.theta_head_input,
-                "demo_beliefs_head_input": args.demo_beliefs_head_input,
-                "experience_head_input": args.experience_head_input,
-                "normalize_beliefs": normalize_beliefs,
-                "N_max": N_max,
-                "use_scheduler": args.use_scheduler,
-                "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
-                "min_lr": args.min_lr if args.use_scheduler else None,
-                "scheduler_type": args.scheduler if args.use_scheduler else None,
-                "patience": args.patience if (args.use_scheduler and args.scheduler == "plateau") else None,
-                "factor": args.factor if (args.use_scheduler and args.scheduler == "plateau") else None,
-                "overfitting_threshold": args.overfitting_threshold if args.overfitting_threshold > 0 else None,
-                "overfitting_patience": args.overfitting_patience,
-                "overfitting_window": args.overfitting_window,
-            },
-        )
+                wandb_run_id = wandb.util.generate_id()
+        else:
+            wandb_run_id = wandb.util.generate_id()
+
+        # Create run directory with minimal structure before wandb.init()
+        run_id = f"wandb_{wandb_run_id}"
+        run_dir = setup_run_directory(run_id, subdirs=['checkpoints', 'wandb'])
+        print(f"Run directory: {run_dir}")
+        print(f"Run ID: {run_id}")
+
+        # Build wandb config dict
+        wandb_config = {
+            "learning_rate": args.lr,
+            "optimizer": args.optimizer,
+            "weight_decay": args.weight_decay,
+            "architecture": "SBIPosteriorTransformer",
+            "dataset_path": args.dataset_path,
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "num_arms": num_arms,
+            "num_demonstrators": num_demonstrators,
+            "num_agents": num_agents,
+            "num_bandits": num_bandits,
+            "num_rounds": num_rounds,
+            "dropout": args.dropout,
+            "nhead": args.nhead,
+            "num_layers": args.num_layers,
+            "dim_feedforward": args.dim_feedforward,
+            "d_model": args.d_model,
+            "demo_loss_weight": args.demo_loss_weight,
+            "demo_belief_loss": args.demo_belief_loss,
+            "experience_loss_weight": args.experience_loss_weight,
+            "masking_strategy": args.masking_strategy,
+            "profile_method": args.profile_method,
+            "experience_head_loss_weight": args.experience_head_loss_weight,
+            "experience_head_loss_type": args.experience_head_loss_type,
+            "expert_threshold": args.expert_threshold,
+            "theta_head_input": args.theta_head_input,
+            "demo_beliefs_head_input": args.demo_beliefs_head_input,
+            "experience_head_input": args.experience_head_input,
+            "normalize_beliefs": normalize_beliefs,
+            "N_max": N_max,
+            "use_scheduler": args.use_scheduler,
+            "warmup_epochs": args.warmup_epochs if args.use_scheduler else None,
+            "min_lr": args.min_lr if args.use_scheduler else None,
+            "scheduler_type": args.scheduler if args.use_scheduler else None,
+            "patience": args.patience if (args.use_scheduler and args.scheduler == "plateau") else None,
+            "factor": args.factor if (args.use_scheduler and args.scheduler == "plateau") else None,
+            "overfitting_threshold": args.overfitting_threshold if args.overfitting_threshold > 0 else None,
+            "overfitting_patience": args.overfitting_patience,
+            "overfitting_window": args.overfitting_window,
+        }
+
+        if in_sweep:
+            # Sweep already initialized wandb; just update config
+            wandb.config.update(wandb_config, allow_val_change=True)
+            run = wandb.run
+        else:
+            run = wandb.init(
+                id=wandb_run_id,
+                resume=resume_mode,
+                entity=args.wandb_entity,
+                project=args.wandb_project,
+                dir=str(run_dir),
+                config=wandb_config,
+            )
     else:
         run = None
-    
-    # Set up run directory structure
-    run_id = get_run_id(use_wandb=args.use_wandb, wandb_run=run)
-    run_dir = setup_run_directory(run_id)
-    print(f"Run directory: {run_dir}")
-    print(f"Run ID: {run_id}")
-    
-    # Write run metadata
-    metadata = {
-        'run_id': run_id,
-        'script': 'train.py',
-        'command': ' '.join(sys.argv),
-        'dataset_path': args.dataset_path,
-    }
-    if args.use_wandb and run:
-        metadata['wandb_url'] = run.get_url()
-        metadata['wandb_id'] = run.id
-    write_run_yaml(run_dir, metadata)
-    write_config_yaml(run_dir, vars(args))
-    
+
+        # Non-wandb: full directory structure with metadata files
+        run_id = get_run_id(use_wandb=False)
+        run_dir = setup_run_directory(run_id)
+        print(f"Run directory: {run_dir}")
+        print(f"Run ID: {run_id}")
+
+        metadata = {
+            'run_id': run_id,
+            'script': 'train.py',
+            'command': ' '.join(sys.argv),
+            'dataset_path': args.dataset_path,
+        }
+        write_run_yaml(run_dir, metadata)
+        write_config_yaml(run_dir, vars(args))
+
     # Update checkpoint directory to use run directory
     args.checkpoint_dir = str(run_dir / 'checkpoints')
     print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
@@ -1211,22 +1224,25 @@ def main():
             print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
         
         # Training completed successfully
-        finalize_run_yaml(run_dir, status='completed')
+        if not args.use_wandb:
+            finalize_run_yaml(run_dir, status='completed')
         print(f"\n{'='*50}")
         print("Training completed successfully!")
         print(f"{'='*50}")
-        
+
     except KeyboardInterrupt:
         print(f"\n{'='*50}")
         print("Training interrupted by user")
         print(f"{'='*50}")
-        finalize_run_yaml(run_dir, status='interrupted')
+        if not args.use_wandb:
+            finalize_run_yaml(run_dir, status='interrupted')
         raise
     except Exception as e:
         print(f"\n{'='*50}")
         print(f"Training failed with error: {e}")
         print(f"{'='*50}")
-        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        if not args.use_wandb:
+            finalize_run_yaml(run_dir, status='failed', error=str(e))
         raise
 
 

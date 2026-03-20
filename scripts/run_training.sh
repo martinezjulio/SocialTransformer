@@ -44,10 +44,6 @@ THETA_HEAD_INPUT="query_only"  # Options: query_only, query_and_profiles
 DEMO_BELIEFS_HEAD_INPUT="profiles_only"  # Options: query_only, profiles_only, query_and_profiles
 EXPERIENCE_HEAD_INPUT="profiles_only"  # Options: query_only, profiles_only, query_and_profiles
 
-# Weights & Biases configuration
-WANDB_PROJECT="social-belief-modeling"
-WANDB_ENTITY="juliomartinez-individual"
-
 # Checkpoint configuration
 # Note: Checkpoint directory is now managed automatically by train.py
 ARTIFACT_NAME="sbi-transformer"

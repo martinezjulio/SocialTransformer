@@ -10,10 +10,6 @@ conda activate SocialTransformer
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
 
-# Default configuration
-WANDB_PROJECT="social-belief-modeling"
-WANDB_ENTITY="juliomartinez-individual"
-
 # Parse arguments
 CHECKPOINT=""
 SOURCE=""
