@@ -3,6 +3,7 @@ import argparse
 from typing import Dict
 import math
 import os
+import time
 import sys
 import json
 import random
@@ -693,6 +694,13 @@ def main():
                 dir=str(run_dir),
                 config=wandb_config,
             )
+
+        # Define metric axes: epoch uses wall-clock timestamp, everything else uses epoch
+        wandb.define_metric("timestamp", hidden=True)
+        wandb.define_metric("epoch", step_metric="timestamp")
+        wandb.define_metric("train/*", step_metric="epoch")
+        wandb.define_metric("val/*", step_metric="epoch")
+        wandb.define_metric("learning_rate", step_metric="epoch")
     else:
         run = None
 
@@ -1035,6 +1043,7 @@ def main():
                 # Log both train and val metrics together
                 if run is not None:
                     log_dict = {
+                        "timestamp": time.time(),
                         "train/loss": stats['loss'],
                         "train/loss_theta": stats['loss_theta'],
                         "train/loss_demo": stats['loss_demo'],
