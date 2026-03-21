@@ -27,7 +27,7 @@ from models.BetaModel import SBIPosteriorTransformer
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
 from dataloader import BanditSequenceDataset
-from utils import get_special_characters, get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_special_characters, setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 # Set style for plots
 sns.set_style("whitegrid")
@@ -627,27 +627,24 @@ def main():
     
     args = parser.parse_args()
     
-    # Set up run directory structure (eval doesn't use wandb)
-    run_id = get_run_id(use_wandb=False)
-    run_dir = setup_run_directory(run_id)
-    print(f"Run directory: {run_dir}")
-    print(f"Run ID: {run_id}")
-    
+    # Set up eval directory structure
+    eval_dir = setup_eval_directory()
+    print(f"Eval directory: {eval_dir}")
+
     # Write run metadata
     metadata = {
-        'run_id': run_id,
         'script': 'eval.py',
         'command': ' '.join(sys.argv),
         'test_manifest': args.test_manifest,
     }
-    write_run_yaml(run_dir, metadata)
-    write_config_yaml(run_dir, vars(args))
-    
-    # Update output paths to use run directory if they're still defaults
+    write_run_yaml(eval_dir, metadata, subdir='metadata')
+    write_config_yaml(eval_dir, vars(args), subdir='metadata')
+
+    # Set output paths to eval directory
     if args.output_path == "data/evaluation/test_evaluation.csv":
-        args.output_path = str(run_dir / 'results' / 'evaluation' / 'test_evaluation.csv')
+        args.output_path = str(eval_dir / 'data' / 'test_evaluation.csv')
     if args.plot_output_dir == "figures/evaluation":
-        args.plot_output_dir = str(run_dir / 'results' / 'figures' / 'evaluation')
+        args.plot_output_dir = str(eval_dir / 'figures')
     
     # Set device
     device = torch.device(args.device)
@@ -662,14 +659,12 @@ def main():
     if args.checkpoint_path:
         checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
     elif args.wandb_artifact:
-        download_dir = "checkpoints/wandb_downloads"
         checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-            args.wandb_artifact, download_dir
+            args.wandb_artifact, str(get_training_runs_dir())
         )
     elif args.wandb_sweep:
-        download_dir = "checkpoints/wandb_downloads"
         checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
-            args.wandb_sweep, download_dir
+            args.wandb_sweep, str(get_training_runs_dir())
         )
     else:
         raise ValueError("No checkpoint source specified")
@@ -867,7 +862,7 @@ def main():
             print("\nSkipping visualization (--skip_plot flag set)")
         
         # Evaluation completed successfully
-        finalize_run_yaml(run_dir, status='completed')
+        finalize_run_yaml(eval_dir, status='completed', subdir='metadata')
         print(f"\n{'='*60}")
         print("Evaluation completed successfully!")
         print(f"{'='*60}")
@@ -876,13 +871,13 @@ def main():
         print(f"\n{'='*60}")
         print("Evaluation interrupted by user")
         print(f"{'='*60}")
-        finalize_run_yaml(run_dir, status='interrupted')
+        finalize_run_yaml(eval_dir, status='interrupted', subdir='metadata')
         raise
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"Evaluation failed with error: {e}")
         print(f"{'='*60}")
-        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        finalize_run_yaml(eval_dir, status='failed', subdir='metadata', error=str(e))
         raise
 
 

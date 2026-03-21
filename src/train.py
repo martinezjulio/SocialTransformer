@@ -18,7 +18,7 @@ from dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_ba
 from models.BetaModel import SBIPosteriorTransformer
 from transforms import BeliefNormalizer
 from losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log, get_experience_head_loss
-from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_run_id, setup_training_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_training_runs_dir
 
 import wandb
 
@@ -47,17 +47,16 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None, download_dir="checkpoints"):
+def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None):
     """
     Load checkpoint from local path or wandb artifact.
-    
+
     Args:
         checkpoint_ref: Local file path or wandb run ID
         source: 'local' or 'wandb'
         entity: Wandb entity (required if source='wandb')
         project: Wandb project (required if source='wandb')
-        download_dir: Directory for downloads
-        
+
     Returns:
         checkpoint dict
     """
@@ -67,41 +66,54 @@ def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None
         print(f"Loading checkpoint from local file: {checkpoint_ref}")
         checkpoint = torch.load(checkpoint_ref, map_location='cpu')
         return checkpoint
-        
+
     elif source == "wandb":
         if not entity or not project:
             raise ValueError("entity and project required for wandb source")
-        
+
         print(f"Loading checkpoint from wandb run: {checkpoint_ref}")
         api = wandb.Api()
         run = api.run(f"{entity}/{project}/{checkpoint_ref}")
-        
+
         # Get model artifacts
         artifacts = [a for a in run.logged_artifacts() if a.type == 'model']
         if not artifacts:
             raise ValueError(f"No model artifacts found for run {checkpoint_ref}")
-        
+
         # Download latest artifact (or 'best' if available)
         best_artifact = None
         for artifact in artifacts:
             if 'best' in artifact.aliases:
                 best_artifact = artifact
                 break
-        
+
         artifact_to_use = best_artifact if best_artifact else artifacts[-1]
         print(f"Downloading artifact: {artifact_to_use.name}")
-        
-        local_dir = os.path.join(download_dir, checkpoint_ref)
+
+        # Cache under training_runs/wandb_<run_id>/checkpoints/
+        local_dir = str(get_training_runs_dir() / f"wandb_{checkpoint_ref}" / "checkpoints")
+
+        # Check cache
+        if os.path.exists(local_dir):
+            cached_files = [f for f in os.listdir(local_dir) if f.endswith('.pt')]
+            if cached_files:
+                checkpoint_path = os.path.join(local_dir, cached_files[0])
+                print(f"Using cached checkpoint: {checkpoint_path}")
+                checkpoint = torch.load(checkpoint_path, map_location='cpu')
+                print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
+                return checkpoint
+
+        os.makedirs(local_dir, exist_ok=True)
         artifact_dir = artifact_to_use.download(root=local_dir)
-        
+
         # Find checkpoint file
         checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
         if not checkpoint_files:
             raise FileNotFoundError(f"No .pt file in artifact directory")
-        
+
         checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        
+
         print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
         return checkpoint
 
@@ -642,7 +654,7 @@ def main():
 
         # Create run directory with minimal structure before wandb.init()
         run_id = f"wandb_{wandb_run_id}"
-        run_dir = setup_run_directory(run_id, subdirs=['checkpoints', 'wandb'])
+        run_dir = setup_training_run_directory(run_id, subdirs=['checkpoints', 'wandb'])
         print(f"Run directory: {run_dir}")
         print(f"Run ID: {run_id}")
 
@@ -714,7 +726,7 @@ def main():
 
         # Non-wandb: full directory structure with metadata files
         run_id = get_run_id(use_wandb=False)
-        run_dir = setup_run_directory(run_id)
+        run_dir = setup_training_run_directory(run_id)
         print(f"Run directory: {run_dir}")
         print(f"Run ID: {run_id}")
 

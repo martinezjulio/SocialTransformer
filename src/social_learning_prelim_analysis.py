@@ -8,7 +8,7 @@ from scipy.stats import entropy
 import matplotlib.pyplot as plt
 from typing import List
 from pathlib import Path
-from utils import get_run_id, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import setup_analysis_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 class Bandit: 
     def __init__(self, payoffs: List[float]):
@@ -410,14 +410,14 @@ def run_social_learning_analysis(run_dir, config):
     prior_alphas = np.ones(K)
     prior_betas = np.ones(K)
     
-    # Setup output paths
-    results_dir = run_dir / 'results'
-    figures_dir = results_dir / 'figures'
-    raw_csv = results_dir / 'social_learning_analysis.csv'
-    plot_csv = results_dir / 'social_learning_analysis_plot_data.csv'
-    
+    # Setup output paths (run_dir is the analysis directory with data/figures/metadata)
+    data_dir = run_dir / 'data'
+    figures_dir = run_dir / 'figures'
+    raw_csv = data_dir / 'social_learning_analysis.csv'
+    plot_csv = data_dir / 'social_learning_analysis_plot_data.csv'
+
     # Create only the directories we need
-    results_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Starting social learning analysis...")
@@ -608,40 +608,36 @@ def main():
         np.random.seed(config['seed'])
         print(f"Random seed set to {config['seed']}")
     
-    # Setup run directory
-    run_id = get_run_id(use_wandb=False)
-    run_dir = Path('current_run') / 'runs' / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Run ID: {run_id}")
-    print(f"Run directory: {run_dir}")
-    
+    # Setup analysis directory
+    analysis_dir = setup_analysis_directory()
+
+    print(f"Analysis directory: {analysis_dir}")
+
     # Write config and run metadata
-    write_config_yaml(run_dir, config)
-    
+    write_config_yaml(analysis_dir, config, subdir='metadata')
+
     metadata = {
-        'run_id': run_id,
         'command': ' '.join(sys.argv),
     }
-    write_run_yaml(run_dir, metadata)
-    
+    write_run_yaml(analysis_dir, metadata, subdir='metadata')
+
     try:
         # Run analysis
-        run_social_learning_analysis(run_dir, config)
-        
+        run_social_learning_analysis(analysis_dir, config)
+
         # Mark as completed
-        finalize_run_yaml(run_dir, status='completed')
-        
+        finalize_run_yaml(analysis_dir, status='completed', subdir='metadata')
+
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
-        finalize_run_yaml(run_dir, status='interrupted')
+        finalize_run_yaml(analysis_dir, status='interrupted', subdir='metadata')
         sys.exit(1)
-        
+
     except Exception as e:
         print(f"\n\nError: {e}")
         import traceback
         traceback.print_exc()
-        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        finalize_run_yaml(analysis_dir, status='failed', subdir='metadata', error=str(e))
         sys.exit(1)
 
 

@@ -30,7 +30,7 @@ from models.BetaModel import SBIPosteriorTransformer
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
 from dataloader import BanditSequenceDataset
-from utils import get_special_characters, get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml
+from utils import get_special_characters, setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 SPECIAL = get_special_characters()
 
@@ -347,20 +347,17 @@ def main():
 
     args = parser.parse_args()
 
-    run_id = get_run_id(use_wandb=False)
-    run_dir = setup_run_directory(run_id)
-    print(f"Run directory: {run_dir}")
-    print(f"Run ID: {run_id}")
+    eval_dir = setup_eval_directory()
+    print(f"Eval directory: {eval_dir}")
     metadata = {
-        'run_id': run_id,
-        'script': 'eval.py',
+        'script': 'eval2.py',
         'command': ' '.join(sys.argv),
         'test_manifest': args.test_manifest,
     }
-    write_run_yaml(run_dir, metadata)
-    write_config_yaml(run_dir, vars(args))
-    output_path = str(run_dir / 'results' / 'evaluation' / 'test_evaluation.csv')
-    plot_output_dir = str(run_dir / 'results' / 'figures' / 'evaluation')
+    write_run_yaml(eval_dir, metadata, subdir='metadata')
+    write_config_yaml(eval_dir, vars(args), subdir='metadata')
+    output_path = str(eval_dir / 'data' / 'test_evaluation.csv')
+    plot_output_dir = str(eval_dir / 'figures')
 
     device = torch.device("cuda")
 
@@ -372,9 +369,8 @@ def main():
     if args.checkpoint_path:
         checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
     elif args.wandb_artifact:
-        download_dir = str(run_dir / 'checkpoints' / 'wandb_downloads')
         checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-            args.wandb_artifact, download_dir
+            args.wandb_artifact, str(get_training_runs_dir())
         )
     else:
         raise ValueError("No checkpoint source specified")
@@ -684,7 +680,7 @@ def main():
     print(f"\n✓ Saved plot: {plot_path}")
     
     # Finalize run metadata
-    finalize_run_yaml(run_dir, status='completed')
+    finalize_run_yaml(eval_dir, status='completed', subdir='metadata')
     print(f"\n{'='*60}")
     print("Evaluation completed successfully!")
     print(f"{'='*60}")
