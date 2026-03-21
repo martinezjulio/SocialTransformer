@@ -28,89 +28,95 @@ def load_checkpoint_from_local(checkpoint_path: str) -> Tuple[str, Dict]:
     return checkpoint_path, checkpoint
 
 
-def load_checkpoint_from_wandb_artifact(artifact_string: str, download_dir: str) -> Tuple[str, Dict]:
+def load_checkpoint_from_wandb_artifact(artifact_string: str, training_runs_dir: str) -> Tuple[str, Dict]:
     """
-    Load checkpoint from wandb artifact.
-    
+    Load checkpoint from wandb artifact, with local caching.
+
     Args:
         artifact_string: Wandb artifact path in format 'entity/project/artifact:alias'
-        download_dir: Base directory for downloads
-        
+        training_runs_dir: Path to training_runs directory for caching
+
     Returns:
         Tuple of (local_checkpoint_path, checkpoint_dict)
     """
     print(f"Loading checkpoint from wandb artifact: {artifact_string}")
-    
+
     # Parse artifact string
     if artifact_string.count('/') != 2 or ':' not in artifact_string:
         raise ValueError(
             f"Invalid artifact string format: {artifact_string}\n"
             "Expected format: 'entity/project/artifact:alias'"
         )
-    
+
     # Download artifact using wandb API
     api = wandb.Api()
     artifact = api.artifact(artifact_string, type='model')
-    
+
     # Get the run that created this artifact
     source_run = artifact.logged_by()  # Returns the run object that logged the artifact
     run_id = source_run.id if source_run else "unknown_run"
-    
-    # Extract project name for directory structure
-    parts = artifact_string.split('/')
-    project_name = parts[1]
-    
-    # Create download directory using run ID (consistent with sweep loading)
-    local_dir = os.path.join(download_dir, project_name, run_id)
+
+    # Cache under training_runs/wandb_<run_id>/checkpoints/
+    local_dir = os.path.join(training_runs_dir, f"wandb_{run_id}", "checkpoints")
+
+    # Check cache: if .pt files already exist, skip download
+    if os.path.exists(local_dir):
+        cached_files = [f for f in os.listdir(local_dir) if f.endswith('.pt')]
+        if cached_files:
+            checkpoint_path = os.path.join(local_dir, cached_files[0])
+            print(f"Using cached checkpoint: {checkpoint_path}")
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            return checkpoint_path, checkpoint
+
     os.makedirs(local_dir, exist_ok=True)
-    
+
     print(f"Artifact from run: {run_id} ({source_run.name if source_run else 'unknown'})")
     print(f"Downloading to: {local_dir}")
     artifact_dir = artifact.download(root=local_dir)
-    
+
     # Find checkpoint file
     checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
     if not checkpoint_files:
         raise FileNotFoundError(f"No .pt checkpoint file found in {artifact_dir}")
-    
+
     checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
     print(f"Loaded checkpoint: {checkpoint_path}")
-    
+
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     return checkpoint_path, checkpoint
 
 
-def load_checkpoint_from_wandb_sweep(sweep_string: str, download_dir: str) -> Tuple[str, Dict]:
+def load_checkpoint_from_wandb_sweep(sweep_string: str, training_runs_dir: str) -> Tuple[str, Dict]:
     """
-    Load best checkpoint from wandb sweep.
-    
+    Load best checkpoint from wandb sweep, with local caching.
+
     Args:
         sweep_string: Sweep path in format 'entity/project/sweep_id'
-        download_dir: Base directory for downloads
-        
+        training_runs_dir: Path to training_runs directory for caching
+
     Returns:
         Tuple of (local_checkpoint_path, checkpoint_dict)
     """
     print(f"Finding best model from wandb sweep: {sweep_string}")
-    
+
     # Parse sweep string
     if sweep_string.count('/') != 2:
         raise ValueError(
             f"Invalid sweep string format: {sweep_string}\n"
             "Expected format: 'entity/project/sweep_id'"
         )
-    
+
     # Get sweep from wandb API
     api = wandb.Api()
     sweep = api.sweep(sweep_string)
-    
+
     print(f"Sweep: {sweep.name}")
     print(f"Analyzing {len(sweep.runs)} runs to find best model...")
-    
+
     # Find best run based on val/loss
     best_run = None
     best_loss = float('inf')
-    
+
     for run in sweep.runs:
         # Check if run has val/loss metric
         if 'val/loss' in run.summary:
@@ -118,55 +124,61 @@ def load_checkpoint_from_wandb_sweep(sweep_string: str, download_dir: str) -> Tu
             if val_loss < best_loss:
                 best_loss = val_loss
                 best_run = run
-    
+
     if best_run is None:
         raise ValueError("No runs found with 'val/loss' metric in sweep")
-    
+
     print(f"\nBest run found:")
     print(f"  Run ID: {best_run.id}")
     print(f"  Run name: {best_run.name}")
     print(f"  Val loss: {best_loss:.6f}")
-    
+
+    # Cache under training_runs/wandb_<run_id>/checkpoints/
+    local_dir = os.path.join(training_runs_dir, f"wandb_{best_run.id}", "checkpoints")
+
+    # Check cache: if .pt files already exist, skip download
+    if os.path.exists(local_dir):
+        cached_files = [f for f in os.listdir(local_dir) if f.endswith('.pt')]
+        if cached_files:
+            checkpoint_path = os.path.join(local_dir, cached_files[0])
+            print(f"Using cached checkpoint: {checkpoint_path}")
+            checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            return checkpoint_path, checkpoint
+
     # Get artifacts from best run
     artifacts = list(best_run.logged_artifacts())
     model_artifacts = [a for a in artifacts if a.type == 'model']
-    
+
     if not model_artifacts:
         raise ValueError(f"No model artifacts found for run {best_run.id}")
-    
+
     # Find artifact with 'best' alias or use most recent
     best_artifact = None
     for artifact in model_artifacts:
         if 'best' in [alias for alias in artifact.aliases]:
             best_artifact = artifact
             break
-    
+
     if best_artifact is None:
         # Use the most recent artifact
         best_artifact = model_artifacts[-1]
         print(f"  Note: No 'best' alias found, using most recent artifact")
-    
+
     print(f"  Artifact: {best_artifact.name}")
-    
-    # Extract project name for directory structure
-    parts = sweep_string.split('/')
-    project_name = parts[1]
-    
-    # Create download directory using run ID
-    local_dir = os.path.join(download_dir, project_name, best_run.id)
+
     os.makedirs(local_dir, exist_ok=True)
-    
+
     print(f"Downloading to: {local_dir}")
     artifact_dir = best_artifact.download(root=local_dir)
-    
+
     # Find checkpoint file
     checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
     if not checkpoint_files:
         raise FileNotFoundError(f"No .pt checkpoint file found in {artifact_dir}")
-    
+
     checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
     print(f"Loaded checkpoint: {checkpoint_path}\n")
-    
+
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     return checkpoint_path, checkpoint
 

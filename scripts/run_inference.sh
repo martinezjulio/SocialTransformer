@@ -141,7 +141,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Inference completed successfully!"
     echo "=================================="
-    echo "Hybrid predictions saved to run directory (see output above for path)"
+    echo "Hybrid predictions saved to: $EXPERIMENTS_DIR/analysis/"
     echo ""
     echo "The output contains:"
     echo "  - Original demonstration segments from human data (duplicated across rollouts)"

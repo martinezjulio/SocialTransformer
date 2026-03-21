@@ -25,7 +25,7 @@ from tqdm import tqdm
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
-from utils import get_run_id, setup_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
+from utils import setup_analysis_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
@@ -750,27 +750,24 @@ def main():
     
     args = parser.parse_args()
     
-    # Set up run directory structure (inference doesn't use wandb)
-    run_id = get_run_id(use_wandb=False)
-    run_dir = setup_run_directory(run_id)
-    print(f"Run directory: {run_dir}")
-    print(f"Run ID: {run_id}")
-    
+    # Set up analysis directory structure
+    analysis_dir = setup_analysis_directory()
+    print(f"Analysis directory: {analysis_dir}")
+
     # Write run metadata
     metadata = {
-        'run_id': run_id,
         'script': 'inference.py',
         'command': ' '.join(sys.argv),
         'experiment_data_path': args.experiment_data_path,
         'num_rollouts': args.num_rollouts,
         'seed': args.seed,
     }
-    write_run_yaml(run_dir, metadata)
-    write_config_yaml(run_dir, vars(args))
-    
-    # Update output path to use run directory if it's still default
+    write_run_yaml(analysis_dir, metadata, subdir='metadata')
+    write_config_yaml(analysis_dir, vars(args), subdir='metadata')
+
+    # Update output path to use analysis directory if it's still default
     if args.output_path == "data/model_predictions/hybrid_model_predictions.csv":
-        args.output_path = str(run_dir / 'results' / 'predictions' / 'hybrid_model_predictions.csv')
+        args.output_path = str(analysis_dir / 'data' / 'hybrid_model_predictions.csv')
     
     # Set device
     device = torch.device(args.device)
@@ -795,14 +792,12 @@ def main():
         if args.checkpoint_path:
             checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
         elif args.wandb_artifact:
-            download_dir = str(run_dir / 'checkpoints' / 'wandb_downloads')
             checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-                args.wandb_artifact, download_dir
+                args.wandb_artifact, str(get_training_runs_dir())
             )
         elif args.wandb_sweep:
-            download_dir = str(run_dir / 'checkpoints' / 'wandb_downloads')
             checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
-                args.wandb_sweep, download_dir
+                args.wandb_sweep, str(get_training_runs_dir())
             )
         else:
             raise ValueError("No checkpoint source specified")
@@ -918,7 +913,7 @@ def main():
         print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
         print(f"Output saved to: {args.output_path}")
         
-        finalize_run_yaml(run_dir, status='completed')
+        finalize_run_yaml(analysis_dir, status='completed', subdir='metadata')
         print(f"\n{'='*60}")
         print("Inference completed successfully!")
         print(f"{'='*60}")
@@ -927,13 +922,13 @@ def main():
         print(f"\n{'='*60}")
         print("Inference interrupted by user")
         print(f"{'='*60}")
-        finalize_run_yaml(run_dir, status='interrupted')
+        finalize_run_yaml(analysis_dir, status='interrupted', subdir='metadata')
         raise
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"Inference failed with error: {e}")
         print(f"{'='*60}")
-        finalize_run_yaml(run_dir, status='failed', error=str(e))
+        finalize_run_yaml(analysis_dir, status='failed', subdir='metadata', error=str(e))
         raise
 
 

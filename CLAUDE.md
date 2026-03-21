@@ -86,9 +86,25 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 ### Run Management
 
-All scripts write outputs to `$EXPERIMENTS_DIR/runs/<run_id>/` where `EXPERIMENTS_DIR` is set in `.env`.
+Experiment outputs are organized under `$EXPERIMENTS_DIR/` (set in `.env`):
 
-Run IDs: `wandb_<id>` (with wandb) or `uuid_<10char>` (without). Each run directory contains `checkpoints/`, `logs/`, `results/`, `config.yaml`, `run.yaml`.
+```
+$EXPERIMENTS_DIR/
+  training_runs/              # Per-run directories keyed by wandb ID
+    wandb_<id>/
+      checkpoints/            # .pt files (local or downloaded from wandb)
+      wandb/                  # wandb logs
+  eval/                       # Evaluation outputs (overwrites on re-run)
+    data/                     # evaluation CSVs
+    figures/                  # evaluation plots
+    metadata/                 # config.yaml, run.yaml
+  analysis/                   # Inference/analysis outputs (overwrites on re-run)
+    data/                     # inference CSVs
+    figures/                  # inference/analysis plots
+    metadata/                 # config.yaml, run.yaml
+```
+
+Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval and inference use flat `eval/` and `analysis/` directories that overwrite on re-run.
 
 ### Checkpoint Loading
 
@@ -96,6 +112,8 @@ Three sources supported across eval/inference scripts:
 - `local` — file path to `.pt` checkpoint
 - `wandb_artifact` — `entity/project/artifact:alias`
 - `wandb_sweep` — `entity/project/sweep_id` (loads best model)
+
+Downloaded wandb checkpoints are cached under `training_runs/wandb_<id>/checkpoints/` for reuse across eval/inference runs. Subsequent loads skip the download if cached files exist.
 
 Checkpoints store model weights, optimizer/scheduler state, training config, and epoch info. Model architecture params are auto-detected from checkpoint config.
 

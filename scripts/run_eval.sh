@@ -12,7 +12,7 @@ source "${SCRIPT_DIR}/../.env"
 
 # Set parameters
 TEST_MANIFEST="${TRAINING_DATA_DIR}/test/manifest.json"
-# Note: Output paths are now managed automatically by eval.py (current_run/results/)
+# Note: Output paths managed automatically by eval.py ($EXPERIMENTS_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
@@ -45,7 +45,7 @@ echo "=================================="
 echo "Evaluation Configuration"
 echo "=================================="
 echo "Test manifest: $TEST_MANIFEST"
-echo "Output path: Managed automatically (\$EXPERIMENTS_DIR/results/evaluation/)"
+echo "Output path: \$EXPERIMENTS_DIR/eval/{data,figures,metadata}/"
 echo "Device: $DEVICE"
 if [ -n "$MAX_EXAMPLES" ]; then
     echo "Max examples: $MAX_EXAMPLES"
@@ -145,7 +145,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Evaluation completed successfully!"
     echo "=================================="
-    echo "Results saved to: $EXPERIMENTS_DIR/results/evaluation/"
+    echo "Results saved to: $EXPERIMENTS_DIR/eval/"
     echo ""
     echo "The output contains per-cutoff metrics for:"
     echo "  - Theta (payoff) prediction accuracy"
