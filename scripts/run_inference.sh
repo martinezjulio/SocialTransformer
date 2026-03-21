@@ -13,7 +13,6 @@ source "${SCRIPT_DIR}/../.env"
 
 # Set parameters
 EXPERIMENT_DATA_PATH="${DATA_DIR}/experiment_data/transfer_bandits_choice_textbox/pilot_D/preprocessed_data.csv"
-OUTPUT_PATH="${DATA_DIR}/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
@@ -47,7 +46,6 @@ echo "=================================="
 echo "Inference Configuration"
 echo "=================================="
 echo "Experiment data: $EXPERIMENT_DATA_PATH"
-echo "Output path: $OUTPUT_PATH"
 echo "Device: $DEVICE"
 echo "Number of rollouts: $NUM_ROLLOUTS"
 echo "Random seed: $SEED"
@@ -94,10 +92,6 @@ else
     exit 1
 fi
 
-# Create output directory if it doesn't exist
-OUTPUT_DIR=$(dirname "$OUTPUT_PATH")
-mkdir -p "$OUTPUT_DIR"
-
 # Build masking_strategy_override flag
 MASKING_STRATEGY_FLAG=""
 if [ -n "$MASKING_STRATEGY_OVERRIDE" ]; then
@@ -116,7 +110,6 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     python src/inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --checkpoint_path "$CHECKPOINT_PATH" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \
@@ -126,7 +119,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --wandb_artifact "$WANDB_ARTIFACT" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \
@@ -136,7 +128,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
     python src/inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --wandb_sweep "$WANDB_SWEEP" \
-        --output_path "$OUTPUT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \
@@ -150,7 +141,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Inference completed successfully!"
     echo "=================================="
-    echo "Hybrid predictions saved to: $OUTPUT_PATH"
+    echo "Hybrid predictions saved to run directory (see output above for path)"
     echo ""
     echo "The output contains:"
     echo "  - Original demonstration segments from human data (duplicated across rollouts)"
