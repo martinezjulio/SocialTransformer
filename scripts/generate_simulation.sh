@@ -7,17 +7,16 @@
 # - Expert demonstrators with exactly N=72 experience
 # - Novice demonstrators with N=0 using random exclusion strategy
 
-# Activate conda environment
-#source ~/anaconda3/bin/activate
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
 
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
+
 # Auto-increment dataset name
-BASE_DATA_DIR="${DATA_DIR}"
+BASE_DATA_DIR="${TRAINING_DATA_ROOT}"
 
 # Find the highest existing dataset number (start at -1 so first dataset is 00)
 MAX_NUM=-1

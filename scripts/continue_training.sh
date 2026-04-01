@@ -2,13 +2,13 @@
 # Script to continue training from a checkpoint with optional hyperparameter overrides
 # Supports loading from local checkpoints or wandb artifacts
 
-# Activate conda environment
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
+
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
 
 # Parse arguments
 CHECKPOINT=""

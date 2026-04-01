@@ -2,13 +2,13 @@
 # Script to resume incomplete runs from a wandb sweep
 # This is a wrapper around src/complete_sweep.py that sets up the environment
 
-# Activate conda environment
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
+
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
 
 # Check if sweep ID provided
 if [ -z "$1" ]; then

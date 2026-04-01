@@ -2,14 +2,13 @@
 # Script to train the Social Bandit Guider model
 # on generated demonstration data
 
-# Activate conda environment
-#source ~/anaconda3/bin/activate
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
+
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
 
 # Set parameters
 DATASET_PATH="${TRAINING_DATA_DIR}"
@@ -112,7 +111,7 @@ echo "  Project: $WANDB_PROJECT"
 echo "  Entity: $WANDB_ENTITY"
 echo ""
 echo "Checkpoints:"
-echo "  Directory: Managed automatically (\$EXPERIMENTS_DIR/training_runs/<run_id>/checkpoints/)"
+echo "  Directory: Managed automatically (\$MODELING_DATA_DIR/training_runs/<run_id>/checkpoints/)"
 echo "  Save every: $SAVE_EVERY epochs"
 echo "  Artifact name: $ARTIFACT_NAME"
 echo ""
@@ -213,7 +212,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Training completed successfully!"
     echo "=================================="
-    echo "Checkpoints saved to: $EXPERIMENTS_DIR/training_runs/<run_id>/checkpoints/"
+    echo "Checkpoints saved to: $MODELING_DATA_DIR/training_runs/<run_id>/checkpoints/"
     echo "  - best_model.pt (best validation loss)"
     echo "  - final_model.pt (final epoch)"
     if [ "$SAVE_EVERY" -gt 0 ]; then

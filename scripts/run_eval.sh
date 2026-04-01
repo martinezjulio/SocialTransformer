@@ -2,17 +2,17 @@
 # Script to evaluate model on test set
 # Measures theta and demonstrator prediction accuracy at different context lengths
 
-# Activate conda environment
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
 
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
+
 # Set parameters
 TEST_MANIFEST="${TRAINING_DATA_DIR}/test/manifest.json"
-# Note: Output paths managed automatically by eval.py ($EXPERIMENTS_DIR/eval/)
+# Note: Output paths managed automatically by eval.py ($MODELING_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
@@ -45,7 +45,7 @@ echo "=================================="
 echo "Evaluation Configuration"
 echo "=================================="
 echo "Test manifest: $TEST_MANIFEST"
-echo "Output path: \$EXPERIMENTS_DIR/eval/{data,figures,metadata}/"
+echo "Output path: \$MODELING_DATA_DIR/eval/{data,figures,metadata}/"
 echo "Device: $DEVICE"
 if [ -n "$MAX_EXAMPLES" ]; then
     echo "Max examples: $MAX_EXAMPLES"
@@ -145,7 +145,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Evaluation completed successfully!"
     echo "=================================="
-    echo "Results saved to: $EXPERIMENTS_DIR/eval/"
+    echo "Results saved to: $MODELING_DATA_DIR/eval/"
     echo ""
     echo "The output contains per-cutoff metrics for:"
     echo "  - Theta (payoff) prediction accuracy"

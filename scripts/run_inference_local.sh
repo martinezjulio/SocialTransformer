@@ -2,18 +2,17 @@
 # Script to run inference on human experiment data
 # using a trained Social Bandit Guider model
 
-# Activate conda environment
-#source ~/anaconda3/bin/activate
-source /home/julio/miniforge3/etc/profile.d/conda.sh
-conda activate SocialTransformer
-
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../.env"
 
+# Activate conda environment
+source "$CONDA_SETUP"
+conda activate SocialTransformer
+
 # Set parameters
-EXPERIMENT_DATA_PATH="${DATA_DIR}/experiment_data/transfer_bandits_choice_textbox/pilot_D/preprocessed_data.csv"
-OUTPUT_PATH="${DATA_DIR}/model_predictions/hybrid_model_predictions.csv"
+EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_PATH}"
+OUTPUT_PATH="${TRAINING_DATA_ROOT}/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cpu"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
@@ -150,7 +149,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Inference completed successfully!"
     echo "=================================="
-    echo "Hybrid predictions saved to: $EXPERIMENTS_DIR/analysis/"
+    echo "Hybrid predictions saved to: $MODELING_DATA_DIR/analysis/"
     echo ""
     echo "The output contains:"
     echo "  - Original demonstration segments from human data (duplicated across rollouts)"
