@@ -124,6 +124,44 @@ Events are tuples `(bandit_id, agent_id, action, reward)`:
 - Datasets stored as sharded `.pt` files under `$TRAINING_DATA_ROOT_DIR/demonstrations_data_NN/` with train/val/test splits
 - Dataset parameters (K, num_demonstrators, num_rounds) are auto-detected from `manifest.json`
 
+## R/Quarto Analysis Environment
+
+The `src/analysis/` directory contains an R/Quarto analysis environment for visualizing inference results. It uses `renv` for R package management and the conda environment's R runtime.
+
+### Setup
+
+```bash
+# One-time: install R packages
+bash scripts/setup_r_env.sh
+
+# Render analysis (requires inference data in $MODELING_DATA_DIR/analysis/data/)
+bash scripts/run_analysis.sh
+```
+
+### Structure
+
+```
+src/analysis/
+├── analysis.qmd              # Main Quarto analysis document
+├── utils/                    # R helper scripts (plots, preprocessing)
+├── renv.lock                 # Locked R dependencies
+├── renv/                     # renv bootstrap files
+├── .here                     # Sentinel so here::here() resolves to this dir
+├── .Rprofile                 # Activates renv on R startup
+├── .gitignore                # R-specific ignores
+├── Makefile                  # Build targets: render, lint, fmt
+└── SocialBanditsAnalysis.Rproj
+```
+
+### Key Details
+
+- **R runtime**: Installed via conda (`r-base`) in the `SocialTransformer` environment.
+- **R packages**: Managed by `renv` (independent of conda). Run `renv::restore()` to install from `renv.lock`.
+- **Data paths**: `analysis.qmd` reads `MODELING_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
+- **`here::here()`** resolves to `src/analysis/` (anchored by the `.here` sentinel file).
+- **Figures**: All plots save to `$MODELING_DATA_DIR/analysis/figures/` when called from `analysis.qmd` (via `fig_dir` parameter). Util functions fall back to `src/analysis/figures/` (gitignored) when run standalone.
+- **Preprocessing**: `utils/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
+
 ## W&B Integration
 
 - Project: `social-belief-modeling`, Entity: `juliomartinez-individual`
