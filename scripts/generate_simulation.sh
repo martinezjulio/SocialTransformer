@@ -16,7 +16,7 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Auto-increment dataset name
-BASE_DATA_DIR="${TRAINING_DATA_ROOT}"
+BASE_DATA_DIR="${TRAINING_DATA_ROOT_DIR}"
 
 # Find the highest existing dataset number (start at -1 so first dataset is 00)
 MAX_NUM=-1

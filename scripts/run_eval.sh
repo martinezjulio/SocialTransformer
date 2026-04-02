@@ -11,7 +11,8 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-TEST_MANIFEST="${TRAINING_DATA_DIR}/test/manifest.json"
+DATASET_NAME="demonstrations_data_02"
+TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
 # Note: Output paths managed automatically by eval.py ($MODELING_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
@@ -32,7 +33,7 @@ MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-checkpoint:v1387"
+WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
 CHECKPOINT_SOURCE="wandb_artifact"
 
 # Option 3: Load best model from wandb sweep (uncomment to use)

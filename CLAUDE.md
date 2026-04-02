@@ -22,13 +22,12 @@ Out-of-repo directories (data, experiments) are configured via a `.env` file in 
 ```bash
 cp .env.example .env
 # Edit .env with your paths:
-#   TRAINING_DATA_ROOT=/path/to/data
-#   TRAINING_DATA_DIR=/path/to/data/demonstrations_data_04
+#   TRAINING_DATA_ROOT_DIR=/path/to/data
 #   MODELING_DATA_DIR=/path/to/experiments/dev
 #   EXPERIMENT_DATA_PATH=/path/to/data/experiment_data/.../preprocessed_data.csv
 ```
 
-All shell scripts source `.env` automatically. Python scripts use `MODELING_DATA_DIR` (via `utils.py`) and fall back to `TRAINING_DATA_DIR` for dataset paths.
+All shell scripts source `.env` automatically. Dataset names (e.g., `demonstrations_data_04`) are specified per-script/sweep and resolved against `TRAINING_DATA_ROOT_DIR` by `train.py`.
 
 ## Common Commands
 
@@ -122,7 +121,7 @@ Checkpoints store model weights, optimizer/scheduler state, training config, and
 
 Events are tuples `(bandit_id, agent_id, action, reward)`:
 - `agent_id`: 0-N for demonstrators, 99 for learner, -1 for BANDIT_SEP tokens
-- Datasets stored as sharded `.pt` files under `$TRAINING_DATA_ROOT/demonstrations_data_NN/` with train/val/test splits
+- Datasets stored as sharded `.pt` files under `$TRAINING_DATA_ROOT_DIR/demonstrations_data_NN/` with train/val/test splits
 - Dataset parameters (K, num_demonstrators, num_rounds) are auto-detected from `manifest.json`
 
 ## W&B Integration

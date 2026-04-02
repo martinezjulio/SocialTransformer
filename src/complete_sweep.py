@@ -104,7 +104,7 @@ def resume_run(run_info, entity, project):
         '--use_wandb',
         '--wandb_entity', entity,
         '--wandb_project', project,
-        '--dataset_path', config.get('dataset_path', os.environ.get('TRAINING_DATA_DIR', 'data/demonstrations_data_00')),
+        '--dataset_name', config.get('dataset_name', 'demonstrations_data_00'),
         '--epochs', str(config['epochs']),
         '--lr', str(config['learning_rate']),
         '--batch_size', str(config['batch_size']),
