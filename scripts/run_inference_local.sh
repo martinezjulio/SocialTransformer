@@ -12,7 +12,7 @@ conda activate SocialTransformer
 
 # Set parameters
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_PATH}"
-OUTPUT_PATH="${TRAINING_DATA_ROOT}/model_predictions/hybrid_model_predictions.csv"
+OUTPUT_PATH="${TRAINING_DATA_ROOT_DIR}/model_predictions/hybrid_model_predictions.csv"
 DEVICE="cpu"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility

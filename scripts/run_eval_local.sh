@@ -11,7 +11,8 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-TEST_MANIFEST="${TRAINING_DATA_DIR}/test/manifest.json"
+DATASET_NAME="demonstrations_data_04"
+TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
 # Note: Output paths managed automatically by eval.py ($MODELING_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)

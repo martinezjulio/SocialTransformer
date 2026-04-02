@@ -11,7 +11,7 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_PATH="${TRAINING_DATA_DIR}"
+DATASET_NAME="demonstrations_data_04"
 
 # Model hyperparameters
 BATCH_SIZE=128
@@ -72,8 +72,8 @@ OVERFITTING_WINDOW=15          # Window size for moving average trend detection
 echo "=================================="
 echo "Training Configuration"
 echo "=================================="
-echo "Dataset: $DATASET_PATH"
-echo "Dataset path: $DATASET_PATH"
+echo "Dataset: $DATASET_NAME"
+echo "Dataset root: $TRAINING_DATA_ROOT_DIR"
 echo ""
 echo "Model Hyperparameters:"
 echo "  Batch size: $BATCH_SIZE"
@@ -137,6 +137,7 @@ echo "=================================="
 echo ""
 
 # Check if dataset exists
+DATASET_PATH="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}"
 DATASET_METADATA="${DATASET_PATH}/dataset_metadata.json"
 TRAIN_MANIFEST="${DATASET_PATH}/train/manifest.json"
 VAL_MANIFEST="${DATASET_PATH}/val/manifest.json"
@@ -168,7 +169,7 @@ fi
 # Run training
 echo "Starting training..."
 python src/train.py \
-    --dataset_path "$DATASET_PATH" \
+    --dataset_name "$DATASET_NAME" \
     --batch_size $BATCH_SIZE \
     --lr $LEARNING_RATE \
     --epochs $EPOCHS \

@@ -488,9 +488,9 @@ def train_one_epoch(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_path", type=str,
-                        default=os.environ.get("TRAINING_DATA_DIR", "data/demonstrations_data_00"),
-                        help="Path to dataset directory containing dataset_metadata.json and train/val subdirectories")
+    parser.add_argument("--dataset_name", type=str,
+                        default="demonstrations_data_04",
+                        help="Dataset directory name (resolved against TRAINING_DATA_ROOT_DIR)")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
@@ -573,10 +573,16 @@ def main():
     
     args = parser.parse_args()
 
+    # Resolve dataset_name to full path
+    if not os.path.isabs(args.dataset_name):
+        root = os.environ.get("TRAINING_DATA_ROOT_DIR")
+        if root:
+            args.dataset_name = os.path.join(root, args.dataset_name)
+
     device = torch.device(args.device)
-    
+
     # Load dataset metadata
-    metadata_path = os.path.join(args.dataset_path, "dataset_metadata.json")
+    metadata_path = os.path.join(args.dataset_name, "dataset_metadata.json")
     print(f"Loading dataset metadata from {metadata_path}")
     with open(metadata_path, "r") as f:
         dataset_meta = json.load(f)
@@ -607,8 +613,8 @@ def main():
         print(f"No normalization needed for loss={args.demo_belief_loss}")
     
     # Build paths to train and val manifests
-    train_path = os.path.join(args.dataset_path, "train", "manifest.json")
-    val_path = os.path.join(args.dataset_path, "val", "manifest.json")
+    train_path = os.path.join(args.dataset_name, "train", "manifest.json")
+    val_path = os.path.join(args.dataset_name, "val", "manifest.json")
     
     # Load training data first to get metadata
     raw_train = ShardedExamplesDataset(train_path, cache_shards=2)
@@ -664,7 +670,7 @@ def main():
             "optimizer": args.optimizer,
             "weight_decay": args.weight_decay,
             "architecture": "SBIPosteriorTransformer",
-            "dataset_path": args.dataset_path,
+            "dataset_name": args.dataset_name,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "num_arms": num_arms,
@@ -734,7 +740,7 @@ def main():
             'run_id': run_id,
             'script': 'train.py',
             'command': ' '.join(sys.argv),
-            'dataset_path': args.dataset_path,
+            'dataset_name': args.dataset_name,
         }
         write_run_yaml(run_dir, metadata)
         write_config_yaml(run_dir, vars(args))

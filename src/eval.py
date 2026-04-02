@@ -227,7 +227,7 @@ def evaluate_single_example(
         true_theta = torch.tensor(bandit_info["theta"], dtype=torch.float32)
         
         # Identify which demo_id is expert vs novice by checking N_tot
-        # Expert has high N_tot (typically 72), novice has N_tot=0
+        # Expert has high N_tot, novice has low N_tot
         demo0_N = bandit_info["demonstrators"][0]["N_tot"]
         demo1_N = bandit_info["demonstrators"][1]["N_tot"]
         
@@ -502,14 +502,16 @@ def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluat
     
     # Plot 7: Combined N_tot predictions
     ax = axes[2, 0]
-    ax.axhline(y=72, color='lightblue', linestyle='--', linewidth=2.5, alpha=0.7, 
-               label='True Expert N_tot (72)', zorder=1)
+    true_expert_N_tot = df['expert_N_tot_true'].mean()
+    true_novice_N_tot = df['novice_N_tot_true'].mean()
+    ax.axhline(y=true_expert_N_tot, color='lightblue', linestyle='--', linewidth=2.5, alpha=0.7,
+               label=f'True Expert N_tot ({true_expert_N_tot:.0f})', zorder=1)
     ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['expert_N_tot_pred_mean'],
                 yerr=cutoff_stats['expert_N_tot_pred_se'],
                 marker='o', linewidth=2, color='blue', label='Predicted Expert N_tot', 
                 markersize=6, capsize=4, alpha=0.8, zorder=3)
-    ax.axhline(y=0, color='lightcoral', linestyle='--', linewidth=2.5, alpha=0.7,
-               label='True Novice N_tot (0)', zorder=1)
+    ax.axhline(y=true_novice_N_tot, color='lightcoral', linestyle='--', linewidth=2.5, alpha=0.7,
+               label=f'True Novice N_tot ({true_novice_N_tot:.0f})', zorder=1)
     ax.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_N_tot_pred_mean'],
                 yerr=cutoff_stats['novice_N_tot_pred_se'],
                 marker='s', linewidth=2, color='red', label='Predicted Novice N_tot',
@@ -519,7 +521,7 @@ def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluat
     ax.set_title('N_tot Predictions vs Ground Truth', fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=9)
-    ax.set_ylim(-5, 80)
+    ax.set_ylim(-5, true_expert_N_tot * 1.15)
     
     # Plot 8: N_tot absolute errors
     ax = axes[2, 1]
@@ -537,11 +539,11 @@ def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluat
     
     # Plot 9: N_tot relative error
     ax = axes[2, 2]
-    expert_rel_error = (cutoff_stats['expert_N_tot_error_mean'] / 72.0) * 100
-    expert_rel_error_se = (cutoff_stats['expert_N_tot_error_se'] / 72.0) * 100
+    expert_rel_error = (cutoff_stats['expert_N_tot_error_mean'] / true_expert_N_tot) * 100
+    expert_rel_error_se = (cutoff_stats['expert_N_tot_error_se'] / true_expert_N_tot) * 100
     ax.errorbar(cutoff_stats['cutoff'], expert_rel_error,
                 yerr=expert_rel_error_se,
-                marker='o', linewidth=2, color='blue', label='Expert (% of 72)', 
+                marker='o', linewidth=2, color='blue', label=f'Expert (% of {true_expert_N_tot:.0f})',
                 markersize=6, capsize=4, alpha=0.8)
     ax2 = ax.twinx()
     ax2.errorbar(cutoff_stats['cutoff'], cutoff_stats['novice_N_tot_pred_mean'],
@@ -570,7 +572,7 @@ def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluat
     print("\n" + "="*60)
     print("N_tot Prediction Evolution")
     print("="*60)
-    print("\nExpert N_tot (True = 72):")
+    print(f"\nExpert N_tot (True = {true_expert_N_tot:.0f}):")
     print(cutoff_stats[['cutoff', 'expert_N_tot_pred_mean', 'expert_N_tot_error_mean']].to_string(index=False))
     
     print("\nNovice N_tot (True = 0):")
@@ -656,202 +658,202 @@ def main():
         print("Loading Model Checkpoint")
         print("="*60)
     
-    if args.checkpoint_path:
-        checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
-    elif args.wandb_artifact:
-        checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-            args.wandb_artifact, str(get_training_runs_dir())
-        )
-    elif args.wandb_sweep:
-        checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
-            args.wandb_sweep, str(get_training_runs_dir())
-        )
-    else:
-        raise ValueError("No checkpoint source specified")
-    
-    # Extract model configuration
-    if 'model_config' not in checkpoint:
-        raise ValueError("Checkpoint missing 'model_config'")
-    
-    model_config = checkpoint['model_config']
-    
-    print(f"\nModel configuration:")
-    print(f"  num_arms: {model_config['num_arms']}")
-    print(f"  num_agents: {model_config['num_agents']}")
-    print(f"  num_bandits: {model_config['num_bandits']}")
-    print(f"  num_demonstrators: {model_config['num_demonstrators']}")
-    print(f"  d_model: {model_config['d_model']}")
-    print(f"  nhead: {model_config['nhead']}")
-    print(f"  num_layers: {model_config['num_layers']}")
-    
-    # Create model
-    model = SBIPosteriorTransformer(
-        num_arms=model_config['num_arms'],
-        num_agents=model_config['num_agents'],
-        num_bandits=model_config['num_bandits'],
-        num_demonstrators=model_config['num_demonstrators'],
-        d_model=model_config['d_model'],
-        nhead=model_config['nhead'],
-        num_layers=model_config['num_layers'],
-        dim_feedforward=model_config['dim_feedforward'],
-        dropout=model_config['dropout'],
-        profile_method=profile_method,
-        experience_head_loss_type=experience_head_loss_type,
-        theta_head_input=model_config.get('theta_head_input', 'query_only'),
-        demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
-        experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
-    ).to(device)
-    
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.eval()
-    print("✓ Model loaded successfully!")
-    
-    # Get normalization parameters
-    normalizer = None
-    if 'normalization' in checkpoint and checkpoint['normalization'].get('normalize_beliefs', False):
-        norm_dict = checkpoint['normalization']
-        if 'expert_N_max' in norm_dict:
-            max_exp = norm_dict['expert_N_max']
-        elif 'N_max' in norm_dict:
-            print("WARNING: checkpoint uses deprecated 'N_max' key in normalization dict.")
-            max_exp = norm_dict['N_max']
-        else:
-            raise ValueError("Checkpoint normalization missing both 'expert_N_max' and 'N_max'")
-        normalizer = BeliefNormalizer(
-            max_experience=max_exp,
-            alpha0=norm_dict['alpha0'],
-            beta0=norm_dict['beta0']
-        )
-        print("✓ Using belief normalization")
-    
-    alpha0 = checkpoint['normalization']['alpha0']
-    beta0 = checkpoint['normalization']['beta0']
-    print(f"  alpha0={alpha0}, beta0={beta0}")
-    
-    # Get masking strategy (from checkpoint or override)
-    if args.masking_strategy_override:
-        masking_strategy = args.masking_strategy_override
-        print(f"\n✓ Using overridden masking strategy: {masking_strategy}")
-    else:
-        masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
-        print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
-    
-    # Get profile method (from checkpoint or override)
-    if args.profile_method_override:
-        profile_method = args.profile_method_override
-        print(f"✓ Using overridden profile method: {profile_method}")
-    else:
-        profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
-        print(f"✓ Using profile method from checkpoint: {profile_method}")
-    
-    experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
-    print(f"✓ Experience head loss type: {experience_head_loss_type}")
-    
-    # Load test data
-    print("\n" + "="*60)
-    print("Loading Test Data")
-    print("="*60)
-    
-    manifest_path = args.test_manifest
-    print(f"Reading manifest: {manifest_path}")
-    
-    with open(manifest_path, 'r') as f:
-        manifest = json.load(f)
-    
-    test_dir = os.path.dirname(manifest_path)
-    shards = manifest['shards']
-    
-    print(f"Found {len(shards)} shards")
-    print(f"Total examples: {sum(s['num_examples'] for s in shards)}")
-    
-    # Load examples from shards
-    all_examples = []
-    for shard_info in shards:
-        shard_path = os.path.join(test_dir, shard_info['path'])
-        print(f"  Loading {shard_path}...")
-        examples = torch.load(shard_path, map_location='cpu')
-        all_examples.extend(examples)
-    
-    print(f"✓ Loaded {len(all_examples)} examples")
-    
-    # Limit examples if requested
-    if args.max_examples:
-        all_examples = all_examples[:args.max_examples]
-        print(f"  Evaluating on {len(all_examples)} examples (limited)")
-    
-    # Run evaluation
-    print("\n" + "="*60)
-    print("Running Evaluation")
-    print("="*60)
-    
-    all_results = []
-    
-    for ex_idx, example in enumerate(tqdm(all_examples, desc="Evaluating examples")):
-        try:
-            example_results = evaluate_single_example(
-                example,
-                model,
-                device,
-                model_config['num_arms'],
-                model_config['num_agents'],
-                model_config['num_bandits'],
-                SPECIAL,
-                normalizer=normalizer,
-                alpha0=alpha0,
-                beta0=beta0,
-                masking_strategy=masking_strategy
+        if args.checkpoint_path:
+            checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
+        elif args.wandb_artifact:
+            checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
+                args.wandb_artifact, str(get_training_runs_dir())
             )
+        elif args.wandb_sweep:
+            checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
+                args.wandb_sweep, str(get_training_runs_dir())
+            )
+        else:
+            raise ValueError("No checkpoint source specified")
+    
+        # Extract model configuration
+        if 'model_config' not in checkpoint:
+            raise ValueError("Checkpoint missing 'model_config'")
+    
+        model_config = checkpoint['model_config']
+    
+        print(f"\nModel configuration:")
+        print(f"  num_arms: {model_config['num_arms']}")
+        print(f"  num_agents: {model_config['num_agents']}")
+        print(f"  num_bandits: {model_config['num_bandits']}")
+        print(f"  num_demonstrators: {model_config['num_demonstrators']}")
+        print(f"  d_model: {model_config['d_model']}")
+        print(f"  nhead: {model_config['nhead']}")
+        print(f"  num_layers: {model_config['num_layers']}")
+    
+        # Get profile method (from checkpoint or override)
+        if args.profile_method_override:
+            profile_method = args.profile_method_override
+            print(f"✓ Using overridden profile method: {profile_method}")
+        else:
+            profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
+            print(f"✓ Using profile method from checkpoint: {profile_method}")
+
+        experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
+        print(f"✓ Experience head loss type: {experience_head_loss_type}")
+
+        # Create model
+        model = SBIPosteriorTransformer(
+            num_arms=model_config['num_arms'],
+            num_agents=model_config['num_agents'],
+            num_bandits=model_config['num_bandits'],
+            num_demonstrators=model_config['num_demonstrators'],
+            d_model=model_config['d_model'],
+            nhead=model_config['nhead'],
+            num_layers=model_config['num_layers'],
+            dim_feedforward=model_config['dim_feedforward'],
+            dropout=model_config['dropout'],
+            profile_method=profile_method,
+            experience_head_loss_type=experience_head_loss_type,
+            theta_head_input=model_config.get('theta_head_input', 'query_only'),
+            demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
+            experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
+        ).to(device)
+    
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        print("✓ Model loaded successfully!")
+    
+        # Get normalization parameters
+        normalizer = None
+        if 'normalization' in checkpoint and checkpoint['normalization'].get('normalize_beliefs', False):
+            norm_dict = checkpoint['normalization']
+            if 'expert_N_max' in norm_dict:
+                max_exp = norm_dict['expert_N_max']
+            elif 'N_max' in norm_dict:
+                print("WARNING: checkpoint uses deprecated 'N_max' key in normalization dict.")
+                max_exp = norm_dict['N_max']
+            else:
+                raise ValueError("Checkpoint normalization missing both 'expert_N_max' and 'N_max'")
+            normalizer = BeliefNormalizer(
+                max_experience=max_exp,
+                alpha0=norm_dict['alpha0'],
+                beta0=norm_dict['beta0']
+            )
+            print("✓ Using belief normalization")
+    
+        alpha0 = checkpoint['normalization']['alpha0']
+        beta0 = checkpoint['normalization']['beta0']
+        print(f"  alpha0={alpha0}, beta0={beta0}")
+    
+        # Get masking strategy (from checkpoint or override)
+        if args.masking_strategy_override:
+            masking_strategy = args.masking_strategy_override
+            print(f"\n✓ Using overridden masking strategy: {masking_strategy}")
+        else:
+            masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
+            print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
+    
+        # Load test data
+        print("\n" + "="*60)
+        print("Loading Test Data")
+        print("="*60)
+    
+        manifest_path = args.test_manifest
+        print(f"Reading manifest: {manifest_path}")
+    
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+    
+        test_dir = os.path.dirname(manifest_path)
+        shards = manifest['shards']
+    
+        print(f"Found {len(shards)} shards")
+        print(f"Total examples: {sum(s['num_examples'] for s in shards)}")
+    
+        # Load examples from shards
+        all_examples = []
+        for shard_info in shards:
+            shard_path = os.path.join(test_dir, shard_info['path'])
+            print(f"  Loading {shard_path}...")
+            examples = torch.load(shard_path, map_location='cpu')
+            all_examples.extend(examples)
+    
+        print(f"✓ Loaded {len(all_examples)} examples")
+    
+        # Limit examples if requested
+        if args.max_examples:
+            all_examples = all_examples[:args.max_examples]
+            print(f"  Evaluating on {len(all_examples)} examples (limited)")
+    
+        # Run evaluation
+        print("\n" + "="*60)
+        print("Running Evaluation")
+        print("="*60)
+    
+        all_results = []
+    
+        for ex_idx, example in enumerate(tqdm(all_examples, desc="Evaluating examples")):
+            try:
+                example_results = evaluate_single_example(
+                    example,
+                    model,
+                    device,
+                    model_config['num_arms'],
+                    model_config['num_agents'],
+                    model_config['num_bandits'],
+                    SPECIAL,
+                    normalizer=normalizer,
+                    alpha0=alpha0,
+                    beta0=beta0,
+                    masking_strategy=masking_strategy
+                )
             
-            # Add example_id to each result
-            for result in example_results:
-                result['example_id'] = ex_idx
+                # Add example_id to each result
+                for result in example_results:
+                    result['example_id'] = ex_idx
             
-            all_results.extend(example_results)
+                all_results.extend(example_results)
             
-        except Exception as e:
-            print(f"\n  Warning: Failed on example {ex_idx}: {e}")
-            continue
+            except Exception as e:
+                print(f"\n  Warning: Failed on example {ex_idx}: {e}")
+                continue
     
-    # Convert to DataFrame
-    print(f"\n✓ Completed evaluation on {len(all_examples)} examples")
-    print(f"  Total metrics computed: {len(all_results)}")
+        # Convert to DataFrame
+        print(f"\n✓ Completed evaluation on {len(all_examples)} examples")
+        print(f"  Total metrics computed: {len(all_results)}")
     
-    df = pd.DataFrame(all_results)
+        df = pd.DataFrame(all_results)
     
-    # Create output directory
-    output_path = Path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Create output directory
+        output_path = Path(args.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Save results
-    print(f"\nSaving results to {args.output_path}...")
-    df.to_csv(args.output_path, index=False)
+        # Save results
+        print(f"\nSaving results to {args.output_path}...")
+        df.to_csv(args.output_path, index=False)
     
-    # Print summary statistics
-    print("\n" + "="*60)
-    print("Summary Statistics")
-    print("="*60)
+        # Print summary statistics
+        print("\n" + "="*60)
+        print("Summary Statistics")
+        print("="*60)
     
-    print("\nTheta Correlation by Cutoff:")
-    print(df.groupby('cutoff')['theta_correlation'].agg(['mean', 'std', 'count']))
+        print("\nTheta Correlation by Cutoff:")
+        print(df.groupby('cutoff')['theta_correlation'].agg(['mean', 'std', 'count']))
     
-    print("\nTheta Variance by Cutoff:")
-    print(df.groupby('cutoff')['theta_variance'].agg(['mean', 'std']))
+        print("\nTheta Variance by Cutoff:")
+        print(df.groupby('cutoff')['theta_variance'].agg(['mean', 'std']))
     
-    print("\nExpert Prediction Accuracy:")
-    print(f"  Alpha correlation: {df['expert_alpha_corr'].mean():.4f} ± {df['expert_alpha_corr'].std():.4f}")
-    print(f"  Beta correlation: {df['expert_beta_corr'].mean():.4f} ± {df['expert_beta_corr'].std():.4f}")
-    print(f"  N_tot error: {df['expert_N_tot_error'].mean():.2f} ± {df['expert_N_tot_error'].std():.2f}")
-    print(f"  N_tot raw (from data): {df['expert_N_tot_raw'].mean():.1f} (should be 72)")
-    print(f"  N_tot true (computed): {df['expert_N_tot_true'].mean():.1f}")
-    print(f"  N_tot pred: {df['expert_N_tot_pred'].mean():.1f}")
+        print("\nExpert Prediction Accuracy:")
+        print(f"  Alpha correlation: {df['expert_alpha_corr'].mean():.4f} ± {df['expert_alpha_corr'].std():.4f}")
+        print(f"  Beta correlation: {df['expert_beta_corr'].mean():.4f} ± {df['expert_beta_corr'].std():.4f}")
+        print(f"  N_tot error: {df['expert_N_tot_error'].mean():.2f} ± {df['expert_N_tot_error'].std():.2f}")
+        print(f"  N_tot raw (from data): {df['expert_N_tot_raw'].mean():.1f}")
+        print(f"  N_tot true (computed): {df['expert_N_tot_true'].mean():.1f}")
+        print(f"  N_tot pred: {df['expert_N_tot_pred'].mean():.1f}")
     
-    print("\nNovice Prediction Accuracy:")
-    print(f"  Alpha correlation: {df['novice_alpha_corr'].mean():.4f} ± {df['novice_alpha_corr'].std():.4f}")
-    print(f"  Beta correlation: {df['novice_beta_corr'].mean():.4f} ± {df['novice_beta_corr'].std():.4f}")
-    print(f"  N_tot error: {df['novice_N_tot_error'].mean():.2f} ± {df['novice_N_tot_error'].std():.2f}")
-    print(f"  N_tot raw (from data): {df['novice_N_tot_raw'].mean():.1f} (should be 0)")
-    print(f"  N_tot true (computed): {df['novice_N_tot_true'].mean():.1f}")
-    print(f"  N_tot pred: {df['novice_N_tot_pred'].mean():.1f}")
+        print("\nNovice Prediction Accuracy:")
+        print(f"  Alpha correlation: {df['novice_alpha_corr'].mean():.4f} ± {df['novice_alpha_corr'].std():.4f}")
+        print(f"  Beta correlation: {df['novice_beta_corr'].mean():.4f} ± {df['novice_beta_corr'].std():.4f}")
+        print(f"  N_tot error: {df['novice_N_tot_error'].mean():.2f} ± {df['novice_N_tot_error'].std():.2f}")
+        print(f"  N_tot raw (from data): {df['novice_N_tot_raw'].mean():.1f}")
+        print(f"  N_tot true (computed): {df['novice_N_tot_true'].mean():.1f}")
+        print(f"  N_tot pred: {df['novice_N_tot_pred'].mean():.1f}")
     
         print(f"\n✓ Evaluation complete! Results saved to {args.output_path}")
         
