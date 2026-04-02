@@ -1,0 +1,41 @@
+# R junk
+.Rhistory
+.RData
+.Ruserdata
+
+# macOS
+.DS_Store
+
+# Data: ignore everything except preprocessed_data.csv files
+data/**
+!data/**/preprocessed_data.csv
+
+# VS Code (keep specific files you want)
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# renv: the library is already ignored inside renv/, this is extra safety
+renv/library/
+renv/sandbox/
+renv/staging/
+
+# Override root .gitignore *.json rule so renv config is tracked
+!renv/settings.json
+
+# Quarto / knitr artifacts
+_site/
+_freeze/
+*.utf8.md
+*.knit.md
+*_cache/
+cache/
+**/*_files/
+
+# Generated figures (optional if you render them)
+figures/
+
+# Generated analysis report
+analysis.html
+.Rproj.user

@@ -1,0 +1,273 @@
+---
+title: "Analysis Driver"
+format:
+  html:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+library(here)
+library(dotenv)
+library(tidyverse)
+library(janitor)
+library(lme4)
+library(ggthemes)
+library(stringr)
+library(ggtext)
+
+# Load environment variables from project root .env
+dotenv::load_dot_env(here::here("../../.env"))
+modeling_data_dir <- Sys.getenv("MODELING_DATA_DIR")
+experiment_data_path <- Sys.getenv("EXPERIMENT_DATA_PATH")
+analysis_data_dir <- file.path(modeling_data_dir, "analysis", "data")
+analysis_fig_dir <- file.path(modeling_data_dir, "analysis", "figures")
+
+# Source the scripts that hold the real logic
+source("utils/reward_plots.R")
+#source("utils/model_reward_plots.R")
+source("utils/entropy_plots.R")
+source("utils/choice_frequencies.R")
+source("utils/correlations.R")
+source("utils/individual_behavior.R")
+source("utils/aggregate_behavior_distribution.R")
+source("utils/average_behavior_distribution.R")
+source("utils/individual_behavior_distribution.R")
+source("utils/experience_plots.R")
+```
+## Section 1: Participant Results
+
+### Data
+
+```{r}
+experiment_name <- "transfer_bandits_choice_textbox"
+version         <- "pilot_D"
+run_individual_behavior <- TRUE
+
+# Create the figure directory
+fig_dir <- file.path(analysis_fig_dir, experiment_name, version)
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+preprocessed_df <- read_csv(experiment_data_path)
+# head(preprocessed_df)
+```
+
+### Participant Analyses
+
+```{r}
+# Choice Frequencies
+p1 <- choice_frequencies(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p1)
+
+# Reward Plots
+p2_human <- reward_plots(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p2_human)
+
+# Entropy Plots
+p3_human <- entropy_plots(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p3_human)
+
+# Arm-Pulling Correlations
+p4_human <- correlations(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p4_human)
+
+# Average Behavior Distribution Grid
+p_dist_avg_human <- average_behavior_distribution(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_dist_avg_human)
+```
+
+### Individual Participant Analyses
+
+```{r}
+# Individual Participant Trajectories
+if (run_individual_behavior) {
+  individual_behavior(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+}
+
+```
+
+```{r}
+# Individual Participant Distributions
+if (run_individual_behavior) {
+  individual_behavior_distribution(preprocessed_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+}
+```
+
+```{r}
+choice_feedback <- preprocessed_df %>%
+  filter(game == "choice") %>%
+  filter(action == "feedback")
+
+print(choice_feedback$feedback_text)
+```
+
+## Section 2: Model Results
+
+### Data
+
+```{r}
+experiment_name <- "transfer_bandits_choice_textbox"
+version         <- "hybrid_model"
+
+fig_dir <- file.path(analysis_fig_dir, experiment_name, version)
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+model_df <- read_csv(file.path(analysis_data_dir, "hybrid_model_predictions.csv"))
+model_df <- filter(model_df, learner_segment_input == "model" & beta_method == "theta_betas")
+# head(model_df)
+```
+
+### Model Analyses
+```{r}
+# Reward Plots
+p_reward_model <- reward_plots(model_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_reward_model)
+```
+
+```{r}
+
+# Entropy Plots
+p_entropy_model <- entropy_plots(model_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_entropy_model)
+
+# Arm-Pulling Correlations
+p_corr_model <- correlations(model_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_corr_model)
+
+# Average Behavior Distribution Grid
+p_dist_avg_model <- average_behavior_distribution(model_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_dist_avg_model)
+
+# Model Experience Predictions
+p_experience <- experience_plots(model_df, experiment_name, version, save = TRUE, fig_dir = fig_dir)
+print(p_experience)
+```
+
+
+```{r}
+
+# Load your filtered data
+model_df <- read_csv(file.path(analysis_data_dir, "hybrid_model_predictions.csv")) %>%
+  filter(learner_segment_input == "model" & beta_method == "theta_betas")
+
+# Parse the theta_betas predictions
+parse_betas <- function(beta_str) {
+  if (is.na(beta_str)) return(NULL)
+  # Remove brackets and parse
+  pairs <- str_extract_all(beta_str, "\\([0-9.]+,\\s*[0-9.]+\\)")[[1]]
+  alphas <- str_extract(pairs, "^\\([0-9.]+") %>% str_remove("\\(") %>% as.numeric()
+  betas <- str_extract(pairs, "[0-9.]+\\)$") %>% str_remove("\\)") %>% as.numeric()
+  list(alpha = alphas, beta = betas)
+}
+
+# Compute expected payoffs for each play game
+play_analysis <- model_df %>%
+  filter(game == "play") %>%
+  group_by(session_id, game_index, rollout_id) %>%
+  slice(1) %>%  # One row per play segment
+  ungroup() %>%
+  mutate(
+    parsed = map(theta_betas, parse_betas),
+    alphas = map(parsed, ~.x$alpha),
+    betas = map(parsed, ~.x$beta)
+  ) %>%
+  mutate(
+    # Expected payoff = alpha / (alpha + beta)
+    expected_payoffs = map2(alphas, betas, ~.x / (.x + .y)),
+    # Variance across arms (informativeness measure)
+    payoff_variance = map_dbl(expected_payoffs, var),
+    # Max expected payoff
+    max_expected = map_dbl(expected_payoffs, max),
+    # Min expected payoff  
+    min_expected = map_dbl(expected_payoffs, min),
+    # Range
+    payoff_range = max_expected - min_expected
+  )
+
+# Plot variance over game_index
+p_variance <- ggplot(play_analysis, aes(x = game_index, y = payoff_variance)) +
+  geom_jitter(alpha = 0.2, width = 0.2) +
+  stat_summary(fun = mean, geom = "line", color = "red", size = 1) +
+  stat_summary(fun = mean, geom = "point", color = "red", size = 2) +
+  labs(
+    title = "Model Prediction Informativeness Over Time",
+    subtitle = "Variance of expected payoffs across arms (higher = more informative)",
+    x = "Game Index",
+    y = "Variance of Expected Payoffs"
+  ) +
+  theme_minimal()
+print(p_variance)
+    ggsave(
+      filename = file.path(fig_dir, paste0(experiment_name, "_", version, "_variance.png")),
+      plot = p_variance, width = 10, height = 8, bg = "white"
+    )
+
+# Summary statistics
+print("Variance by game_index (are predictions getting less informative?):")
+print(play_analysis %>%
+  group_by(game_index) %>%
+  summarise(
+    mean_variance = mean(payoff_variance),
+    mean_range = mean(payoff_range)
+  ))
+```
+
+```{r}
+# Parse true payoffs
+parse_true_payoffs <- function(zone_bandit) {
+  as.numeric(str_split(zone_bandit, ",")[[1]])
+}
+
+# Compute expected payoffs from alpha/beta
+compute_expected <- function(beta_str) {
+  parsed <- parse_betas(beta_str)
+  if (is.null(parsed)) return(NULL)
+  parsed$alpha / (parsed$alpha + parsed$beta)
+}
+
+# Analyze predictions vs true payoffs
+correlation_analysis <- model_df %>%
+  filter(game == "play") %>%
+  group_by(session_id, game_index, zone_bandit, rollout_id) %>%
+  slice(1) %>%
+  ungroup() %>%
+  mutate(
+    true_payoffs = map(zone_bandit, parse_true_payoffs),
+    pred_payoffs = map(theta_betas, compute_expected),
+    correlation = map2_dbl(pred_payoffs, true_payoffs, 
+                          ~if(is.null(.x)) NA_real_ else cor(.x, .y))
+  )
+
+# Plot correlation over time
+p_correlation <- ggplot(correlation_analysis, aes(x = game_index, y = correlation)) +
+  geom_jitter(alpha = 0.2, width = 0.2) +
+  stat_summary(fun = mean, geom = "line", color = "blue", size = 1) +
+  stat_summary(fun = mean, geom = "point", color = "blue", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  ylim(-1, 1) +
+  labs(
+    title = "Prediction Accuracy Over Time",
+    subtitle = "Correlation between predicted and true payoffs",
+    x = "Game Index",
+    y = "Correlation"
+  )
+
+print(p_correlation)
+  ggsave(
+    filename = file.path(fig_dir, paste0(experiment_name, "_", version, "_correlation.png")),
+    plot = p_correlation, width = 10, height = 8, bg = "white"
+  )
+
+# Summary
+print("Mean correlation by game_index:")
+print(correlation_analysis %>%
+  group_by(game_index) %>%
+  summarise(mean_corr = mean(correlation, na.rm = TRUE)))
+```
