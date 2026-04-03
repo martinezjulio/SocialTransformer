@@ -23,7 +23,7 @@ Out-of-repo directories (data, experiments) are configured via a `.env` file in 
 cp .env.example .env
 # Edit .env with your paths:
 #   TRAINING_DATA_ROOT_DIR=/path/to/data
-#   MODELING_DATA_DIR=/path/to/experiments/dev
+#   OUTPUT_DATA_DIR=/path/to/experiments/dev
 #   EXPERIMENT_DATA_PATH=/path/to/data/experiment_data/.../preprocessed_data.csv
 ```
 
@@ -86,10 +86,10 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 ### Run Management
 
-Experiment outputs are organized under `$MODELING_DATA_DIR/` (set in `.env`):
+Experiment outputs are organized under `$OUTPUT_DATA_DIR/` (set in `.env`):
 
 ```
-$MODELING_DATA_DIR/
+$OUTPUT_DATA_DIR/
   training_runs/              # Per-run directories keyed by wandb ID
     wandb_<id>/
       checkpoints/            # .pt files (local or downloaded from wandb)
@@ -137,7 +137,7 @@ The R/Quarto analysis environment uses `renv` (at repo root) for R package manag
 # One-time: install R packages
 bash scripts/setup_r_env.sh
 
-# Render analysis (requires inference data in $MODELING_DATA_DIR/inference/data/)
+# Render analysis (requires inference data in $OUTPUT_DATA_DIR/inference/data/)
 bash scripts/run_analysis.sh
 ```
 
@@ -171,9 +171,9 @@ repo root/
 
 - **R runtime**: Installed via conda (`r-base`) in the `SocialTransformer` environment.
 - **R packages**: Managed by `renv` (at repo root, independent of conda). Run `renv::restore()` to install from `renv.lock`.
-- **Data paths**: `analysis_report.qmd` reads `MODELING_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
+- **Data paths**: `analysis_report.qmd` reads `OUTPUT_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
 - **`here::here()`** resolves to the repo root (anchored by `.git/`). No `.here` sentinel needed.
-- **Figures**: All plots save to `$MODELING_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `src/analysis/figures/` (gitignored) when run standalone.
+- **Figures**: All plots save to `$OUTPUT_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `src/analysis/figures/` (gitignored) when run standalone.
 - **Preprocessing**: `src/analysis/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
 
 ## W&B Integration

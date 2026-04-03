@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render the Quarto analysis document
-# Requires: inference data in $MODELING_DATA_DIR/inference/data/
+# Requires: inference data in $OUTPUT_DATA_DIR/inference/data/
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,18 +13,18 @@ conda activate SocialTransformer
 echo "=================================="
 echo "Rendering analysis document"
 echo "=================================="
-echo "Data directory: $MODELING_DATA_DIR/inference/data/"
+echo "Data directory: $OUTPUT_DATA_DIR/inference/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."
-quarto render reports/analysis_report.qmd --output-dir "$MODELING_DATA_DIR/other"
+quarto render reports/analysis_report.qmd --output-dir "$OUTPUT_DATA_DIR/other"
 
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
     echo "Analysis rendered successfully!"
     echo "=================================="
-    echo "Output: $MODELING_DATA_DIR/other/analysis_report.html"
+    echo "Output: $OUTPUT_DATA_DIR/other/analysis_report.html"
 else
     echo ""
     echo "=================================="
