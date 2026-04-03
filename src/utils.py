@@ -120,6 +120,19 @@ def setup_analysis_directory():
     return analysis_dir
 
 
+def setup_inference_directory():
+    """
+    Create inference directory structure under $MODELING_DATA_DIR/inference/.
+
+    Returns:
+        Path to inference directory
+    """
+    inference_dir = get_modeling_data_dir() / 'inference'
+    for subdir in ['data', 'metadata']:
+        (inference_dir / subdir).mkdir(parents=True, exist_ok=True)
+    return inference_dir
+
+
 def write_run_yaml(run_dir, metadata, subdir=None):
     """
     Write run.yaml with run metadata.

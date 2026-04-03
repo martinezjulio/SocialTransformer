@@ -25,7 +25,7 @@ from tqdm import tqdm
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from transforms import BeliefNormalizer
-from utils import setup_analysis_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
+from utils import setup_inference_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
@@ -750,9 +750,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Set up analysis directory structure
-    analysis_dir = setup_analysis_directory()
-    print(f"Analysis directory: {analysis_dir}")
+    # Set up inference directory structure
+    inference_dir = setup_inference_directory()
+    print(f"Inference directory: {inference_dir}")
 
     # Write run metadata
     metadata = {
@@ -762,12 +762,12 @@ def main():
         'num_rollouts': args.num_rollouts,
         'seed': args.seed,
     }
-    write_run_yaml(analysis_dir, metadata, subdir='metadata')
-    write_config_yaml(analysis_dir, vars(args), subdir='metadata')
+    write_run_yaml(inference_dir, metadata, subdir='metadata')
+    write_config_yaml(inference_dir, vars(args), subdir='metadata')
 
     # Update output path to use analysis directory if it's still default
     if args.output_path == "data/model_predictions/hybrid_model_predictions.csv":
-        args.output_path = str(analysis_dir / 'data' / 'hybrid_model_predictions.csv')
+        args.output_path = str(inference_dir / 'data' / 'hybrid_model_predictions.csv')
     
     # Set device
     device = torch.device(args.device)
@@ -913,7 +913,7 @@ def main():
         print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
         print(f"Output saved to: {args.output_path}")
         
-        finalize_run_yaml(analysis_dir, status='completed', subdir='metadata')
+        finalize_run_yaml(inference_dir, status='completed', subdir='metadata')
         print(f"\n{'='*60}")
         print("Inference completed successfully!")
         print(f"{'='*60}")
@@ -922,13 +922,13 @@ def main():
         print(f"\n{'='*60}")
         print("Inference interrupted by user")
         print(f"{'='*60}")
-        finalize_run_yaml(analysis_dir, status='interrupted', subdir='metadata')
+        finalize_run_yaml(inference_dir, status='interrupted', subdir='metadata')
         raise
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"Inference failed with error: {e}")
         print(f"{'='*60}")
-        finalize_run_yaml(analysis_dir, status='failed', subdir='metadata', error=str(e))
+        finalize_run_yaml(inference_dir, status='failed', subdir='metadata', error=str(e))
         raise
 
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render the Quarto analysis document
-# Requires: inference data in $MODELING_DATA_DIR/analysis/data/
+# Requires: inference data in $MODELING_DATA_DIR/inference/data/
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +13,7 @@ conda activate SocialTransformer
 echo "=================================="
 echo "Rendering analysis document"
 echo "=================================="
-echo "Data directory: $MODELING_DATA_DIR/analysis/data/"
+echo "Data directory: $MODELING_DATA_DIR/inference/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."

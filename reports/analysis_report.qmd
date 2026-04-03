@@ -24,7 +24,7 @@ library(ggtext)
 dotenv::load_dot_env(here::here(".env"))
 modeling_data_dir <- Sys.getenv("MODELING_DATA_DIR")
 experiment_data_path <- Sys.getenv("EXPERIMENT_DATA_PATH")
-analysis_data_dir <- file.path(modeling_data_dir, "analysis", "data")
+inference_data_dir <- file.path(modeling_data_dir, "inference", "data")
 analysis_fig_dir <- file.path(modeling_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
@@ -120,7 +120,7 @@ if (!dir.exists(fig_dir)) {
   dir.create(fig_dir, recursive = TRUE)
 }
 
-model_df <- read_csv(file.path(analysis_data_dir, "hybrid_model_predictions.csv"))
+model_df <- read_csv(file.path(inference_data_dir, "hybrid_model_predictions.csv"))
 model_df <- filter(model_df, learner_segment_input == "model" & beta_method == "theta_betas")
 # head(model_df)
 ```
@@ -155,7 +155,7 @@ print(p_experience)
 ```{r}
 
 # Load your filtered data
-model_df <- read_csv(file.path(analysis_data_dir, "hybrid_model_predictions.csv")) %>%
+model_df <- read_csv(file.path(inference_data_dir, "hybrid_model_predictions.csv")) %>%
   filter(learner_segment_input == "model" & beta_method == "theta_betas")
 
 # Parse the theta_betas predictions
