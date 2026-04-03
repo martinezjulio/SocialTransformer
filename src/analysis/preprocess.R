@@ -4,7 +4,7 @@ library(dotenv)
 library(tidyverse)
 
 # Load environment variables from project root .env
-dotenv::load_dot_env(here::here("../../.env"))
+dotenv::load_dot_env(here::here(".env"))
 experiment_data_dir <- Sys.getenv("EXPERIMENT_DATA_DIR")
 
 # 1) Set Experiment Name and Version

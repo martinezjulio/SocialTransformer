@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/../.env"
 source "$CONDA_SETUP"
 conda activate SocialTransformer
 
+export PYTHONPATH="src:$PYTHONPATH"
+
 # Set parameters
 DATASET_NAME="demonstrations_data_02"
 TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
@@ -115,7 +117,7 @@ if [ -n "$PROFILE_METHOD_OVERRIDE" ]; then
 fi
 
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
-    python src/eval.py \
+    python src/eval/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --checkpoint_path "$CHECKPOINT_PATH" \
         --device $DEVICE \
@@ -123,7 +125,7 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
         $MASKING_STRATEGY_FLAG \
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
-    python src/eval.py \
+    python src/eval/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_artifact "$WANDB_ARTIFACT" \
         --device $DEVICE \
@@ -131,7 +133,7 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         $MASKING_STRATEGY_FLAG \
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    python src/eval.py \
+    python src/eval/eval.py \
         --test_manifest "$TEST_MANIFEST" \
         --wandb_sweep "$WANDB_SWEEP" \
         --device $DEVICE \

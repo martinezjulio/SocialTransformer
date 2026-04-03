@@ -19,7 +19,7 @@ reward_plots <- function(preprocessed_df, experiment_name, version, save = FALSE
 
   # Create the figure directory if saving
   if (save) {
-    if (is.null(fig_dir)) fig_dir <- here("figures", experiment_name, version)
+    if (is.null(fig_dir)) fig_dir <- here("src", "analysis", "figures", experiment_name, version)
     if (!dir.exists(fig_dir)) {
       dir.create(fig_dir, recursive = TRUE)
     }

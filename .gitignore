@@ -122,3 +122,22 @@ experiments/
 
 # Cursor files
 .cursor/
+
+# R session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user
+
+# Quarto / knitr artifacts
+_site/
+_freeze/
+*.utf8.md
+*.knit.md
+*_cache/
+cache/
+**/*_files/
+*.html
+
+# renv (override *.json rule for renv config)
+!renv/settings.json

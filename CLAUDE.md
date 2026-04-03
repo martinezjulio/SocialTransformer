@@ -72,7 +72,7 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 4. **`src/train.py`** — Training loop with **segment-level masking**: each example randomly selects 1..N visible segments, masks future segments in attention, and predicts for the bandit corresponding to the last visible segment's round. This teaches the model to predict from variable context lengths.
 
-5. **`src/eval.py`** / **`src/eval2.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
+5. **`src/eval/eval.py`** / **`src/eval/eval2.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
 
 6. **`src/inference.py`** — Loads a trained model and runs Thompson sampling on human experiment data, producing hybrid predictions (real demonstrator data + model-simulated learner actions).
 
@@ -126,7 +126,7 @@ Events are tuples `(bandit_id, agent_id, action, reward)`:
 
 ## R/Quarto Analysis Environment
 
-The `src/analysis/` directory contains an R/Quarto analysis environment for visualizing inference results. It uses `renv` for R package management and the conda environment's R runtime.
+The R/Quarto analysis environment uses `renv` (at repo root) for R package management and the conda environment's R runtime. Quarto reports live in `reports/`, R scripts in `src/analysis/`.
 
 ### Setup
 
@@ -141,26 +141,37 @@ bash scripts/run_analysis.sh
 ### Structure
 
 ```
-src/analysis/
-├── analysis.qmd              # Main Quarto analysis document
-├── utils/                    # R helper scripts (plots, preprocessing)
-├── renv.lock                 # Locked R dependencies
-├── renv/                     # renv bootstrap files
-├── .here                     # Sentinel so here::here() resolves to this dir
-├── .Rprofile                 # Activates renv on R startup
-├── .gitignore                # R-specific ignores
-├── Makefile                  # Build targets: render, lint, fmt
-└── SocialBanditsAnalysis.Rproj
+repo root/
+├── .Rprofile                          # Activates renv on R startup
+├── _quarto.yml                        # Anchors Quarto project root
+├── renv.lock                          # Locked R dependencies
+├── renv/                              # renv bootstrap files
+├── reports/
+│   └── analysis_report.qmd           # Main Quarto analysis document
+└── src/
+    └── analysis/
+        ├── reward_plots.R             # R helper scripts (plots, preprocessing)
+        ├── entropy_plots.R
+        ├── choice_frequencies.R
+        ├── correlations.R
+        ├── individual_behavior.R
+        ├── aggregate_behavior_distribution.R
+        ├── average_behavior_distribution.R
+        ├── individual_behavior_distribution.R
+        ├── experience_plots.R
+        ├── behavior_distribution_average.R
+        ├── plots.R
+        └── preprocess.R
 ```
 
 ### Key Details
 
 - **R runtime**: Installed via conda (`r-base`) in the `SocialTransformer` environment.
-- **R packages**: Managed by `renv` (independent of conda). Run `renv::restore()` to install from `renv.lock`.
-- **Data paths**: `analysis.qmd` reads `MODELING_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
-- **`here::here()`** resolves to `src/analysis/` (anchored by the `.here` sentinel file).
-- **Figures**: All plots save to `$MODELING_DATA_DIR/analysis/figures/` when called from `analysis.qmd` (via `fig_dir` parameter). Util functions fall back to `src/analysis/figures/` (gitignored) when run standalone.
-- **Preprocessing**: `utils/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
+- **R packages**: Managed by `renv` (at repo root, independent of conda). Run `renv::restore()` to install from `renv.lock`.
+- **Data paths**: `analysis_report.qmd` reads `MODELING_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
+- **`here::here()`** resolves to the repo root (anchored by `.git/`). No `.here` sentinel needed.
+- **Figures**: All plots save to `$MODELING_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `src/analysis/figures/` (gitignored) when run standalone.
+- **Preprocessing**: `src/analysis/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
 
 ## W&B Integration
 
