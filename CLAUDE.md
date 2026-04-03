@@ -63,18 +63,19 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 1. **`src/generate_simulations.py`** — Creates synthetic multi-round bandit scenarios with expert/novice demonstrators. Outputs sharded `.pt` files with `manifest.json` per split.
 
-2. **`src/dataloader.py`** — Loads shards via `ShardedExamplesDataset`, tokenizes events into 5 channels (`bandit_ids`, `agent_ids`, `action_ids`, `reward_ids`, `special_ids`) via `BanditSequenceDataset`. Agent IDs are remapped: 0=learner, 1+=demonstrators. A QUERY token is appended for prediction readout.
+2. **`src/data/dataloader.py`** — Loads shards via `ShardedExamplesDataset`, tokenizes events into 5 channels (`bandit_ids`, `agent_ids`, `action_ids`, `reward_ids`, `special_ids`) via `BanditSequenceDataset`. Agent IDs are remapped: 0=learner, 1+=demonstrators. A QUERY token is appended for prediction readout. **`src/data/transforms.py`** provides `BeliefNormalizer` for target normalization.
 
 3. **`src/models/BetaModel.py`** — `SBIPosteriorTransformer` with three stages:
    - `EventEmbedder`: sums per-field embeddings + positional encoding
    - `CausalTransformer`: standard causal attention with optional custom masks
    - Prediction heads outputting Beta distribution parameters for: bandit payoffs (θ), per-demonstrator beliefs (α,β), and optionally demonstrator experience counts
+   - **`src/models/losses.py`** — Loss functions (Beta NLL, belief losses, experience loss). **`src/models/load_checkpoint.py`** — Checkpoint loading from local/wandb sources.
 
 4. **`src/train.py`** — Training loop with **segment-level masking**: each example randomly selects 1..N visible segments, masks future segments in attention, and predicts for the bandit corresponding to the last visible segment's round. This teaches the model to predict from variable context lengths.
 
 5. **`src/eval/eval.py`** / **`src/eval/eval2.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
 
-6. **`src/inference.py`** — Loads a trained model and runs Thompson sampling on human experiment data, producing hybrid predictions (real demonstrator data + model-simulated learner actions).
+6. **`src/run_inference.py`** — Loads a trained model and runs Thompson sampling on human experiment data, producing hybrid predictions (real demonstrator data + model-simulated learner actions).
 
 ### Key Design Decisions
 
@@ -111,7 +112,7 @@ Training runs get per-run directories (keyed by wandb ID) under `training_runs/`
 
 ### Checkpoint Loading
 
-Three sources supported across eval/inference scripts:
+Three sources supported via `src/models/load_checkpoint.py` across eval/inference scripts:
 - `local` — file path to `.pt` checkpoint
 - `wandb_artifact` — `entity/project/artifact:alias`
 - `wandb_sweep` — `entity/project/sweep_id` (loads best model)

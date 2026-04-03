@@ -106,7 +106,7 @@ fi
 # Build python command based on checkpoint source
 echo "Starting inference..."
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
-    python src/inference.py \
+    python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --checkpoint_path "$CHECKPOINT_PATH" \
         --device $DEVICE \
@@ -115,7 +115,7 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
         $MASKING_STRATEGY_FLAG \
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
-    python src/inference.py \
+    python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --wandb_artifact "$WANDB_ARTIFACT" \
         --device $DEVICE \
@@ -124,7 +124,7 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         $MASKING_STRATEGY_FLAG \
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    python src/inference.py \
+    python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --wandb_sweep "$WANDB_SWEEP" \
         --device $DEVICE \

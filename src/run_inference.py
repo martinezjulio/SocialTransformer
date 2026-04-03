@@ -23,8 +23,8 @@ import torch.nn as nn
 from tqdm import tqdm
 
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
-from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
-from transforms import BeliefNormalizer
+from models.load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
+from data.transforms import BeliefNormalizer
 from utils import setup_inference_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
@@ -756,7 +756,7 @@ def main():
 
     # Write run metadata
     metadata = {
-        'script': 'inference.py',
+        'script': 'run_inference.py',
         'command': ' '.join(sys.argv),
         'experiment_data_path': args.experiment_data_path,
         'num_rollouts': args.num_rollouts,
