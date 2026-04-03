@@ -98,13 +98,16 @@ $MODELING_DATA_DIR/
     data/                     # evaluation CSVs
     figures/                  # evaluation plots
     metadata/                 # config.yaml, run.yaml
-  analysis/                   # Inference/analysis outputs (overwrites on re-run)
+  inference/                  # Inference outputs (overwrites on re-run)
     data/                     # inference CSVs
-    figures/                  # inference/analysis plots
+    metadata/                 # config.yaml, run.yaml
+  analysis/                   # Analysis outputs (overwrites on re-run)
+    data/                     # analysis CSVs
+    figures/                  # analysis plots
     metadata/                 # config.yaml, run.yaml
 ```
 
-Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval and inference use flat `eval/` and `analysis/` directories that overwrite on re-run.
+Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run.
 
 ### Checkpoint Loading
 
@@ -134,7 +137,7 @@ The R/Quarto analysis environment uses `renv` (at repo root) for R package manag
 # One-time: install R packages
 bash scripts/setup_r_env.sh
 
-# Render analysis (requires inference data in $MODELING_DATA_DIR/analysis/data/)
+# Render analysis (requires inference data in $MODELING_DATA_DIR/inference/data/)
 bash scripts/run_analysis.sh
 ```
 
