@@ -22,10 +22,10 @@ library(ggtext)
 
 # Load environment variables from project root .env
 dotenv::load_dot_env(here::here(".env"))
-modeling_data_dir <- Sys.getenv("MODELING_DATA_DIR")
+output_data_dir <- Sys.getenv("OUTPUT_DATA_DIR")
 experiment_data_path <- Sys.getenv("EXPERIMENT_DATA_PATH")
-inference_data_dir <- file.path(modeling_data_dir, "inference", "data")
-analysis_fig_dir <- file.path(modeling_data_dir, "analysis", "figures")
+inference_data_dir <- file.path(output_data_dir, "inference", "data")
+analysis_fig_dir <- file.path(output_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
 source(here::here("src", "analysis", "reward_plots.R"))

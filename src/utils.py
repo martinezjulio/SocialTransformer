@@ -17,19 +17,19 @@ def get_special_characters():
     SPECIAL = {"NONE": 0, "QUERY": 1, "BANDIT_SEP": 2, "LEARNER_RAW_ID": 99}
     return SPECIAL
 
-def get_modeling_data_dir():
-    """Return the modeling data directory from MODELING_DATA_DIR env var."""
-    modeling_data_dir = os.environ.get('MODELING_DATA_DIR')
-    if not modeling_data_dir:
+def get_output_data_dir():
+    """Return the output data directory from OUTPUT_DATA_DIR env var."""
+    output_data_dir = os.environ.get('OUTPUT_DATA_DIR')
+    if not output_data_dir:
         raise RuntimeError(
-            "MODELING_DATA_DIR environment variable is not set. "
-            "Source the .env file or set MODELING_DATA_DIR before running."
+            "OUTPUT_DATA_DIR environment variable is not set. "
+            "Source the .env file or set OUTPUT_DATA_DIR before running."
         )
-    return Path(modeling_data_dir)
+    return Path(output_data_dir)
 
 def get_training_runs_dir():
-    """Return the training runs directory: $MODELING_DATA_DIR/training_runs/"""
-    return get_modeling_data_dir() / 'training_runs'
+    """Return the training runs directory: $OUTPUT_DATA_DIR/training_runs/"""
+    return get_output_data_dir() / 'training_runs'
 
 def get_git_commit():
     """Return the current git commit hash, or None on failure."""
@@ -68,7 +68,7 @@ def get_run_id(use_wandb=False, wandb_run=None):
 
 def setup_training_run_directory(run_id, subdirs=None):
     """
-    Create training run directory structure under $MODELING_DATA_DIR/training_runs/<run_id>/.
+    Create training run directory structure under $OUTPUT_DATA_DIR/training_runs/<run_id>/.
 
     Args:
         run_id: Run identifier (e.g., "wandb_abc123" or "uuid_xyz789")
@@ -96,12 +96,12 @@ setup_run_directory = setup_training_run_directory
 
 def setup_eval_directory():
     """
-    Create eval directory structure under $MODELING_DATA_DIR/eval/.
+    Create eval directory structure under $OUTPUT_DATA_DIR/eval/.
 
     Returns:
         Path to eval directory
     """
-    eval_dir = get_modeling_data_dir() / 'eval'
+    eval_dir = get_output_data_dir() / 'eval'
     for subdir in ['data', 'figures', 'metadata']:
         (eval_dir / subdir).mkdir(parents=True, exist_ok=True)
     return eval_dir
@@ -109,12 +109,12 @@ def setup_eval_directory():
 
 def setup_analysis_directory():
     """
-    Create analysis directory structure under $MODELING_DATA_DIR/analysis/.
+    Create analysis directory structure under $OUTPUT_DATA_DIR/analysis/.
 
     Returns:
         Path to analysis directory
     """
-    analysis_dir = get_modeling_data_dir() / 'analysis'
+    analysis_dir = get_output_data_dir() / 'analysis'
     for subdir in ['data', 'figures', 'metadata']:
         (analysis_dir / subdir).mkdir(parents=True, exist_ok=True)
     return analysis_dir
@@ -122,12 +122,12 @@ def setup_analysis_directory():
 
 def setup_inference_directory():
     """
-    Create inference directory structure under $MODELING_DATA_DIR/inference/.
+    Create inference directory structure under $OUTPUT_DATA_DIR/inference/.
 
     Returns:
         Path to inference directory
     """
-    inference_dir = get_modeling_data_dir() / 'inference'
+    inference_dir = get_output_data_dir() / 'inference'
     for subdir in ['data', 'metadata']:
         (inference_dir / subdir).mkdir(parents=True, exist_ok=True)
     return inference_dir

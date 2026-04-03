@@ -15,7 +15,7 @@ export PYTHONPATH="src:$PYTHONPATH"
 # Set parameters
 DATASET_NAME="demonstrations_data_02"
 TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
-# Note: Output paths managed automatically by eval.py ($MODELING_DATA_DIR/eval/)
+# Note: Output paths managed automatically by eval.py ($OUTPUT_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 
@@ -48,7 +48,7 @@ echo "=================================="
 echo "Evaluation Configuration"
 echo "=================================="
 echo "Test manifest: $TEST_MANIFEST"
-echo "Output path: \$MODELING_DATA_DIR/eval/{data,figures,metadata}/"
+echo "Output path: \$OUTPUT_DATA_DIR/eval/{data,figures,metadata}/"
 echo "Device: $DEVICE"
 if [ -n "$MAX_EXAMPLES" ]; then
     echo "Max examples: $MAX_EXAMPLES"
@@ -148,7 +148,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Evaluation completed successfully!"
     echo "=================================="
-    echo "Results saved to: $MODELING_DATA_DIR/eval/"
+    echo "Results saved to: $OUTPUT_DATA_DIR/eval/"
     echo ""
     echo "The output contains per-cutoff metrics for:"
     echo "  - Theta (payoff) prediction accuracy"
