@@ -16,15 +16,15 @@ echo "=================================="
 echo "Data directory: $MODELING_DATA_DIR/analysis/data/"
 echo ""
 
-cd "${SCRIPT_DIR}/../src/analysis"
-make render
+cd "${SCRIPT_DIR}/.."
+quarto render reports/analysis_report.qmd --output-dir "$MODELING_DATA_DIR/other"
 
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
     echo "Analysis rendered successfully!"
     echo "=================================="
-    echo "Output: src/analysis/analysis.html"
+    echo "Output: $MODELING_DATA_DIR/other/analysis_report.html"
 else
     echo ""
     echo "=================================="

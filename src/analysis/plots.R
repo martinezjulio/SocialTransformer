@@ -7,7 +7,7 @@ library(stringr)
 library(ggtext)
 
 # First, create the figure directory
-dotenv::load_dot_env(here::here("../../.env"))
+dotenv::load_dot_env(here::here(".env"))
 modeling_data_dir <- Sys.getenv("MODELING_DATA_DIR")
 fig_dir <- file.path(modeling_data_dir, "analysis", "figures", experiment_name, version)
 if (!dir.exists(fig_dir)) {

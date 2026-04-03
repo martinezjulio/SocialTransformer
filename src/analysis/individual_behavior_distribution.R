@@ -23,7 +23,7 @@ individual_behavior_distribution <- function(preprocessed_df, experiment_name, v
 
   # Create the figure directory if saving
   if (save) {
-    if (is.null(fig_dir)) fig_dir <- here("figures", experiment_name, version)
+    if (is.null(fig_dir)) fig_dir <- here("src", "analysis", "figures", experiment_name, version)
     dist_dir <- file.path(fig_dir, "individual_distributions")
     if (!dir.exists(dist_dir)) {
       dir.create(dist_dir, recursive = TRUE)

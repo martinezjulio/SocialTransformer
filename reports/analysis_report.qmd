@@ -7,6 +7,7 @@ execute:
   echo: true
   warning: false
   message: false
+  dir: project
 ---
 
 ```{r}
@@ -20,23 +21,23 @@ library(stringr)
 library(ggtext)
 
 # Load environment variables from project root .env
-dotenv::load_dot_env(here::here("../../.env"))
+dotenv::load_dot_env(here::here(".env"))
 modeling_data_dir <- Sys.getenv("MODELING_DATA_DIR")
 experiment_data_path <- Sys.getenv("EXPERIMENT_DATA_PATH")
 analysis_data_dir <- file.path(modeling_data_dir, "analysis", "data")
 analysis_fig_dir <- file.path(modeling_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
-source("utils/reward_plots.R")
-#source("utils/model_reward_plots.R")
-source("utils/entropy_plots.R")
-source("utils/choice_frequencies.R")
-source("utils/correlations.R")
-source("utils/individual_behavior.R")
-source("utils/aggregate_behavior_distribution.R")
-source("utils/average_behavior_distribution.R")
-source("utils/individual_behavior_distribution.R")
-source("utils/experience_plots.R")
+source(here::here("src", "analysis", "reward_plots.R"))
+#source(here::here("src", "analysis", "model_reward_plots.R"))
+source(here::here("src", "analysis", "entropy_plots.R"))
+source(here::here("src", "analysis", "choice_frequencies.R"))
+source(here::here("src", "analysis", "correlations.R"))
+source(here::here("src", "analysis", "individual_behavior.R"))
+source(here::here("src", "analysis", "aggregate_behavior_distribution.R"))
+source(here::here("src", "analysis", "average_behavior_distribution.R"))
+source(here::here("src", "analysis", "individual_behavior_distribution.R"))
+source(here::here("src", "analysis", "experience_plots.R"))
 ```
 ## Section 1: Participant Results
 

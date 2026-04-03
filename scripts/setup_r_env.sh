@@ -13,7 +13,7 @@ echo "=================================="
 echo "Setting up R environment (renv)"
 echo "=================================="
 
-cd "${SCRIPT_DIR}/../src/analysis"
+cd "${SCRIPT_DIR}/.."
 Rscript -e 'renv::restore()'
 
 if [ $? -eq 0 ]; then
