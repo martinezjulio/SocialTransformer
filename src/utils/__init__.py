@@ -107,19 +107,6 @@ def setup_eval_directory():
     return eval_dir
 
 
-def setup_analysis_directory():
-    """
-    Create analysis directory structure under $OUTPUT_DATA_DIR/analysis/.
-
-    Returns:
-        Path to analysis directory
-    """
-    analysis_dir = get_output_data_dir() / 'analysis'
-    for subdir in ['data', 'figures', 'metadata']:
-        (analysis_dir / subdir).mkdir(parents=True, exist_ok=True)
-    return analysis_dir
-
-
 def setup_inference_directory():
     """
     Create inference directory structure under $OUTPUT_DATA_DIR/inference/.
