@@ -27,9 +27,9 @@ import seaborn as sns
 import numpy as np
 
 from models.BetaModel import SBIPosteriorTransformer
-from load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
-from transforms import BeliefNormalizer
-from dataloader import BanditSequenceDataset
+from models.load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
+from data.transforms import BeliefNormalizer
+from data.dataloader import BanditSequenceDataset
 from utils import get_special_characters, setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 SPECIAL = get_special_characters()
@@ -120,7 +120,7 @@ def prepare_single_example_batch(
     Prepare a single example as a batch for model inference.
     Reuses logic from BanditSequenceDataset.__getitem__.
     """
-    from dataloader import _remap_agent_ids_local
+    from data.dataloader import _remap_agent_ids_local
     
     # Remap agent ids
     events = example["events"]
