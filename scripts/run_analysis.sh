@@ -17,14 +17,14 @@ echo "Data directory: $OUTPUT_DATA_DIR/inference/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."
-quarto render reports/analysis_report.qmd --output-dir "$OUTPUT_DATA_DIR/other"
+quarto render reports/analysis_report.qmd --output-dir "$OUTPUT_DATA_DIR/analysis"
 
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
     echo "Analysis rendered successfully!"
     echo "=================================="
-    echo "Output: $OUTPUT_DATA_DIR/other/analysis_report.html"
+    echo "Output: $OUTPUT_DATA_DIR/analysis/analysis_report.html"
 else
     echo ""
     echo "=================================="
