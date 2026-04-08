@@ -130,7 +130,7 @@ Events are tuples `(bandit_id, agent_id, action, reward)`:
 
 ## R/Quarto Analysis Environment
 
-The R/Quarto analysis environment uses `renv` (at repo root) for R package management and the conda environment's R runtime. Quarto reports live in `reports/`, R scripts in `src/analysis/`.
+The R/Quarto analysis environment uses `renv` (at repo root) for R package management and the conda environment's R runtime. Quarto reports live in `reports/`, R scripts in `reports/r/`.
 
 ### Setup
 
@@ -150,10 +150,9 @@ repo root/
 ├── _quarto.yml                        # Anchors Quarto project root
 ├── renv.lock                          # Locked R dependencies
 ├── renv/                              # renv bootstrap files
-├── reports/
-│   └── analysis_report.qmd           # Main Quarto analysis document
-└── src/
-    └── analysis/
+└── reports/
+    ├── analysis_report.qmd           # Main Quarto analysis document
+    └── r/
         ├── reward_plots.R             # R helper scripts (plots, preprocessing)
         ├── entropy_plots.R
         ├── choice_frequencies.R
@@ -174,8 +173,8 @@ repo root/
 - **R packages**: Managed by `renv` (at repo root, independent of conda). Run `renv::restore()` to install from `renv.lock`.
 - **Data paths**: `analysis_report.qmd` reads `OUTPUT_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
 - **`here::here()`** resolves to the repo root (anchored by `.git/`). No `.here` sentinel needed.
-- **Figures**: All plots save to `$OUTPUT_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `src/analysis/figures/` (gitignored) when run standalone.
-- **Preprocessing**: `src/analysis/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
+- **Figures**: All plots save to `$OUTPUT_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `reports/r/figures/` (gitignored) when run standalone.
+- **Preprocessing**: `reports/r/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
 
 ## W&B Integration
 

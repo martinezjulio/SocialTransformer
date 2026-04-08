@@ -28,16 +28,16 @@ inference_data_dir <- file.path(output_data_dir, "inference", "data")
 analysis_fig_dir <- file.path(output_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
-source(here::here("src", "analysis", "reward_plots.R"))
-#source(here::here("src", "analysis", "model_reward_plots.R"))
-source(here::here("src", "analysis", "entropy_plots.R"))
-source(here::here("src", "analysis", "choice_frequencies.R"))
-source(here::here("src", "analysis", "correlations.R"))
-source(here::here("src", "analysis", "individual_behavior.R"))
-source(here::here("src", "analysis", "aggregate_behavior_distribution.R"))
-source(here::here("src", "analysis", "average_behavior_distribution.R"))
-source(here::here("src", "analysis", "individual_behavior_distribution.R"))
-source(here::here("src", "analysis", "experience_plots.R"))
+source(here::here("reports", "r", "reward_plots.R"))
+#source(here::here("reports", "r", "model_reward_plots.R"))
+source(here::here("reports", "r", "entropy_plots.R"))
+source(here::here("reports", "r", "choice_frequencies.R"))
+source(here::here("reports", "r", "correlations.R"))
+source(here::here("reports", "r", "individual_behavior.R"))
+source(here::here("reports", "r", "aggregate_behavior_distribution.R"))
+source(here::here("reports", "r", "average_behavior_distribution.R"))
+source(here::here("reports", "r", "individual_behavior_distribution.R"))
+source(here::here("reports", "r", "experience_plots.R"))
 ```
 ## Section 1: Participant Results
 
