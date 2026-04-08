@@ -1,6 +1,8 @@
 #!/bin/bash
-# Script to evaluate model on test set
-# Measures theta and demonstrator prediction accuracy at different context lengths
+# Full evaluation pipeline:
+#   Step 1: Evaluate model on synthetic test set
+#   Step 2: Run inference on human experiment data
+#   Step 3: Render eval report (2x2 N_total comparison figure)
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,19 +148,64 @@ fi
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
-    echo "Evaluation completed successfully!"
+    echo "Step 1 completed: Evaluation"
     echo "=================================="
     echo "Results saved to: $OUTPUT_DATA_DIR/eval/"
-    echo ""
-    echo "The output contains per-cutoff metrics for:"
-    echo "  - Theta (payoff) prediction accuracy"
-    echo "  - Expert demonstrator belief accuracy"
-    echo "  - Novice demonstrator belief accuracy"
     echo ""
 else
     echo ""
     echo "=================================="
     echo "ERROR: Evaluation failed!"
+    echo "=================================="
+    exit 1
+fi
+
+# ==============================================================================
+# Step 2: Run inference on human experiment data
+# ==============================================================================
+echo "=================================="
+echo "Step 2: Running inference on human experiment data..."
+echo "=================================="
+
+bash "${SCRIPT_DIR}/run_inference.sh"
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "=================================="
+    echo "Step 2 completed: Inference"
+    echo "=================================="
+    echo ""
+else
+    echo ""
+    echo "=================================="
+    echo "ERROR: Inference failed!"
+    echo "=================================="
+    exit 1
+fi
+
+# ==============================================================================
+# Step 3: Render eval report (2x2 N_total comparison figure)
+# ==============================================================================
+echo "=================================="
+echo "Rendering eval report..."
+echo "=================================="
+
+cd "${SCRIPT_DIR}/.."
+quarto render reports/eval_report.qmd --output-dir "$OUTPUT_DATA_DIR/eval"
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "=================================="
+    echo "All steps completed successfully!"
+    echo "=================================="
+    echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
+    echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
+    echo "Report:     $OUTPUT_DATA_DIR/eval/eval_report.html"
+    echo "Figure:     $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
+else
+    echo ""
+    echo "=================================="
+    echo "ERROR: Eval report rendering failed!"
     echo "=================================="
     exit 1
 fi

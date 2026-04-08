@@ -191,7 +191,7 @@ def evaluate_single_example(
     first_demo_id = None
     for seg in example["segment_info"]:
         if seg["type"] == "demo":
-            first_demo_id = seg["agent"]  # raw demo_id (0 or 1)
+            first_demo_id = seg["agent"] - 1  # convert agent_id (1,2) to demo_id (0,1)
             break
 
     # Identify expert by N_tot from first bandit (consistent across bandits)
@@ -203,6 +203,14 @@ def evaluate_single_example(
         game_sequence = "expert-play-novice-play-choice"
     else:
         game_sequence = "novice-play-expert-play-choice"
+
+    # Determine segment_order: watch-first (demo before learner) vs play-first (learner before demo)
+    first_non_structural = None
+    for seg in example["segment_info"]:
+        if seg["type"] in ("demo", "learner"):
+            first_non_structural = seg["type"]
+            break
+    segment_order = "watch-first" if first_non_structural == "demo" else "play-first"
 
     results = []
     
@@ -312,6 +320,7 @@ def evaluate_single_example(
         metrics = {
             "cutoff": cutoff,
             "game_sequence": game_sequence,
+            "segment_order": segment_order,
             "segment_type": seg_info["type"],
             "agent": seg_info.get("agent", -1),
             "round_index": round_idx,
