@@ -1,0 +1,224 @@
+---
+title: "Eval Report: N_total Experience Comparison"
+format:
+  html:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+  dir: project
+---
+
+```{r setup}
+library(here)
+library(dotenv)
+library(tidyverse)
+library(stringr)
+library(patchwork)
+library(cowplot)
+
+# Load environment variables from project root .env
+dotenv::load_dot_env(here::here(".env"))
+output_data_dir <- Sys.getenv("OUTPUT_DATA_DIR")
+
+eval_data_path <- file.path(output_data_dir, "eval", "data", "test_evaluation.csv")
+inference_data_path <- file.path(output_data_dir, "inference", "data", "hybrid_model_predictions.csv")
+eval_fig_dir <- file.path(output_data_dir, "eval", "figures")
+
+if (!dir.exists(eval_fig_dir)) {
+  dir.create(eval_fig_dir, recursive = TRUE)
+}
+```
+
+## Load Data
+
+```{r load-data}
+eval_df <- read_csv(eval_data_path, show_col_types = FALSE)
+inference_df <- read_csv(inference_data_path, show_col_types = FALSE)
+
+cat("Eval data:", nrow(eval_df), "rows\n")
+cat("Inference data:", nrow(inference_df), "rows\n")
+cat("Eval conditions:", paste(unique(eval_df$game_sequence), collapse = ", "), "\n")
+cat("Inference conditions:", paste(unique(inference_df$game_sequence), collapse = ", "), "\n")
+```
+
+## Process Eval (Synthetic Test) Data
+
+```{r process-eval}
+# Pivot to long format: expert and novice N_tot_pred per cutoff
+eval_expert <- eval_df %>%
+  select(example_id, cutoff, game_sequence, n_total = expert_N_tot_pred) %>%
+  mutate(demonstrator_type = "expert")
+
+eval_novice <- eval_df %>%
+  select(example_id, cutoff, game_sequence, n_total = novice_N_tot_pred) %>%
+  mutate(demonstrator_type = "novice")
+
+eval_long <- bind_rows(eval_expert, eval_novice)
+
+# Compute mean +/- SE by cutoff, game_sequence, demonstrator_type
+eval_summary <- eval_long %>%
+  group_by(game_sequence, cutoff, demonstrator_type) %>%
+  summarise(
+    mean_n_total = mean(n_total, na.rm = TRUE),
+    se_n_total = sd(n_total, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+```
+
+## Process Inference (Human Experiment) Data
+
+```{r process-inference}
+# Function to parse beta string and calculate N_total
+parse_n_total <- function(beta_string) {
+  if (is.na(beta_string) || beta_string == "") {
+    return(NA_real_)
+  }
+  matches <- str_match_all(beta_string, "\\(([0-9.]+),\\s*([0-9.]+)\\)")[[1]]
+  if (nrow(matches) == 0) {
+    return(NA_real_)
+  }
+  alphas <- as.numeric(matches[, 2])
+  betas <- as.numeric(matches[, 3])
+  return(sum(alphas + betas, na.rm = TRUE))
+}
+
+inference_processed <- inference_df %>%
+  rowwise() %>%
+  mutate(
+    n_total_expert = parse_n_total(expert_betas),
+    n_total_novice = parse_n_total(novice_betas)
+  ) %>%
+  ungroup()
+
+# Pivot to long format
+inf_expert <- inference_processed %>%
+  filter(!is.na(n_total_expert)) %>%
+  distinct(session_id, game_sequence, game_index, .keep_all = TRUE) %>%
+  select(session_id, game_sequence, game_index, n_total = n_total_expert) %>%
+  mutate(demonstrator_type = "expert")
+
+inf_novice <- inference_processed %>%
+  filter(!is.na(n_total_novice)) %>%
+  distinct(session_id, game_sequence, game_index, .keep_all = TRUE) %>%
+  select(session_id, game_sequence, game_index, n_total = n_total_novice) %>%
+  mutate(demonstrator_type = "novice")
+
+inf_long <- bind_rows(inf_expert, inf_novice)
+
+# Compute mean +/- SE by game_index, game_sequence, demonstrator_type
+inf_summary <- inf_long %>%
+  group_by(game_sequence, game_index, demonstrator_type) %>%
+  summarise(
+    mean_n_total = mean(n_total, na.rm = TRUE),
+    se_n_total = sd(n_total, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+```
+
+## 2x2 N_total Comparison Figure
+
+```{r ntot-comparison, fig.width=14, fig.height=10}
+# Color palette
+colors <- c(expert = "#1f77b4", novice = "#d62728")
+
+# Helper to create a subplot for eval (synthetic) data
+make_eval_plot <- function(condition, title_label) {
+  data_summary <- eval_summary %>% filter(game_sequence == condition)
+  data_individual <- eval_long %>% filter(game_sequence == condition)
+
+  ggplot(data_summary, aes(x = cutoff, y = mean_n_total, color = demonstrator_type)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = mean_n_total - se_n_total,
+                      ymax = mean_n_total + se_n_total),
+                  width = 0.2) +
+    geom_jitter(
+      data = data_individual,
+      aes(x = cutoff, y = n_total, color = demonstrator_type),
+      width = 0.3, height = 0, alpha = 0.15, size = 0.8,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = colors, labels = c(expert = "Expert", novice = "Novice")) +
+    labs(
+      title = title_label,
+      x = "Segment Cutoff",
+      y = "N_total",
+      color = "Demonstrator"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 13),
+      axis.title = element_text(size = 11),
+      legend.position = "none"
+    )
+}
+
+# Helper to create a subplot for inference (human) data
+make_inf_plot <- function(condition, title_label) {
+  data_summary <- inf_summary %>% filter(game_sequence == condition)
+  data_individual <- inf_long %>% filter(game_sequence == condition)
+
+  ggplot(data_summary, aes(x = game_index, y = mean_n_total, color = demonstrator_type)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = mean_n_total - se_n_total,
+                      ymax = mean_n_total + se_n_total),
+                  width = 0.2) +
+    geom_jitter(
+      data = data_individual,
+      aes(x = game_index, y = n_total, color = demonstrator_type),
+      width = 0.3, height = 0, alpha = 0.15, size = 0.8,
+      inherit.aes = FALSE
+    ) +
+    scale_color_manual(values = colors, labels = c(expert = "Expert", novice = "Novice")) +
+    scale_x_continuous(breaks = 0:11) +
+    labs(
+      title = title_label,
+      x = "Game Index",
+      y = "N_total",
+      color = "Demonstrator"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 13),
+      axis.title = element_text(size = 11),
+      legend.position = "none"
+    )
+}
+
+# Build the 2x2 grid
+p_tl <- make_eval_plot("expert-play-novice-play-choice", "Synthetic Test: Expert First")
+p_tr <- make_inf_plot("expert-play-novice-play-choice", "Human Experiment: Expert First")
+p_bl <- make_eval_plot("novice-play-expert-play-choice", "Synthetic Test: Novice First")
+p_br <- make_inf_plot("novice-play-expert-play-choice", "Human Experiment: Novice First")
+
+combined <- (p_tl | p_tr) / (p_bl | p_br) +
+  plot_annotation(
+    title = "N_total (Demonstrator Experience) Predictions",
+    subtitle = "Synthetic test data vs Human experiment data by condition",
+    theme = theme(
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+# Extract legend from one plot
+legend_plot <- make_eval_plot("expert-play-novice-play-choice", "") +
+  theme(legend.position = "bottom")
+legend_grob <- cowplot::get_legend(legend_plot)
+
+# Combine with shared legend
+final_plot <- combined / wrap_elements(legend_grob) +
+  plot_layout(heights = c(1, 1, 0.08))
+
+print(final_plot)
+
+# Save figure
+ggsave(
+  filename = file.path(eval_fig_dir, "ntot_comparison.png"),
+  plot = final_plot, width = 14, height = 10, dpi = 150, bg = "white"
+)
+cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_comparison.png"), "\n")
+```

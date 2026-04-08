@@ -186,7 +186,24 @@ def evaluate_single_example(
     labels = example["labels"]
     bandits = labels["bandits"]
     num_segments = len(example["segment_info"])  # segment_info, not segment_boundaries!
-    
+
+    # Determine game_sequence (condition) from first demo segment ordering
+    first_demo_id = None
+    for seg in example["segment_info"]:
+        if seg["type"] == "demo":
+            first_demo_id = seg["agent"]  # raw demo_id (0 or 1)
+            break
+
+    # Identify expert by N_tot from first bandit (consistent across bandits)
+    demo0_N = bandits[0]["demonstrators"][0]["N_tot"]
+    demo1_N = bandits[0]["demonstrators"][1]["N_tot"]
+    example_expert_id = 0 if demo0_N > demo1_N else 1
+
+    if first_demo_id == example_expert_id:
+        game_sequence = "expert-play-novice-play-choice"
+    else:
+        game_sequence = "novice-play-expert-play-choice"
+
     results = []
     
     # Prepare batch once
@@ -294,6 +311,7 @@ def evaluate_single_example(
         # Compile metrics
         metrics = {
             "cutoff": cutoff,
+            "game_sequence": game_sequence,
             "segment_type": seg_info["type"],
             "agent": seg_info.get("agent", -1),
             "round_index": round_idx,
