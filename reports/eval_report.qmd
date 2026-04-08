@@ -46,32 +46,49 @@ cat("Inference conditions:", paste(unique(inference_df$game_sequence), collapse 
 ## Process Eval (Synthetic Test) Data
 
 ```{r process-eval}
-# Pivot to long format: expert and novice N_tot_pred per cutoff
-eval_expert <- eval_df %>%
-  select(example_id, cutoff, game_sequence, n_total = expert_N_tot_pred) %>%
+# Filter to:
+#   1. demo/learner segments only (exclude bandit_sep and query structural tokens)
+#   2. watch-first ordering only (matches human experiment: watch demo then play)
+# Then compute game_index (0-indexed sequential numbering within each example)
+eval_filtered <- eval_df %>%
+  filter(segment_type %in% c("demo", "learner"),
+         segment_order == "watch-first") %>%
+  group_by(example_id) %>%
+  mutate(game_index = row_number() - 1L) %>%
+  ungroup()
+
+# Pivot to long format: expert and novice N_tot_pred per game_index
+eval_expert <- eval_filtered %>%
+  select(example_id, game_index, game_sequence, n_total = expert_N_tot_pred) %>%
   mutate(demonstrator_type = "expert")
 
-eval_novice <- eval_df %>%
-  select(example_id, cutoff, game_sequence, n_total = novice_N_tot_pred) %>%
+eval_novice <- eval_filtered %>%
+  select(example_id, game_index, game_sequence, n_total = novice_N_tot_pred) %>%
   mutate(demonstrator_type = "novice")
 
 eval_long <- bind_rows(eval_expert, eval_novice)
 
-# Compute mean +/- SE by cutoff, game_sequence, demonstrator_type
+# Compute mean +/- SE by game_index, game_sequence, demonstrator_type
 eval_summary <- eval_long %>%
-  group_by(game_sequence, cutoff, demonstrator_type) %>%
+  group_by(game_sequence, game_index, demonstrator_type) %>%
   summarise(
     mean_n_total = mean(n_total, na.rm = TRUE),
     se_n_total = sd(n_total, na.rm = TRUE) / sqrt(n()),
     .groups = "drop"
   )
+
+cat("Eval segment_order distribution:\n")
+print(table(eval_df$segment_order))
+cat("\nUsing watch-first only:", n_distinct(eval_filtered$example_id), "examples\n")
+cat("Eval game_index range:", range(eval_long$game_index), "\n")
 ```
 
 ## Process Inference (Human Experiment) Data
 
 ```{r process-inference}
-# Function to parse beta string and calculate N_total
-parse_n_total <- function(beta_string) {
+# Function to parse beta string and calculate N_total (prior-subtracted to match eval)
+# Eval computes: sum(alpha + beta) - K*(alpha0 + beta0), with alpha0=1, beta0=1, K=12 → subtract 24
+parse_n_total <- function(beta_string, alpha0 = 1, beta0 = 1) {
   if (is.na(beta_string) || beta_string == "") {
     return(NA_real_)
   }
@@ -81,7 +98,8 @@ parse_n_total <- function(beta_string) {
   }
   alphas <- as.numeric(matches[, 2])
   betas <- as.numeric(matches[, 3])
-  return(sum(alphas + betas, na.rm = TRUE))
+  K <- length(alphas)
+  return(sum(alphas + betas, na.rm = TRUE) - K * (alpha0 + beta0))
 }
 
 inference_processed <- inference_df %>%
@@ -123,44 +141,28 @@ inf_summary <- inf_long %>%
 # Color palette
 colors <- c(expert = "#1f77b4", novice = "#d62728")
 
-# Helper to create a subplot for eval (synthetic) data
-make_eval_plot <- function(condition, title_label) {
-  data_summary <- eval_summary %>% filter(game_sequence == condition)
-  data_individual <- eval_long %>% filter(game_sequence == condition)
+# Shared y-axis limits across all 4 plots
+y_limits <- c(
+  min(0, min(eval_long$n_total, na.rm = TRUE), min(inf_long$n_total, na.rm = TRUE)),
+  max(eval_long$n_total, na.rm = TRUE, inf_long$n_total) * 1.05
+)
 
-  ggplot(data_summary, aes(x = cutoff, y = mean_n_total, color = demonstrator_type)) +
-    geom_line(linewidth = 1) +
-    geom_point(size = 2) +
-    geom_errorbar(aes(ymin = mean_n_total - se_n_total,
-                      ymax = mean_n_total + se_n_total),
-                  width = 0.2) +
-    geom_jitter(
-      data = data_individual,
-      aes(x = cutoff, y = n_total, color = demonstrator_type),
-      width = 0.3, height = 0, alpha = 0.15, size = 0.8,
-      inherit.aes = FALSE
-    ) +
-    scale_color_manual(values = colors, labels = c(expert = "Expert", novice = "Novice")) +
-    labs(
-      title = title_label,
-      x = "Segment Cutoff",
-      y = "N_total",
-      color = "Demonstrator"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 13),
-      axis.title = element_text(size = 11),
-      legend.position = "none"
-    )
-}
+# Shared x-axis breaks
+x_breaks <- 0:11
 
-# Helper to create a subplot for inference (human) data
-make_inf_plot <- function(condition, title_label) {
-  data_summary <- inf_summary %>% filter(game_sequence == condition)
-  data_individual <- inf_long %>% filter(game_sequence == condition)
+# Common plot builder (works for both eval and inference data)
+make_plot <- function(data_summary, data_individual, condition, title_label) {
+  data_summary <- data_summary %>% filter(game_sequence == condition)
+  data_individual <- data_individual %>% filter(game_sequence == condition)
+
+  # Build x-axis labels: expert-first watches Expert at 0,4,8 and Novice at 2,6,10
+  expert_first <- grepl("^expert", condition)
+  first_watch <- if (expert_first) "Expert" else "Novice"
+  second_watch <- if (expert_first) "Novice" else "Expert"
+  x_labels <- rep(c(first_watch, "Play", second_watch, "Play"), 3)
 
   ggplot(data_summary, aes(x = game_index, y = mean_n_total, color = demonstrator_type)) +
+    geom_vline(xintercept = c(3.5, 7.5), linetype = "dashed", color = "gray60") +
     geom_line(linewidth = 1) +
     geom_point(size = 2) +
     geom_errorbar(aes(ymin = mean_n_total - se_n_total,
@@ -172,32 +174,43 @@ make_inf_plot <- function(condition, title_label) {
       width = 0.3, height = 0, alpha = 0.15, size = 0.8,
       inherit.aes = FALSE
     ) +
+    annotate("text", x = 1.5, y = y_limits[2] * 0.97, label = "Round 1",
+             fontface = "bold", size = 3.5, color = "gray30") +
+    annotate("text", x = 5.5, y = y_limits[2] * 0.97, label = "Round 2",
+             fontface = "bold", size = 3.5, color = "gray30") +
+    annotate("text", x = 9.5, y = y_limits[2] * 0.97, label = "Round 3",
+             fontface = "bold", size = 3.5, color = "gray30") +
     scale_color_manual(values = colors, labels = c(expert = "Expert", novice = "Novice")) +
-    scale_x_continuous(breaks = 0:11) +
+    scale_x_continuous(
+      breaks = 0:11,
+      labels = x_labels
+    ) +
+    coord_cartesian(ylim = y_limits) +
     labs(
       title = title_label,
-      x = "Game Index",
-      y = "N_total",
+      x = "Game Type",
+      y = expression(N[total]),
       color = "Demonstrator"
     ) +
     theme_minimal() +
     theme(
       plot.title = element_text(face = "bold", size = 13),
       axis.title = element_text(size = 11),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
       legend.position = "none"
     )
 }
 
 # Build the 2x2 grid
-p_tl <- make_eval_plot("expert-play-novice-play-choice", "Synthetic Test: Expert First")
-p_tr <- make_inf_plot("expert-play-novice-play-choice", "Human Experiment: Expert First")
-p_bl <- make_eval_plot("novice-play-expert-play-choice", "Synthetic Test: Novice First")
-p_br <- make_inf_plot("novice-play-expert-play-choice", "Human Experiment: Novice First")
+p_tl <- make_plot(eval_summary, eval_long, "expert-play-novice-play-choice", "Simulated Test Data: Expert First")
+p_tr <- make_plot(inf_summary, inf_long, "expert-play-novice-play-choice", "Human Experiment: Expert First")
+p_bl <- make_plot(eval_summary, eval_long, "novice-play-expert-play-choice", "Simulated Test Data: Novice First")
+p_br <- make_plot(inf_summary, inf_long, "novice-play-expert-play-choice", "Human Experiment: Novice First")
 
 combined <- (p_tl | p_tr) / (p_bl | p_br) +
   plot_annotation(
-    title = "N_total (Demonstrator Experience) Predictions",
-    subtitle = "Synthetic test data vs Human experiment data by condition",
+    title = "Demonstrator Experience Predictions",
+    subtitle = "Simulated test data vs Human experiment data by condition",
     theme = theme(
       plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
       plot.subtitle = element_text(size = 12, hjust = 0.5)
@@ -205,8 +218,10 @@ combined <- (p_tl | p_tr) / (p_bl | p_br) +
   )
 
 # Extract legend from one plot
-legend_plot <- make_eval_plot("expert-play-novice-play-choice", "") +
-  theme(legend.position = "bottom")
+legend_plot <- make_plot(eval_summary, eval_long, "expert-play-novice-play-choice", "") +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14, margin = margin(r = 25)))
 legend_grob <- cowplot::get_legend(legend_plot)
 
 # Combine with shared legend
