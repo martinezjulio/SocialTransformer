@@ -15,7 +15,7 @@ conda activate SocialTransformer
 export PYTHONPATH="src:$PYTHONPATH"
 
 # Set parameters
-DATASET_NAME="demonstrations_data_02"
+DATASET_NAME="demonstrations_data_00"
 TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
 # Note: Output paths managed automatically by eval.py ($OUTPUT_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
