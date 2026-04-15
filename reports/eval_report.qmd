@@ -38,7 +38,7 @@ if (!dir.exists(eval_fig_dir)) {
 
 ```{r load-data}
 # guess_max = Inf prevents readr from guessing column types from only the first
-# rows — critical for columns like segment_mean_reward where early rows are
+# rows — critical for columns like segment_total_reward where early rows are
 # NaN (bandit_sep, query) before the float values appear. Without this, the
 # column gets guessed as logical and every real value reads as NA.
 eval_df        <- read_csv(eval_path,        show_col_types = FALSE, guess_max = Inf)
@@ -65,7 +65,7 @@ beta_method_labels <- c(
 # Unified long-form frame with columns:
 #   source, beta_method, example_key, cutoff, segment_type, segment_order,
 #   game_sequence, round_index, expert_N_tot_pred, novice_N_tot_pred,
-#   segment_mean_reward
+#   segment_total_reward
 #
 # Filtering convention for the experience plot x-axis:
 #   - watch-first segment_order only (human task has no play-first rounds)
@@ -97,7 +97,7 @@ prepare_source <- function(df, source_label, key_col) {
     summarise(
       expert_N_tot_pred   = mean(expert_N_tot_pred,   na.rm = TRUE),
       novice_N_tot_pred   = mean(novice_N_tot_pred,   na.rm = TRUE),
-      segment_mean_reward = mean(segment_mean_reward, na.rm = TRUE),
+      segment_total_reward = mean(segment_total_reward, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     rename(example_key = !!key_col) %>%
@@ -118,7 +118,7 @@ all_sessions <- bind_rows(eval_session, human_session, model_session) %>%
                          levels = c("Simulated Test", "Human Inference", "Model Inference")))
 
 # Pivot expert/novice into a long demonstrator_type column for the N_tot plots.
-# segment_mean_reward stays as a wide column (one float per row, no demo split).
+# segment_total_reward stays as a wide column (one float per row, no demo split).
 all_long <- all_sessions %>%
   pivot_longer(cols = c(expert_N_tot_pred, novice_N_tot_pred),
                names_to = "demonstrator_type",
@@ -376,12 +376,13 @@ ggsave(
 cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_model_beta_methods_comparison.png"), "\n")
 ```
 
-## Per-Game Mean Reward Comparison (one figure per Thompson prior)
+## Per-Game Total Reward Comparison (one figure per Thompson prior)
 
 ```{r mean-reward-comparison, fig.width=14, fig.height=6}
-# Per-game mean reward (over the 6 trials of the game ending at this cutoff).
+# Per-game total reward (summed over the 6 trials of the game ending at this
+# cutoff), then averaged across participants for each condition.
 # One 1x2 figure (Expert First | Novice First). Demo points are shared across
-# all inference conditions (verified: demo segment_mean_reward is identical
+# all inference conditions (verified: demo segment_total_reward is identical
 # across human/model modes and across beta_methods), so they're drawn once per
 # panel from a single canonical source. Play curves overlay five conditions:
 # Human play + four Thompson-prior methods.
@@ -392,7 +393,7 @@ cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_model_beta_methods_compa
 reward_long_all <- all_sessions %>%
   filter(segment_order == "watch-first",
          segment_type %in% c("demo", "learner"),
-         !is.na(segment_mean_reward),
+         !is.na(segment_total_reward),
          game_sequence %in% sequence_levels) %>%
   mutate(
     game_sequence = factor(game_sequence, levels = sequence_levels,
@@ -411,8 +412,8 @@ reward_long_all <- all_sessions %>%
 reward_summary_all <- reward_long_all %>%
   group_by(source, beta_method, game_sequence, cutoff, segment_type, segment_role) %>%
   summarise(
-    mean_reward = mean(segment_mean_reward, na.rm = TRUE),
-    se_reward   = sd(segment_mean_reward,  na.rm = TRUE) / sqrt(n()),
+    mean_reward = mean(segment_total_reward, na.rm = TRUE),
+    se_reward   = sd(segment_total_reward,  na.rm = TRUE) / sqrt(n()),
     n_obs       = n(),
     .groups = "drop"
   )
@@ -520,10 +521,10 @@ build_reward_panel <- function(demo_rows, play_rows, title, sequence_label) {
       labels = reward_color_labels
     ) +
     scale_x_continuous(breaks = x_breaks, labels = labels_df$label) +
-    coord_cartesian(xlim = c(1.5, 17.5), ylim = c(0, 1)) +
+    coord_cartesian(xlim = c(1.5, 17.5), ylim = c(0, 6)) +
     labs(title = title,
          x = "Game (segment ending at this cutoff)",
-         y = "Mean reward (per game, 6 trials)",
+         y = "Total reward per game (out of 6)",
          color = NULL) +
     theme_minimal() +
     theme(plot.title  = element_text(face = "bold", size = 13),
@@ -544,8 +545,8 @@ for (seq_label in c("Expert First", "Novice First")) {
 
 grid_plot <- (panels[["Expert First"]] | panels[["Novice First"]]) +
   plot_annotation(
-    title    = "Per-Game Mean Reward",
-    subtitle = "Mean reward over the 6 trials of each game. Demo points shared; play curves overlay the 5 conditions.",
+    title    = "Per-Game Total Reward",
+    subtitle = "Total reward (sum over 6 trials) per game, averaged across participants. Demo points shared; play curves overlay the 5 conditions.",
     theme = theme(
       plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
       plot.subtitle = element_text(size = 12, hjust = 0.5)
@@ -605,4 +606,547 @@ ggsave(filename = out_path, plot = final_plot,
        width = 14, height = 6.5, dpi = 150, bg = "white")
 cat("\nFigure saved to:", out_path, "\n")
 print(final_plot)
+```
+
+## Participant Clustering
+
+```{r participant-clustering-prep}
+# Per-cohort participant matrices.
+# Each participant (session_id) gets a 6-dim reward vector (one per play game
+# cutoff within watch-first schedule). Model-mode vectors are averaged across
+# the 5 Thompson rollouts so each (session, beta_method) also maps to one
+# 6-vector. Expert First and Novice First cohorts are kept fully separate —
+# the reward schedule has different demonstrator identities at each position
+# across the two sequences, so mixing them would conflate "cluster of slow
+# learners" with "cluster of novice-first sessions".
+participant_play <- all_sessions %>%
+  filter(segment_order == "watch-first",
+         segment_type == "learner",
+         !is.na(segment_total_reward),
+         game_sequence %in% sequence_levels) %>%
+  mutate(game_sequence = factor(game_sequence, levels = sequence_levels,
+                                labels = c("Expert First", "Novice First")))
+
+cluster_cutoffs <- sort(unique(
+  participant_play$cutoff[participant_play$source == "Human Inference"]
+))
+
+build_cohort <- function(cohort_label) {
+  pp <- participant_play %>% filter(game_sequence == cohort_label)
+
+  human_df <- pp %>%
+    filter(source == "Human Inference") %>%
+    group_by(example_key, cutoff) %>%
+    summarise(reward = mean(segment_total_reward, na.rm = TRUE), .groups = "drop") %>%
+    pivot_wider(names_from = cutoff, values_from = reward) %>%
+    arrange(example_key)
+
+  sessions  <- human_df$example_key
+  human_mat <- as.matrix(human_df %>% select(-example_key))
+  rownames(human_mat) <- sessions
+  human_mat <- human_mat[, as.character(cluster_cutoffs), drop = FALSE]
+
+  model_mats <- list()
+  for (bm in beta_method_levels) {
+    mm <- pp %>%
+      filter(source == "Model Inference", beta_method == bm) %>%
+      group_by(example_key, cutoff) %>%
+      summarise(reward = mean(segment_total_reward, na.rm = TRUE), .groups = "drop") %>%
+      pivot_wider(names_from = cutoff, values_from = reward) %>%
+      arrange(example_key)
+    stopifnot(identical(mm$example_key, sessions))
+    mmat <- as.matrix(mm %>% select(-example_key))
+    rownames(mmat) <- mm$example_key
+    model_mats[[bm]] <- mmat[, as.character(cluster_cutoffs), drop = FALSE]
+  }
+
+  list(sessions = sessions, human_mat = human_mat, model_mats = model_mats)
+}
+
+cohorts <- list(
+  "Expert First" = build_cohort("Expert First"),
+  "Novice First" = build_cohort("Novice First")
+)
+
+for (cohort_label in names(cohorts)) {
+  cat(sprintf("%s: %d participants, human_mat %s\n",
+              cohort_label,
+              length(cohorts[[cohort_label]]$sessions),
+              paste(dim(cohorts[[cohort_label]]$human_mat), collapse = " x ")))
+}
+```
+
+```{r participant-clustering-compute}
+# Clustering per cohort. Two clusterings are produced in parallel:
+#   * clusterings_k3   — fixed k = 3 (interpretable baseline)
+#   * clusterings_best — k chosen per cohort to maximize the best
+#     (cluster, method) alignment cell (alignment-optimized follow-up)
+# Both sets drive their own subsection of figures below.
+set.seed(42)
+MIN_CLUSTER_N <- 3L  # min n for a cluster cell to count in the k-vs-alignment sweep
+K_FIXED       <- 3L  # fixed k used by the interpretable-baseline subsection
+
+# Helper used both by the downstream alignment figure and by the k sweep below.
+# For each (session, method) pair, compute the Pearson correlation between the
+# human 6-dim reward vector and the model's 6-dim reward vector, then aggregate
+# to a cluster x method grid of mean within-cluster r.
+compute_alignment_matrix <- function(hm, model_mats, km_labels) {
+  row_var <- apply(hm, 1, var)
+  nd <- rownames(hm)[row_var > 0 & !is.na(row_var)]
+  if (length(nd) == 0) {
+    return(tibble(cluster = integer(), method = character(),
+                  mean_fit = numeric(), n = integer()))
+  }
+  per_session <- imap_dfr(model_mats, function(mmat, bm) {
+    tibble(
+      session = nd,
+      method  = bm,
+      fit     = map_dbl(nd, function(s) {
+        mv <- mmat[s, ]
+        if (!any(is.finite(mv)) || var(mv, na.rm = TRUE) == 0) return(NA_real_)
+        suppressWarnings(cor(hm[s, ], mv, use = "complete.obs"))
+      })
+    )
+  })
+  per_session %>%
+    mutate(cluster = km_labels[session]) %>%
+    group_by(cluster, method) %>%
+    summarise(mean_fit = mean(fit, na.rm = TRUE),
+              n        = sum(!is.na(fit)),
+              .groups  = "drop")
+}
+
+# k sweep per cohort. For each k record (1) tot.withinss (for the elbow plot)
+# and (2) the best cell of the cluster x method alignment matrix — the
+# quantity we want to maximize when picking k. The min-n filter prevents
+# "winning" by letting k-means produce a singleton with a trivially extreme
+# correlation.
+sweep_results <- imap_dfr(cohorts, function(cohort_data, cohort_label) {
+  hm  <- cohort_data$human_mat
+  mms <- cohort_data$model_mats
+  map_dfr(2:10, function(k) {
+    set.seed(42)
+    km <- kmeans(hm, centers = k, nstart = 25)
+    km_labels <- setNames(as.integer(km$cluster), rownames(hm))
+    align <- compute_alignment_matrix(hm, mms, km_labels) %>%
+      filter(n >= MIN_CLUSTER_N)
+    if (nrow(align) == 0) {
+      tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
+             max_fit = NA_real_, best_cluster = NA_integer_,
+             best_method = NA_character_, best_n = NA_integer_)
+    } else {
+      best <- align %>% slice_max(mean_fit, n = 1, with_ties = FALSE)
+      tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
+             max_fit      = best$mean_fit,
+             best_cluster = best$cluster,
+             best_method  = best$method,
+             best_n       = best$n)
+    }
+  })
+})
+
+# Pick k per cohort by maximizing best (cluster, method) alignment over
+# k in 3..10. k=2 is excluded because two clusters is rarely an interesting
+# "behavior mode" decomposition.
+K_BY_COHORT <- sweep_results %>%
+  filter(k >= 3) %>%
+  group_by(cohort) %>%
+  slice_max(max_fit, n = 1, with_ties = FALSE) %>%
+  select(cohort, k) %>%
+  deframe()
+
+cat(sprintf("Alignment-optimized k per cohort (max best cluster x method alignment, n >= %d):\n",
+            MIN_CLUSTER_N))
+for (co in names(K_BY_COHORT)) {
+  best <- sweep_results %>% filter(cohort == co, k == K_BY_COHORT[[co]])
+  cat(sprintf("  %s: k=%d, best cluster=%d with %s, r=%.2f (n=%d)\n",
+              co, best$k, best$best_cluster, best$best_method,
+              best$max_fit, best$best_n))
+}
+
+compute_clusters <- function(cohort_data, k) {
+  hm <- cohort_data$human_mat
+
+  row_var <- apply(hm, 1, var)
+  nondeg  <- rownames(hm)[row_var > 0 & !is.na(row_var)]
+  hm_nd   <- hm[nondeg, , drop = FALSE]
+
+  corr_mat <- cor(t(hm_nd))
+  hc <- hclust(as.dist(1 - corr_mat), method = "average")
+  hc_cut <- cutree(hc, k = k)
+  hc_labels <- setNames(rep(0L, nrow(hm)), rownames(hm))
+  hc_labels[names(hc_cut)] <- as.integer(hc_cut)
+
+  set.seed(42)
+  km <- kmeans(hm, centers = k, nstart = 25)
+
+  list(
+    corr_mat     = corr_mat,
+    hc           = hc,
+    hc_order     = hc$order,
+    hc_labels    = hc_labels,
+    km_labels    = setNames(as.integer(km$cluster), rownames(hm)),
+    nondeg_rows  = nondeg,
+    degenerate_n = nrow(hm) - length(nondeg),
+    k            = k
+  )
+}
+
+clusterings_k3 <- map(cohorts, function(c) compute_clusters(c, k = K_FIXED))
+clusterings_best <- imap(cohorts, function(cohort_data, cohort_label) {
+  compute_clusters(cohort_data, k = K_BY_COHORT[[cohort_label]])
+})
+
+for (cohort_label in names(cohorts)) {
+  cl3 <- clusterings_k3[[cohort_label]]
+  clb <- clusterings_best[[cohort_label]]
+  cat(sprintf("%s: %d constant-reward participants (excluded from correlation)\n",
+              cohort_label, cl3$degenerate_n))
+  cat(sprintf("  [k=%d fixed]  k-means sizes: %s\n",
+              cl3$k, paste(as.integer(table(cl3$km_labels)), collapse = ", ")))
+  cat(sprintf("  [k=%d tuned]  k-means sizes: %s\n",
+              clb$k, paste(as.integer(table(clb$km_labels)), collapse = ", ")))
+}
+```
+
+```{r participant-corr-heatmap, fig.width=14, fig.height=6.5}
+build_corr_heatmap <- function(cohort_label) {
+  cl <- clusterings_k3[[cohort_label]]
+  corr_mat <- cl$corr_mat
+  leaf_order <- cl$nondeg_rows[cl$hc_order]
+  n_total <- length(cohorts[[cohort_label]]$sessions)
+  panel_title <- sprintf("%s (%d participants)", cohort_label, n_total)
+  df <- as.data.frame(corr_mat) %>%
+    rownames_to_column("s1") %>%
+    pivot_longer(-s1, names_to = "s2", values_to = "corr") %>%
+    mutate(s1 = factor(s1, levels = leaf_order),
+           s2 = factor(s2, levels = leaf_order))
+  ggplot(df, aes(s1, s2, fill = corr)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b",
+                         midpoint = 0, limits = c(-1, 1), name = "Pearson r") +
+    coord_fixed() +
+    labs(title = panel_title, x = NULL, y = NULL) +
+    theme_minimal() +
+    theme(axis.text   = element_blank(),
+          axis.ticks  = element_blank(),
+          panel.grid  = element_blank(),
+          plot.title  = element_text(face = "bold", size = 13))
+}
+
+corr_panels <- map(names(cohorts), build_corr_heatmap)
+corr_fig <- (corr_panels[[1]] | corr_panels[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Pairwise Participant Reward Correlation",
+    subtitle = "Pearson r over 6-game reward vectors, rows/cols ordered by hierarchical clustering leaves",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_reward_correlation.png"),
+       corr_fig, width = 14, height = 6.5, dpi = 150, bg = "white")
+cat("\nFigure saved to:", file.path(eval_fig_dir, "participant_reward_correlation.png"), "\n")
+print(corr_fig)
+```
+
+### Fixed k = 3
+
+```{r participant-cluster-diagnostic, fig.width=10, fig.height=4}
+elbow_df <- sweep_results %>%
+  mutate(cohort = factor(cohort, levels = names(cohorts)))
+
+elbow_fig <- ggplot(elbow_df, aes(k, wss)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_vline(xintercept = K_FIXED, linetype = "dashed", color = "gray50") +
+  facet_wrap(~ cohort, nrow = 1) +
+  scale_x_continuous(breaks = 2:10) +
+  labs(title = "K-Means Elbow (Within-Cluster SS)",
+       subtitle = sprintf("Dashed line marks the fixed k = %d used in this subsection", K_FIXED),
+       x = "k", y = "tot.withinss") +
+  theme_minimal() +
+  theme(strip.text    = element_text(face = "bold"),
+        plot.title    = element_text(face = "bold", size = 13),
+        plot.subtitle = element_text(size = 10))
+
+ggsave(file.path(eval_fig_dir, "participant_cluster_diagnostic.png"),
+       elbow_fig, width = 10, height = 4, dpi = 150, bg = "white")
+cat("\nFigure saved to:", file.path(eval_fig_dir, "participant_cluster_diagnostic.png"), "\n")
+print(elbow_fig)
+```
+
+```{r participant-cluster-profiles, fig.width=14, fig.height=6}
+# Cluster centroids (mean human reward vector per k-means cluster) overlaid
+# with the 4 model-method mean reward vectors for the same cohort.
+cluster_palette  <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e",
+                      "#e6ab02", "#a6761d", "#666666", "#1f78b4", "#33a02c")
+method_palette   <- c(
+  "Environment Priors"         = "#ff7f0e",
+  "Expert-Head Priors"         = "#2ca02c",
+  "Novice-Head Priors"         = "#9467bd",
+  "Most-Recent-Watched Priors" = "#8c564b"
+)
+
+build_profile_panel <- function(cohort_label, clusterings_obj) {
+  cl  <- clusterings_obj[[cohort_label]]
+  hm  <- cohorts[[cohort_label]]$human_mat
+  mms <- cohorts[[cohort_label]]$model_mats
+
+  cutoff_cols <- as.integer(colnames(hm))
+  km_lab      <- cl$km_labels[rownames(hm)]
+
+  cluster_ids <- sort(unique(km_lab))
+  cluster_cols <- setNames(
+    cluster_palette[seq_along(cluster_ids)],
+    paste0("Cluster ", cluster_ids)
+  )
+
+  centroids <- imap_dfr(split(rownames(hm), km_lab), function(ss, cid) {
+    tibble(
+      cutoff = cutoff_cols,
+      mean_reward = colMeans(hm[ss, , drop = FALSE]),
+      series = paste0("Cluster ", cid)
+    )
+  }) %>%
+    mutate(series = factor(series, levels = names(cluster_cols)))
+
+  methods <- imap_dfr(mms, function(mmat, bm) {
+    tibble(
+      cutoff = cutoff_cols,
+      mean_reward = colMeans(mmat, na.rm = TRUE),
+      series = beta_method_labels[[bm]]
+    )
+  }) %>%
+    mutate(series = factor(series, levels = names(method_palette)))
+
+  all_cols <- c(cluster_cols, method_palette)
+
+  ggplot(mapping = aes(x = cutoff, y = mean_reward, color = series)) +
+    geom_line(data = methods,   linetype = "dashed", linewidth = 0.8, alpha = 0.9) +
+    geom_line(data = centroids, linewidth = 1.3) +
+    geom_point(data = centroids, size = 2.8) +
+    scale_color_manual(values = all_cols, name = NULL) +
+    coord_cartesian(ylim = c(0, 6)) +
+    labs(title = sprintf("%s (k=%d)", cohort_label, cl$k),
+         x = "Cutoff", y = "Total reward (out of 6)") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 13),
+          legend.position = "right",
+          legend.text = element_text(size = 9))
+}
+
+profile_panels <- map(names(cohorts), function(co) build_profile_panel(co, clusterings_k3))
+profile_fig <- (profile_panels[[1]] | profile_panels[[2]]) +
+  plot_annotation(
+    title    = "Cluster Reward Profiles (solid) vs Model-Method Means (dashed)",
+    subtitle = "Solid lines: k-means centroid reward across the 6 play games. Dashed lines: cohort mean per Thompson prior method.",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_cluster_profiles.png"),
+       profile_fig, width = 14, height = 6, dpi = 150, bg = "white")
+cat("\nFigure saved to:", file.path(eval_fig_dir, "participant_cluster_profiles.png"), "\n")
+print(profile_fig)
+```
+
+```{r participant-cluster-method-alignment, fig.width=12, fig.height=5}
+# Per-session correlation between the human 6-vector and each model-method
+# 6-vector. Aggregated into mean within-cluster correlation so we can read
+# off "cluster 2 looks most like expert-head priors" etc. Parameterized over
+# the clusterings object so the alignment-optimized subsection below can
+# reuse the same helper.
+build_alignment_df <- function(clusterings_obj) {
+  map_dfr(names(cohorts), function(cohort_label) {
+    cl  <- clusterings_obj[[cohort_label]]
+    hm  <- cohorts[[cohort_label]]$human_mat
+    mms <- cohorts[[cohort_label]]$model_mats
+    compute_alignment_matrix(hm, mms, cl$km_labels) %>%
+      mutate(method = factor(method, levels = beta_method_levels,
+                             labels = beta_method_labels[beta_method_levels]),
+             cohort = cohort_label)
+  }) %>%
+    mutate(cohort = factor(cohort, levels = names(cohorts)))
+}
+
+build_align_panel <- function(cohort_label, align_df, clusterings_obj) {
+  df <- align_df %>% filter(cohort == cohort_label)
+  k  <- clusterings_obj[[cohort_label]]$k
+  ggplot(df, aes(method, factor(cluster), fill = mean_fit)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f\nn=%d", mean_fit, n)), size = 3.6) +
+    scale_fill_gradient2(low = "#2166ac", mid = "white", high = "#b2182b",
+                         midpoint = 0, limits = c(-1, 1), name = "Pearson r") +
+    labs(title = sprintf("%s (k=%d)", cohort_label, k),
+         x = NULL, y = "k-means cluster") +
+    theme_minimal() +
+    theme(plot.title  = element_text(face = "bold", size = 13),
+          axis.text.x = element_text(angle = 30, hjust = 1),
+          panel.grid  = element_blank())
+}
+
+alignment_df_k3 <- build_alignment_df(clusterings_k3)
+align_panels_k3 <- map(names(cohorts),
+                       function(co) build_align_panel(co, alignment_df_k3, clusterings_k3))
+align_fig_k3 <- (align_panels_k3[[1]] | align_panels_k3[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Cluster x Model-Method Alignment (k = 3)",
+    subtitle = "Mean within-cluster Pearson r between per-session human and model reward vectors",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_cluster_method_alignment.png"),
+       align_fig_k3, width = 12, height = 5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_cluster_method_alignment.png"), "\n")
+print(align_fig_k3)
+```
+
+### Alignment-Optimized k
+
+```{r participant-alignment-sweep, fig.width=10, fig.height=4}
+align_sweep_df <- sweep_results %>%
+  filter(k >= 3) %>%
+  mutate(cohort = factor(cohort, levels = names(cohorts)))
+
+align_best_df <- align_sweep_df %>%
+  group_by(cohort) %>%
+  slice_max(max_fit, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+align_sweep_fig <- ggplot(align_sweep_df, aes(k, max_fit)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_point(data = align_best_df, color = "red", size = 4) +
+  facet_wrap(~ cohort, nrow = 1) +
+  scale_x_continuous(breaks = 3:10) +
+  coord_cartesian(ylim = c(-0.2, 1)) +
+  labs(title = "Best Cluster x Method Alignment vs k",
+       subtitle = sprintf("Max mean within-cluster Pearson r (n >= %d). Red = chosen k per cohort.",
+                          MIN_CLUSTER_N),
+       x = "k", y = "max mean within-cluster r") +
+  theme_minimal() +
+  theme(strip.text    = element_text(face = "bold"),
+        plot.title    = element_text(face = "bold", size = 13),
+        plot.subtitle = element_text(size = 10))
+
+ggsave(file.path(eval_fig_dir, "participant_alignment_sweep.png"),
+       align_sweep_fig, width = 10, height = 4, dpi = 150, bg = "white")
+cat("\nFigure saved to:", file.path(eval_fig_dir, "participant_alignment_sweep.png"), "\n")
+print(align_sweep_fig)
+```
+
+```{r participant-cluster-best-profile, fig.width=14, fig.height=5}
+# Minimal "winner only" profile plot. For each cohort, draw:
+#   * solid line = winning cluster's centroid reward (mean across the 6
+#     play games, over the cluster's sessions)
+#   * dashed line = winning method's mean reward on the SAME sessions
+# We restrict the method curve to the winning cluster's sessions (instead
+# of the cohort mean) so the two lines in the plot correspond exactly to
+# the r value the sweep reported — otherwise the dashed line wouldn't
+# match what the correlation actually measured.
+build_best_profile_panel <- function(cohort_label) {
+  cl  <- clusterings_best[[cohort_label]]
+  hm  <- cohorts[[cohort_label]]$human_mat
+  mms <- cohorts[[cohort_label]]$model_mats
+
+  best <- sweep_results %>%
+    filter(cohort == cohort_label, k == cl$k)
+  best_cluster <- best$best_cluster
+  best_method  <- best$best_method
+  best_r       <- best$max_fit
+  best_n       <- best$best_n
+
+  row_var <- apply(hm, 1, var)
+  nd_rows <- rownames(hm)[row_var > 0 & !is.na(row_var)]
+  km_lab  <- cl$km_labels[nd_rows]
+  winning_sessions <- nd_rows[km_lab == best_cluster]
+
+  cutoff_cols <- as.integer(colnames(hm))
+
+  cluster_series_name <- paste0("Cluster ", best_cluster)
+  method_series_name  <- beta_method_labels[[best_method]]
+
+  cluster_line <- tibble(
+    cutoff = cutoff_cols,
+    mean_reward = colMeans(hm[winning_sessions, , drop = FALSE]),
+    series = cluster_series_name
+  )
+  method_line <- tibble(
+    cutoff = cutoff_cols,
+    mean_reward = colMeans(mms[[best_method]][winning_sessions, , drop = FALSE]),
+    series = method_series_name
+  )
+
+  cluster_color <- cluster_palette[((best_cluster - 1) %% length(cluster_palette)) + 1]
+  method_color  <- method_palette[[method_series_name]]
+  line_cols <- setNames(c(cluster_color, method_color),
+                        c(cluster_series_name, method_series_name))
+
+  panel_title <- sprintf(
+    "%s  |  k=%d, cluster %d vs %s  |  r=%.2f  (n=%d)",
+    cohort_label, cl$k, best_cluster, method_series_name, best_r, best_n
+  )
+
+  ggplot(mapping = aes(x = cutoff, y = mean_reward, color = series)) +
+    geom_line(data = method_line,  linetype = "dashed", linewidth = 1.1) +
+    geom_point(data = method_line, size = 2.8, shape = 17) +
+    geom_line(data = cluster_line, linewidth = 1.3) +
+    geom_point(data = cluster_line, size = 3.0) +
+    scale_color_manual(values = line_cols, name = NULL) +
+    coord_cartesian(ylim = c(0, 6)) +
+    labs(title = panel_title, x = "Cutoff", y = "Total reward (out of 6)") +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 12),
+          legend.position = "bottom",
+          legend.text = element_text(size = 10))
+}
+
+best_profile_panels <- map(names(cohorts), build_best_profile_panel)
+best_profile_fig <- (best_profile_panels[[1]] | best_profile_panels[[2]]) +
+  plot_annotation(
+    title    = "Best Cluster vs Best Method (alignment-optimized k)",
+    subtitle = "Solid: winning cluster centroid. Dashed: winning method mean on the same sessions.",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_cluster_best_profile.png"),
+       best_profile_fig, width = 14, height = 5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_cluster_best_profile.png"), "\n")
+print(best_profile_fig)
+```
+
+```{r participant-cluster-method-alignment-best, fig.width=12, fig.height=9}
+alignment_df_best <- build_alignment_df(clusterings_best)
+align_panels_best <- map(names(cohorts),
+                         function(co) build_align_panel(co, alignment_df_best, clusterings_best))
+align_fig_best <- (align_panels_best[[1]] | align_panels_best[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Cluster x Model-Method Alignment (alignment-optimized k)",
+    subtitle = "Mean within-cluster Pearson r between per-session human and model reward vectors",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_cluster_method_alignment_best_k.png"),
+       align_fig_best, width = 12, height = 9, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_cluster_method_alignment_best_k.png"), "\n")
+print(align_fig_best)
 ```
