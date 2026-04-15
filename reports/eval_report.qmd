@@ -37,9 +37,13 @@ if (!dir.exists(eval_fig_dir)) {
 ## Load Data
 
 ```{r load-data}
-eval_df        <- read_csv(eval_path,        show_col_types = FALSE)
-human_infer_df <- read_csv(human_infer_path, show_col_types = FALSE)
-model_infer_df <- read_csv(model_infer_path, show_col_types = FALSE)
+# guess_max = Inf prevents readr from guessing column types from only the first
+# rows — critical for columns like segment_mean_reward where early rows are
+# NaN (bandit_sep, query) before the float values appear. Without this, the
+# column gets guessed as logical and every real value reads as NA.
+eval_df        <- read_csv(eval_path,        show_col_types = FALSE, guess_max = Inf)
+human_infer_df <- read_csv(human_infer_path, show_col_types = FALSE, guess_max = Inf)
+model_infer_df <- read_csv(model_infer_path, show_col_types = FALSE, guess_max = Inf)
 
 cat("Eval (synthetic test):  ", nrow(eval_df), "rows\n")
 cat("Inference human mode:   ", nrow(human_infer_df), "rows\n")
