@@ -27,6 +27,8 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Output: $OUTPUT_DATA_DIR/eval/eval_report.html"
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
 else
     echo ""
     echo "=================================="

@@ -201,7 +201,10 @@ if [ $? -eq 0 ]; then
     echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
     echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
     echo "Report:     $OUTPUT_DATA_DIR/eval/eval_report.html"
-    echo "Figure:     $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
+    echo "Figures:"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
 else
     echo ""
     echo "=================================="
