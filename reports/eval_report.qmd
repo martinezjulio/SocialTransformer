@@ -376,24 +376,39 @@ ggsave(
 cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_model_beta_methods_comparison.png"), "\n")
 ```
 
-## Per-Game Mean Reward Comparison
+## Per-Game Mean Reward Comparison (one figure per Thompson prior)
 
 ```{r mean-reward-comparison, fig.width=18, fig.height=9}
 # Per-game mean reward (over the 6 trials of the game ending at this cutoff).
-# Same x-axis as ntot_comparison.png minus the bandit_sep "None" anchor (no
-# reward associated). Inference sources are pinned to the canonical
-# theta_betas curve here too, matching the first figure.
-reward_sessions <- all_sessions %>%
-  filter(source == "Simulated Test" | beta_method == "theta_betas",
-         segment_order == "watch-first",
+# Four separate figures are produced, one per Thompson-sampling prior method;
+# columns 1 and 2 (Simulated Test, Human Inference) are identical across the
+# four figures because the sim-test and human-mode rows don't depend on
+# beta_method, and only the model-inference column changes.
+
+# Segment-role derivation. Within a watch-first round the schedule is:
+#   pos 2 = D1, 3 = L1, 4 = D2, 5 = L2
+# D1 identity depends on game_sequence; D2 is the opposite.
+reward_long_all <- all_sessions %>%
+  filter(segment_order == "watch-first",
          segment_type %in% c("demo", "learner"),
          !is.na(segment_mean_reward),
          game_sequence %in% sequence_levels) %>%
-  mutate(game_sequence = factor(game_sequence, levels = sequence_levels,
-                                labels = c("Expert First", "Novice First")))
+  mutate(
+    game_sequence = factor(game_sequence, levels = sequence_levels,
+                           labels = c("Expert First", "Novice First")),
+    pos_in_round  = ((cutoff - 1) %% 6) + 1,
+    segment_role  = case_when(
+      segment_type == "learner" ~ "play",
+      segment_type == "demo" & pos_in_round == 2 & game_sequence == "Expert First" ~ "expert_demo",
+      segment_type == "demo" & pos_in_round == 2 & game_sequence == "Novice First" ~ "novice_demo",
+      segment_type == "demo" & pos_in_round == 4 & game_sequence == "Expert First" ~ "novice_demo",
+      segment_type == "demo" & pos_in_round == 4 & game_sequence == "Novice First" ~ "expert_demo",
+      TRUE ~ NA_character_
+    )
+  )
 
-reward_summary <- reward_sessions %>%
-  group_by(source, game_sequence, cutoff, segment_type) %>%
+reward_summary_all <- reward_long_all %>%
+  group_by(source, beta_method, game_sequence, cutoff, segment_type, segment_role) %>%
   summarise(
     mean_reward = mean(segment_mean_reward, na.rm = TRUE),
     se_reward   = sd(segment_mean_reward,  na.rm = TRUE) / sqrt(n()),
@@ -402,30 +417,33 @@ reward_summary <- reward_sessions %>%
   )
 
 reward_y_limits <- c(0, 1)
-
-reward_source_titles <- c(
-  "Simulated Test"  = "Simulated Test",
-  "Human Inference" = "Human Inference",
-  "Model Inference" = "Model Inference (Environment Priors)"
-)
+reward_colors   <- c(expert_demo = "#1f77b4",
+                     novice_demo = "#d62728",
+                     play        = "#ff7f0e")
+reward_legend_labels <- c(expert_demo = "Expert (watch)",
+                          novice_demo = "Novice (watch)",
+                          play        = "Play (learner)")
 
 build_reward_panel <- function(panel_summary, title, sequence_label) {
-  labels_df <- segment_label_for(NULL, sequence_label)
+  labels_df <- segment_label_for(NULL, sequence_label) %>% filter(cutoff != 1)
   x_breaks  <- labels_df$cutoff
+  play_only <- panel_summary %>% filter(segment_role == "play")
 
-  ggplot(panel_summary, aes(x = cutoff, y = mean_reward)) +
+  ggplot(panel_summary, aes(x = cutoff, y = mean_reward, color = segment_role)) +
     geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
-    geom_line(linewidth = 1, color = "#2ca02c") +
-    geom_point(size = 2, color = "#2ca02c") +
+    geom_line(data = play_only, aes(group = 1), linewidth = 1) +
+    geom_point(size = 3) +
     geom_errorbar(aes(ymin = mean_reward - se_reward,
                       ymax = mean_reward + se_reward),
-                  width = 0.3, color = "#2ca02c") +
+                  width = 0.3) +
+    scale_color_manual(values = reward_colors, labels = reward_legend_labels) +
     scale_x_continuous(breaks = x_breaks, labels = labels_df$label) +
-    coord_cartesian(xlim = c(0.5, 17.5), ylim = reward_y_limits) +
+    coord_cartesian(xlim = c(1.5, 17.5), ylim = reward_y_limits) +
     labs(
       title = title,
       x = "Game (segment ending at this cutoff)",
-      y = "Mean reward (per game, 6 trials)"
+      y = "Mean reward (per game, 6 trials)",
+      color = "Segment"
     ) +
     theme_minimal() +
     theme(
@@ -436,33 +454,65 @@ build_reward_panel <- function(panel_summary, title, sequence_label) {
     )
 }
 
-reward_panels <- list()
-for (seq_label in c("Expert First", "Novice First")) {
-  for (source_label in levels(reward_summary$source)) {
-    panel_summary <- reward_summary %>%
-      filter(source == source_label, game_sequence == seq_label)
-    panel_title <- paste0(reward_source_titles[[source_label]], ": ", seq_label)
-    reward_panels[[paste(seq_label, source_label, sep = " | ")]] <-
-      build_reward_panel(panel_summary, panel_title, seq_label)
-  }
-}
+build_reward_plot <- function(model_beta_method) {
+  method_label <- beta_method_labels[[model_beta_method]]
 
-reward_final_plot <- (reward_panels[[1]] | reward_panels[[2]] | reward_panels[[3]]) /
-                     (reward_panels[[4]] | reward_panels[[5]] | reward_panels[[6]]) +
-  plot_annotation(
-    title = "Per-Game Mean Reward",
-    subtitle = "Mean reward over the 6 trials of each game (demo or play), x-axis matches the N_total plot minus the no-context anchor",
-    theme = theme(
-      plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
-      plot.subtitle = element_text(size = 12, hjust = 0.5)
+  summary_for_plot <- reward_summary_all %>%
+    filter(
+      source == "Simulated Test" |
+      (source == "Human Inference" & beta_method == "theta_betas") |
+      (source == "Model Inference" & beta_method == model_beta_method)
     )
+
+  reward_source_titles <- c(
+    "Simulated Test"  = "Simulated Test",
+    "Human Inference" = "Human Inference",
+    "Model Inference" = paste0("Model Inference (", method_label, ")")
   )
 
-print(reward_final_plot)
+  panels <- list()
+  for (seq_label in c("Expert First", "Novice First")) {
+    for (source_label in c("Simulated Test", "Human Inference", "Model Inference")) {
+      panel_summary <- summary_for_plot %>%
+        filter(source == source_label, game_sequence == seq_label)
+      panel_title <- paste0(reward_source_titles[[source_label]], ": ", seq_label)
+      panels[[paste(seq_label, source_label, sep = " | ")]] <-
+        build_reward_panel(panel_summary, panel_title, seq_label)
+    }
+  }
 
-ggsave(
-  filename = file.path(eval_fig_dir, "mean_reward_comparison.png"),
-  plot = reward_final_plot, width = 18, height = 9, dpi = 150, bg = "white"
-)
-cat("\nFigure saved to:", file.path(eval_fig_dir, "mean_reward_comparison.png"), "\n")
+  grid_plot <- (panels[[1]] | panels[[2]] | panels[[3]]) /
+               (panels[[4]] | panels[[5]] | panels[[6]]) +
+    plot_annotation(
+      title = paste0("Per-Game Mean Reward — Model Inference (", method_label, ")"),
+      subtitle = "Mean reward over the 6 trials of each game (demo or play). Play points connected; demo points are shown as individual dots.",
+      theme = theme(
+        plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      )
+    )
+
+  legend_plot <- build_reward_panel(
+      summary_for_plot %>% filter(source == "Simulated Test", game_sequence == "Expert First"),
+      "legend",
+      "Expert First"
+    ) +
+    theme(legend.position = "bottom",
+          legend.text  = element_text(size = 12),
+          legend.title = element_text(size = 12, margin = margin(r = 25)))
+  legend_grob <- cowplot::get_legend(legend_plot)
+
+  grid_plot / wrap_elements(legend_grob) +
+    plot_layout(heights = c(1, 1, 0.08))
+}
+
+for (bm in beta_method_levels) {
+  reward_plot <- build_reward_plot(bm)
+  out_path <- file.path(eval_fig_dir,
+                        sprintf("mean_reward_comparison_%s.png", bm))
+  ggsave(filename = out_path, plot = reward_plot,
+         width = 18, height = 9, dpi = 150, bg = "white")
+  cat("\nFigure saved to:", out_path, "\n")
+  print(reward_plot)
+}
 ```
