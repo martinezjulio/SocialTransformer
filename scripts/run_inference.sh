@@ -13,7 +13,7 @@ conda activate SocialTransformer
 # Set parameters
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_PATH}"
 DEVICE="cuda"  # Options: cuda, cpu
-NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
+NUM_ROLLOUTS=5  # Number of independent rollouts per session
 SEED=42  # Base random seed for reproducibility
 
 # Optional: Override masking strategy from checkpoint (uncomment to use)
