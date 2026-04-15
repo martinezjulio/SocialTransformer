@@ -215,6 +215,10 @@ if [ $? -eq 0 ]; then
     echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_reward_correlation.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_profiles.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_method_alignment.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_alignment_sweep.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_best_profile.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_method_alignment_best_k.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_curve_correlation.png"
 else
     echo ""
     echo "=================================="
