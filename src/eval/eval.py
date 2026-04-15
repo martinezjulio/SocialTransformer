@@ -629,7 +629,7 @@ def main():
     parser.add_argument("--test_manifest", type=str, required=True,
         help="Path to test manifest.json")
     parser.add_argument("--output_path", type=str, 
-        default="data/evaluation/test_evaluation.csv",
+        default="data/evaluation/eval_test_predictions.csv",
         help="Path to save evaluation results")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("--max_examples", type=int, default=None,
@@ -670,8 +670,8 @@ def main():
     write_config_yaml(eval_dir, vars(args), subdir='metadata')
 
     # Set output paths to eval directory
-    if args.output_path == "data/evaluation/test_evaluation.csv":
-        args.output_path = str(eval_dir / 'data' / 'test_evaluation.csv')
+    if args.output_path == "data/evaluation/eval_test_predictions.csv":
+        args.output_path = str(eval_dir / 'data' / 'eval_test_predictions.csv')
     if args.plot_output_dir == "figures/evaluation":
         args.plot_output_dir = str(eval_dir / 'figures')
     
