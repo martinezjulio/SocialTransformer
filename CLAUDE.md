@@ -73,9 +73,9 @@ There is no test suite; validation is done via `eval.py` against held-out test s
 
 4. **`src/train.py`** — Training loop with **segment-level masking**: each example randomly selects 1..N visible segments, masks future segments in attention, and predicts for the bandit corresponding to the last visible segment's round. This teaches the model to predict from variable context lengths.
 
-5. **`src/eval/eval.py`** / **`src/eval/eval2.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
+5. **`src/eval/eval.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
 
-6. **`src/run_inference.py`** — Loads a trained model and runs Thompson sampling on human experiment data, producing hybrid predictions (real demonstrator data + model-simulated learner actions).
+6. **`src/run_inference.py`** — Loads a trained model and runs inference on human experiment data via a unified cutoff sweep over the full tokenized session. Human mode uses the real learner actions; model mode runs a pre-segment forward pass per learner segment, feeds the resulting belief into Thompson sampling, and splices the sampled actions back into the shared tensors so later cutoffs condition on the simulated play. Emits two output schemas per run: `hybrid_model_predictions.csv` (per-game / per-Thompson-step rows for behavior analysis) and `{human,model}_mode_inference_predictions.csv` (per-cutoff posterior rows for the N_total experience plots).
 
 ### Key Design Decisions
 
@@ -95,12 +95,15 @@ $OUTPUT_DATA_DIR/
     wandb_<id>/
       checkpoints/            # .pt files (local or downloaded from wandb)
       wandb/                  # wandb logs
-  eval/                       # Evaluation outputs (overwrites on re-run)
-    data/                     # evaluation CSVs
-    figures/                  # evaluation plots
+  eval/                       # Per-cutoff posterior outputs (overwrites on re-run)
+    data/                     #   eval_test_predictions.csv           (from eval.py)
+                              #   human_mode_inference_predictions.csv (from run_inference.py)
+                              #   model_mode_inference_predictions.csv (from run_inference.py)
+    figures/                  #   ntot_comparison.png, evaluation_summary.png
+    reports/                  #   eval_report.html (rendered by Quarto)
     metadata/                 # config.yaml, run.yaml
-  inference/                  # Inference outputs (overwrites on re-run)
-    data/                     # inference CSVs
+  inference/                  # Per-game / per-Thompson-step behavior rows (overwrites on re-run)
+    data/                     #   hybrid_model_predictions.csv (from run_inference.py)
     metadata/                 # config.yaml, run.yaml
   analysis/                   # Analysis outputs (overwrites on re-run)
     data/                     # analysis CSVs
@@ -108,7 +111,7 @@ $OUTPUT_DATA_DIR/
     metadata/                 # config.yaml, run.yaml
 ```
 
-Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run.
+Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run. The `eval/` and `inference/` split is by output schema, not by pipeline stage: `run_inference.py` writes to both on a single run (per-cutoff posterior rows to `eval/data/`, per-game/per-step behavior rows to `inference/data/`).
 
 ### Checkpoint Loading
 
@@ -151,7 +154,8 @@ repo root/
 ├── renv.lock                          # Locked R dependencies
 ├── renv/                              # renv bootstrap files
 └── reports/
-    ├── analysis_report.qmd           # Main Quarto analysis document
+    ├── analysis_report.qmd           # Behavior analysis (reward, choice, entropy, correlations) — reads hybrid_model_predictions.csv
+    ├── eval_report.qmd                # N_total experience comparison (3x2 plot across eval + inference modes) — reads the per-cutoff CSVs in eval/data/
     └── r/
         ├── reward_plots.R             # R helper scripts (plots, preprocessing)
         ├── entropy_plots.R

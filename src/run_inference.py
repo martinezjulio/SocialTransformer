@@ -67,9 +67,10 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     # Sort by session_id and game_index to maintain temporal order
     df_filtered = df_filtered.sort_values(['session_id', 'round_index', 'game_index']).reset_index(drop=True)
     
-    # Remove sessions with incomplete round structure
+    # Remove sessions with incomplete round structure (wrong round set or wrong game count)
     expected_rounds = {0, 1, 2}
     expected_games_per_round = 4  # watch, play, watch, play
+    expected_shots_per_play = 6   # matches training T_learner; enforced strictly
     incomplete_sessions = []
     for sid in df_filtered['session_id'].unique():
         sdf = df_filtered[df_filtered['session_id'] == sid]
@@ -77,18 +78,38 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
         n_games = sdf['game_index'].nunique()
         if rounds != expected_rounds or n_games != expected_games_per_round * len(expected_rounds):
             incomplete_sessions.append(sid)
-    
+
     if incomplete_sessions:
-        print(f"\nRemoving {len(incomplete_sessions)} session(s) with incomplete data:")
+        print(f"\nRemoving {len(incomplete_sessions)} session(s) with incomplete round structure:")
         for sid in incomplete_sessions:
             sdf = df_filtered[df_filtered['session_id'] == sid]
             rounds = sorted(int(r) for r in sdf['round_index'].unique())
             n_games = sdf['game_index'].nunique()
             print(f"  {sid}: rounds={rounds}, games={n_games}")
         df_filtered = df_filtered[~df_filtered['session_id'].isin(incomplete_sessions)].reset_index(drop=True)
-    
+
+    # Also drop sessions where any play game has fewer than the expected number
+    # of shot events. This matches the training distribution (fixed T_learner)
+    # and avoids variable-length learner segments that the model was not
+    # trained on.
+    short_play_sessions = []
+    for sid in df_filtered['session_id'].unique():
+        sdf = df_filtered[df_filtered['session_id'] == sid]
+        play_counts = sdf[sdf['game'] == 'play'].groupby('game_index').size()
+        if (play_counts != expected_shots_per_play).any():
+            bad = play_counts[play_counts != expected_shots_per_play].to_dict()
+            short_play_sessions.append((sid, bad))
+
+    if short_play_sessions:
+        print(f"\nRemoving {len(short_play_sessions)} session(s) with play games that do not have "
+              f"exactly {expected_shots_per_play} shots:")
+        for sid, bad in short_play_sessions:
+            print(f"  {sid}: {bad}")
+        drop_ids = {sid for sid, _ in short_play_sessions}
+        df_filtered = df_filtered[~df_filtered['session_id'].isin(drop_ids)].reset_index(drop=True)
+
     print(f"Filtered to {len(df_filtered)} shot events from {df_filtered['session_id'].nunique()} sessions")
-    
+
     return df_filtered
 
 
@@ -503,374 +524,331 @@ def run_inference_on_session(
     beta_method: str = "theta_betas",
     num_rollouts: int = 1,
     seed: int = 42,
-    masking_strategy: str = "all_bandits"
-) -> pd.DataFrame:
+    masking_strategy: str = "all_bandits",
+    normalizer: Optional[BeliefNormalizer] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Run inference on a single session, generating hybrid data.
-    
-    Args:
-        session_df: DataFrame for one session
-        model: Trained model
-        device: torch device
-        alpha0: Prior alpha parameter
-        beta0: Prior beta parameter
-        num_arms: Number of bandit arms
-        num_agents: Number of agents (for padding)
-        learner_steps: Number of steps per learner segment
-        SPECIAL: Dictionary of special token IDs
-        learner_segment_input: "human" to use original learner data as context, 
-                              "model" to use simulated learner data as context
-        beta_method: Which beta parameters to use for Thompson sampling:
-                    "theta_betas" (bandit payoff beliefs),
-                    "novice_betas" (novice demonstrator beliefs),
-                    "expert_betas" (expert demonstrator beliefs), or
-                    "recent_betas" (most recent demonstrator's beliefs)
-        num_rollouts: Number of independent rollouts per session
-        seed: Base random seed for reproducibility
-        
+    Run inference on a single session, producing both per-game/per-step rows
+    (for hybrid_model_predictions.csv) and per-cutoff rows (for the N_total
+    experience plots).
+
+    Unified cutoff sweep: the full session is tokenized once via
+    convert_session_to_model_format/encode_events_to_tensors. For each rollout
+    we clone the tensors and iterate cutoff ∈ 1..num_segments, running one
+    forward pass per cutoff on the shared tensors with a segment-level
+    attention mask. For model-mode learner segments we additionally run a
+    pre-segment forward pass (cutoff - 1) whose output seeds Thompson sampling;
+    the sampled (action, reward) trajectory is spliced into full_tensors'
+    action_ids/reward_ids before the recorded post-segment pass runs. This
+    guarantees bit-identical outputs to human mode when Thompson sampling is
+    replaced with the real human actions.
+
     Returns:
-        DataFrame with original demos + simulated learner segments,
-        plus learner_segment_input, beta_method, and rollout_id columns
+        per_game_df: per-game / per-Thompson-step rows with existing schema
+            (hybrid_model_predictions.csv consumer).
+        per_cutoff_df: one row per (cutoff, rollout) tagged with
+            segment_type / segment_order / game_sequence / round_index /
+            expert_N_tot_pred / novice_N_tot_pred / beta strings.
     """
     # Parse game sequence to understand structure
     game_seq = session_df.iloc[0]['game_sequence']
-    seq_parts = parse_game_sequence(game_seq)
-    
-    # Parse demonstrator order (which demo type maps to which model index)
     demo_order_map = parse_demonstrator_order(game_seq)
-    
+
     # Identify which game_indices are demos vs learners
     game_indices = sorted(session_df['game_index'].unique())
-    demo_games = session_df[session_df['game'] == 'watch']['game_index'].unique()
-    learner_games = session_df[session_df['game'] == 'play']['game_index'].unique()
-    
-    # Collect results from all rollouts
-    all_rollout_rows = []
+    demo_games = set(session_df[session_df['game'] == 'watch']['game_index'].unique().tolist())
+    learner_games = set(session_df[session_df['game'] == 'play']['game_index'].unique().tolist())
 
-    if learner_segment_input == "human":
-        # === Eval-style approach: build full sequence once, use masking per game ===
-        # This matches eval's input construction (same positional encodings,
-        # same QUERY token positions) and produces predictions at all game indices.
+    expert_demo_idx = demo_order_map['expert']
+    novice_demo_idx = demo_order_map['novice']
 
-        # Step A: Build full model input with ALL games
-        full_model_input = convert_session_to_model_format(
-            session_df, game_indices, num_arms
+    session_id_val = session_df.iloc[0]['session_id']
+    session_index_val = session_df.iloc[0]['session_index']
+    anonymous_id_val = session_df.iloc[0]['anonymous_id']
+
+    K = num_arms
+
+    # Tokenize the full session once.
+    full_model_input = convert_session_to_model_format(
+        session_df, game_indices, num_arms
+    )
+    num_segments = len(full_model_input['segment_info'])
+    segment_boundaries = full_model_input['segment_boundaries']
+    segment_info = full_model_input['segment_info']
+
+    original_tensors = encode_events_to_tensors(
+        full_model_input['events'], num_arms,
+        len(full_model_input['bandits_info']), num_agents, SPECIAL
+    )
+    full_seq_len = original_tensors['bandit_ids'].shape[1]
+    original_tensors['pad_mask'] = torch.zeros(1, full_seq_len, dtype=torch.bool)
+    for k in original_tensors:
+        original_tensors[k] = original_tensors[k].to(device)
+
+    # Derive segment_order ("watch-first" vs "play-first") from the first
+    # non-structural segment; for human data this is always "watch-first".
+    first_non_structural = None
+    for seg in segment_info:
+        if seg['type'] in ('demo', 'learner'):
+            first_non_structural = seg['type']
+            break
+    segment_order = "watch-first" if first_non_structural == "demo" else "play-first"
+
+    # Map each demo/learner segment index to the game_index it represents,
+    # so we can route per-segment predictions back to per-game rows, and
+    # record the (start_pos, end_pos) slice of each learner segment for
+    # Thompson splicing.
+    seg_idx_to_game_idx = {}
+    learner_seg_slices = {}  # seg_idx -> (start_pos, end_pos)
+    demo_learner_idx = 0
+    for seg_idx, seg in enumerate(segment_info):
+        if seg['type'] in ('demo', 'learner'):
+            g_idx = game_indices[demo_learner_idx]
+            seg_idx_to_game_idx[seg_idx] = g_idx
+            if seg['type'] == 'learner':
+                start_pos = segment_boundaries[seg_idx]
+                end_pos = segment_boundaries[seg_idx + 1]
+                learner_seg_slices[seg_idx] = (start_pos, end_pos)
+            demo_learner_idx += 1
+
+    # Precompute each learner segment's true bandit payoffs (from session_df)
+    # so Thompson sampling can generate rewards against the real task.
+    learner_seg_bandit_payoffs = {}
+    for seg_idx, g_idx in seg_idx_to_game_idx.items():
+        if seg_idx in learner_seg_slices:
+            g_df = session_df[session_df['game_index'] == g_idx]
+            learner_seg_bandit_payoffs[seg_idx] = parse_bandit_payoffs(
+                g_df.iloc[0]['zone_bandit']
+            )
+
+    def _denorm_demo(alpha_demo: torch.Tensor, beta_demo: torch.Tensor):
+        if normalizer is not None:
+            alpha_demo = normalizer.denormalize_alpha(alpha_demo)
+            beta_demo = normalizer.denormalize_beta(beta_demo)
+        return alpha_demo, beta_demo
+
+    def _n_tot(alpha_row: torch.Tensor, beta_row: torch.Tensor) -> float:
+        return float(
+            (alpha_row.sum() + beta_row.sum() - alpha0 * K - beta0 * K).item()
         )
-        full_tensors = encode_events_to_tensors(
-            full_model_input['events'], num_arms,
-            len(full_model_input['bandits_info']), num_agents, SPECIAL
+
+    def _run_forward(tensors_state, mask_cutoff: int) -> Dict[str, torch.Tensor]:
+        mask = create_segment_mask(
+            segment_boundaries,
+            mask_cutoff,
+            full_seq_len,
+            device,
+            masking_strategy=masking_strategy,
+            segment_info=segment_info,
+            round_bandit_map=full_model_input['round_bandit_map'],
         )
-        full_seq_len = full_tensors['bandit_ids'].shape[1]
-        full_tensors['pad_mask'] = torch.zeros(1, full_seq_len, dtype=torch.bool)
-        for k in full_tensors:
-            full_tensors[k] = full_tensors[k].to(device)
+        with torch.no_grad():
+            model.eval()
+            return model(tensors_state, custom_attn_mask=mask)
 
-        # Build game_index -> segment cutoff mapping
-        # demo/learner segments appear in game_index order within segment_info
-        game_to_segment_cutoff = {}
-        demo_learner_idx = 0
-        for seg_idx, seg in enumerate(full_model_input['segment_info']):
-            if seg['type'] in ('demo', 'learner'):
-                game_to_segment_cutoff[game_indices[demo_learner_idx]] = seg_idx + 1  # 1-indexed
-                demo_learner_idx += 1
+    def _choose_thompson_betas(pre_alpha_theta, pre_beta_theta,
+                               pre_alpha_demo, pre_beta_demo, seg_idx):
+        """Pick (alpha, beta) the Thompson sampler should draw from."""
+        if beta_method == "theta_betas":
+            return pre_alpha_theta, pre_beta_theta
+        if beta_method == "novice_betas":
+            return pre_alpha_demo[novice_demo_idx, :], pre_beta_demo[novice_demo_idx, :]
+        if beta_method == "expert_betas":
+            return pre_alpha_demo[expert_demo_idx, :], pre_beta_demo[expert_demo_idx, :]
+        if beta_method == "recent_betas":
+            # Walk back from this segment to find the most recent demo segment
+            # that was visible pre-cutoff.
+            for prior_idx in range(seg_idx - 1, -1, -1):
+                prior = segment_info[prior_idx]
+                if prior['type'] == 'demo':
+                    prior_demo_model_idx = prior['agent'] - 1
+                    return (
+                        pre_alpha_demo[prior_demo_model_idx, :],
+                        pre_beta_demo[prior_demo_model_idx, :],
+                    )
+            # Fallback: no demo visible yet → use theta_betas.
+            return pre_alpha_theta, pre_beta_theta
+        raise ValueError(f"Unknown beta_method: {beta_method}")
 
-        # Step B: Run inference per rollout, using masking at each game
-        for rollout_id in range(num_rollouts):
-            rollout_seed = seed + rollout_id
-            random.seed(rollout_seed)
-            np.random.seed(rollout_seed)
+    per_game_rows = []
+    per_cutoff_rows = []
 
-            result_rows = []
+    for rollout_id in range(num_rollouts):
+        rollout_seed = seed + rollout_id
+        random.seed(rollout_seed)
+        np.random.seed(rollout_seed)
 
-            for game_idx in game_indices:
-                game_df = session_df[session_df['game_index'] == game_idx].copy()
-                cutoff = game_to_segment_cutoff.get(game_idx)
+        # Fresh tensors per rollout so Thompson splices never leak across rollouts.
+        full_tensors = {k: v.clone() for k, v in original_tensors.items()}
 
-                if cutoff is None or cutoff < 1:
-                    # No context available — store NaN predictions
-                    for _, row in game_df.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['rollout_id'] = rollout_id
-                        row_dict['learner_segment_input'] = learner_segment_input
-                        row_dict['beta_method'] = beta_method
-                        row_dict['theta_betas'] = np.nan
-                        row_dict['expert_betas'] = np.nan
-                        row_dict['novice_betas'] = np.nan
-                        result_rows.append(row_dict)
-                    continue
+        # Per-game bookkeeping populated during the cutoff sweep.
+        game_pred_cache = {}  # game_idx -> dict(theta/expert/novice strings, round_idx)
+        learner_trajectories = {}  # game_idx -> list of (action, reward)
 
-                # Create attention mask revealing segments up to this cutoff
-                attn_mask = create_segment_mask(
-                    full_model_input['segment_boundaries'],
-                    cutoff,
-                    full_seq_len,
-                    device,
-                    masking_strategy=masking_strategy,
-                    segment_info=full_model_input['segment_info'],
-                    round_bandit_map=full_model_input['round_bandit_map']
-                )
+        for cutoff in range(1, num_segments + 1):
+            seg_idx = cutoff - 1
+            seg = segment_info[seg_idx]
+            seg_type = seg['type']
+            round_idx = seg['round']
 
-                # Run model with SAME tensors, DIFFERENT mask (eval-style)
-                with torch.no_grad():
-                    model.eval()
-                    outputs = model(full_tensors, custom_attn_mask=attn_mask)
-
-                # Extract predictions for current round's bandit
-                current_round = int(game_df.iloc[0]['round_index'])
-                current_round_idx = full_model_input['round_to_index'][current_round]
-
-                pred_alpha_theta_cur = outputs['alpha_theta'][0, current_round_idx]  # [K]
-                pred_beta_theta_cur = outputs['beta_theta'][0, current_round_idx]    # [K]
-                pred_alpha_demo_cur = outputs['alpha_demo'][0, current_round_idx]    # [D, K]
-                pred_beta_demo_cur = outputs['beta_demo'][0, current_round_idx]      # [D, K]
-
-                theta_betas_str = serialize_betas(pred_alpha_theta_cur, pred_beta_theta_cur)
-
-                novice_demo_idx = demo_order_map['novice']
-                novice_betas_str = serialize_betas(
-                    pred_alpha_demo_cur[novice_demo_idx, :],
-                    pred_beta_demo_cur[novice_demo_idx, :]
-                )
-
-                expert_demo_idx = demo_order_map['expert']
-                expert_betas_str = serialize_betas(
-                    pred_alpha_demo_cur[expert_demo_idx, :],
-                    pred_beta_demo_cur[expert_demo_idx, :]
-                )
-
-                if game_idx in demo_games:
-                    # Watch game: store original human rows with model predictions
-                    for _, row in game_df.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['rollout_id'] = rollout_id
-                        row_dict['learner_segment_input'] = learner_segment_input
-                        row_dict['beta_method'] = beta_method
-                        row_dict['theta_betas'] = theta_betas_str
-                        row_dict['expert_betas'] = expert_betas_str
-                        row_dict['novice_betas'] = novice_betas_str
-                        result_rows.append(row_dict)
-
-                elif game_idx in learner_games:
-                    # Play game: Thompson sampling with predicted beliefs
-                    if beta_method == "theta_betas":
-                        pred_alpha = pred_alpha_theta_cur
-                        pred_beta = pred_beta_theta_cur
-                    elif beta_method == "novice_betas":
-                        pred_alpha = pred_alpha_demo_cur[demo_order_map['novice'], :]
-                        pred_beta = pred_beta_demo_cur[demo_order_map['novice'], :]
-                    elif beta_method == "expert_betas":
-                        pred_alpha = pred_alpha_demo_cur[demo_order_map['expert'], :]
-                        pred_beta = pred_beta_demo_cur[demo_order_map['expert'], :]
-                    elif beta_method == "recent_betas":
-                        visible_games = [g for g in game_indices if g < game_idx]
-                        last_demo_game_idx = max(g for g in visible_games if g in demo_games)
-                        last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
-                        last_demo_type = last_demo_df.iloc[0]['demonstrator_type']
-                        recent_demo_idx = demo_order_map[last_demo_type]
-                        pred_alpha = pred_alpha_demo_cur[recent_demo_idx, :]
-                        pred_beta = pred_beta_demo_cur[recent_demo_idx, :]
-                    else:
-                        raise ValueError(f"Unknown beta_method: {beta_method}")
-
-                    bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
-                    current_zone = int(game_df.iloc[0]['zone_global_index'])
-
-                    trajectory = thompson_sampling_step(
-                        pred_alpha.cpu(),
-                        pred_beta.cpu(),
-                        bandit_payoffs,
-                        learner_steps
+            # Model-mode learner segment: pre-pass → Thompson → splice,
+            # BEFORE the recorded forward pass runs on the updated tensors.
+            if learner_segment_input == "model" and seg_type == "learner":
+                pre_mask_cutoff = cutoff - 1
+                if pre_mask_cutoff >= 1:
+                    pre_outputs = _run_forward(full_tensors, pre_mask_cutoff)
+                    current_round_idx = full_model_input['round_to_index'][round_idx]
+                    pre_alpha_theta = pre_outputs['alpha_theta'][0, current_round_idx]
+                    pre_beta_theta = pre_outputs['beta_theta'][0, current_round_idx]
+                    pre_alpha_demo_raw = pre_outputs['alpha_demo'][0, current_round_idx]
+                    pre_beta_demo_raw = pre_outputs['beta_demo'][0, current_round_idx]
+                    pre_alpha_demo, pre_beta_demo = _denorm_demo(
+                        pre_alpha_demo_raw, pre_beta_demo_raw
                     )
 
+                    pred_alpha, pred_beta = _choose_thompson_betas(
+                        pre_alpha_theta, pre_beta_theta,
+                        pre_alpha_demo, pre_beta_demo,
+                        seg_idx,
+                    )
+
+                    # Match the actual number of events the human played in this
+                    # segment rather than the model-config default — human play
+                    # segments vary in length (1..T_learner) and the spliced
+                    # trajectory must fit the tensor slots exactly.
+                    start_pos, end_pos = learner_seg_slices[seg_idx]
+                    seg_len = end_pos - start_pos
+
+                    trajectory = thompson_sampling_step(
+                        pred_alpha.detach().cpu(),
+                        pred_beta.detach().cpu(),
+                        learner_seg_bandit_payoffs[seg_idx],
+                        seg_len,
+                    )
                     for step_idx, (action_idx, reward) in enumerate(trajectory):
-                        row = {
+                        pos = start_pos + step_idx
+                        action_val = action_idx if (0 <= action_idx < num_arms) else num_arms
+                        reward_val = int(reward) if int(reward) in (0, 1) else 2
+                        full_tensors['action_ids'][0, pos] = action_val
+                        full_tensors['reward_ids'][0, pos] = reward_val
+
+                    learner_trajectories[seg_idx_to_game_idx[seg_idx]] = trajectory
+
+            # Recorded (post-segment) forward pass on the current tensor state.
+            outputs = _run_forward(full_tensors, cutoff)
+            current_round_idx = full_model_input['round_to_index'][round_idx]
+
+            post_alpha_theta = outputs['alpha_theta'][0, current_round_idx]
+            post_beta_theta = outputs['beta_theta'][0, current_round_idx]
+            post_alpha_demo_raw = outputs['alpha_demo'][0, current_round_idx]
+            post_beta_demo_raw = outputs['beta_demo'][0, current_round_idx]
+            post_alpha_demo, post_beta_demo = _denorm_demo(
+                post_alpha_demo_raw, post_beta_demo_raw
+            )
+
+            theta_betas_str = serialize_betas(post_alpha_theta, post_beta_theta)
+            expert_betas_str = serialize_betas(
+                post_alpha_demo[expert_demo_idx, :], post_beta_demo[expert_demo_idx, :]
+            )
+            novice_betas_str = serialize_betas(
+                post_alpha_demo[novice_demo_idx, :], post_beta_demo[novice_demo_idx, :]
+            )
+
+            expert_n_tot = _n_tot(
+                post_alpha_demo[expert_demo_idx, :].detach().cpu(),
+                post_beta_demo[expert_demo_idx, :].detach().cpu(),
+            )
+            novice_n_tot = _n_tot(
+                post_alpha_demo[novice_demo_idx, :].detach().cpu(),
+                post_beta_demo[novice_demo_idx, :].detach().cpu(),
+            )
+
+            per_cutoff_rows.append({
+                'session_id': session_id_val,
+                'session_index': session_index_val,
+                'anonymous_id': anonymous_id_val,
+                'rollout_id': rollout_id,
+                'learner_segment_input': learner_segment_input,
+                'beta_method': beta_method,
+                'cutoff': cutoff,
+                'segment_type': seg_type,
+                'segment_order': segment_order,
+                'game_sequence': game_seq,
+                'round_index': int(round_idx),
+                'expert_N_tot_pred': expert_n_tot,
+                'novice_N_tot_pred': novice_n_tot,
+                'theta_betas': theta_betas_str,
+                'expert_betas': expert_betas_str,
+                'novice_betas': novice_betas_str,
+            })
+
+            if seg_idx in seg_idx_to_game_idx:
+                game_pred_cache[seg_idx_to_game_idx[seg_idx]] = {
+                    'theta_betas': theta_betas_str,
+                    'expert_betas': expert_betas_str,
+                    'novice_betas': novice_betas_str,
+                    'round_idx': int(round_idx),
+                }
+
+        # Emit per-game / per-step rows using the cached per-segment predictions.
+        for game_idx in game_indices:
+            game_df = session_df[session_df['game_index'] == game_idx]
+            preds = game_pred_cache.get(game_idx)
+            theta_str = preds['theta_betas'] if preds else np.nan
+            expert_str = preds['expert_betas'] if preds else np.nan
+            novice_str = preds['novice_betas'] if preds else np.nan
+            round_idx_for_game = preds['round_idx'] if preds else int(game_df.iloc[0]['round_index'])
+
+            if game_idx in demo_games:
+                for _, row in game_df.iterrows():
+                    row_dict = row.to_dict()
+                    row_dict['rollout_id'] = rollout_id
+                    row_dict['learner_segment_input'] = learner_segment_input
+                    row_dict['beta_method'] = beta_method
+                    row_dict['theta_betas'] = theta_str
+                    row_dict['expert_betas'] = expert_str
+                    row_dict['novice_betas'] = novice_str
+                    per_game_rows.append(row_dict)
+
+            elif game_idx in learner_games:
+                if learner_segment_input == "human":
+                    for _, row in game_df.iterrows():
+                        row_dict = row.to_dict()
+                        row_dict['rollout_id'] = rollout_id
+                        row_dict['learner_segment_input'] = learner_segment_input
+                        row_dict['beta_method'] = beta_method
+                        row_dict['theta_betas'] = theta_str
+                        row_dict['expert_betas'] = expert_str
+                        row_dict['novice_betas'] = novice_str
+                        per_game_rows.append(row_dict)
+                else:
+                    trajectory = learner_trajectories.get(game_idx, [])
+                    current_zone = int(game_df.iloc[0]['zone_global_index'])
+                    for step_idx, (action_idx, reward) in enumerate(trajectory):
+                        per_game_rows.append({
                             'rollout_id': rollout_id,
-                            'session_id': session_df.iloc[0]['session_id'],
-                            'session_index': session_df.iloc[0]['session_index'],
-                            'anonymous_id': session_df.iloc[0]['anonymous_id'],
+                            'session_id': session_id_val,
+                            'session_index': session_index_val,
+                            'anonymous_id': anonymous_id_val,
                             'position': action_idx,
                             'action': 'shoot',
                             'game': 'play',
                             'game_sequence': game_seq,
                             'game_index': game_idx,
-                            'round_index': current_round,
+                            'round_index': round_idx_for_game,
                             'demonstrator_type': np.nan,
                             'zone_bandit': game_df.iloc[0]['zone_bandit'],
                             'zone_global_index': current_zone,
                             'reward_generated': bool(reward),
                             'learner_segment_input': learner_segment_input,
                             'beta_method': beta_method,
-                            'theta_betas': theta_betas_str,
-                            'expert_betas': expert_betas_str,
-                            'novice_betas': novice_betas_str
-                        }
-                        result_rows.append(row)
+                            'theta_betas': theta_str,
+                            'expert_betas': expert_str,
+                            'novice_betas': novice_str,
+                        })
 
-            all_rollout_rows.extend(result_rows)
+    return pd.DataFrame(per_game_rows), pd.DataFrame(per_cutoff_rows)
 
-    else:
-        # === Incremental approach for "model" mode ===
-        # Future data depends on model outputs, so sequence must be rebuilt each game.
-        for rollout_id in range(num_rollouts):
-            rollout_seed = seed + rollout_id
-            random.seed(rollout_seed)
-            np.random.seed(rollout_seed)
-
-            result_rows = []
-            simulated_data_rows = []
-
-            for game_idx in game_indices:
-                game_df = session_df[session_df['game_index'] == game_idx].copy()
-
-                if game_idx in demo_games:
-                    for _, row in game_df.iterrows():
-                        row_dict = row.to_dict()
-                        row_dict['rollout_id'] = rollout_id
-                        row_dict['learner_segment_input'] = learner_segment_input
-                        row_dict['beta_method'] = beta_method
-                        row_dict['theta_betas'] = np.nan
-                        row_dict['expert_betas'] = np.nan
-                        row_dict['novice_betas'] = np.nan
-                        result_rows.append(row_dict)
-
-                elif game_idx in learner_games:
-                    visible_games = [g for g in game_indices if g < game_idx]
-
-                    if len(visible_games) == 0:
-                        print(f"Warning: Learner segment before any demo in session {session_df.iloc[0]['session_id']}")
-                        continue
-
-                    if len(simulated_data_rows) > 0:
-                        simulated_df = pd.DataFrame(simulated_data_rows)
-                        demos_df = session_df[
-                            (session_df['game'] == 'watch') &
-                            (session_df['game_index'].isin(visible_games))
-                        ].copy()
-                        context_df = pd.concat([demos_df, simulated_df], ignore_index=True)
-                        context_df = context_df.sort_values(['round_index', 'game_index']).reset_index(drop=True)
-                    else:
-                        context_df = session_df
-
-                    model_input = convert_session_to_model_format(
-                        context_df,
-                        visible_games,
-                        num_arms
-                    )
-
-                    tensors = encode_events_to_tensors(
-                        model_input['events'],
-                        num_arms,
-                        len(model_input['bandits_info']),
-                        num_agents,
-                        SPECIAL
-                    )
-
-                    seq_len = tensors['bandit_ids'].shape[1]
-                    tensors['pad_mask'] = torch.zeros(1, seq_len, dtype=torch.bool)
-
-                    for k in tensors:
-                        tensors[k] = tensors[k].to(device)
-
-                    num_visible_segments = len(model_input['segment_info'])
-                    attn_mask = create_segment_mask(
-                        model_input['segment_boundaries'],
-                        num_visible_segments,
-                        seq_len,
-                        device,
-                        masking_strategy=masking_strategy,
-                        segment_info=model_input['segment_info'],
-                        round_bandit_map=model_input['round_bandit_map']
-                    )
-
-                    with torch.no_grad():
-                        model.eval()
-                        outputs = model(tensors, custom_attn_mask=attn_mask)
-
-                    current_round = int(game_df.iloc[0]['round_index'])
-                    current_zone = int(game_df.iloc[0]['zone_global_index'])
-
-                    if current_round in model_input['round_to_index']:
-                        current_round_idx = model_input['round_to_index'][current_round]
-                    else:
-                        print(f"  Warning: Round {current_round} not in visible context for session "
-                              f"{session_df.iloc[0]['session_id']}, game_idx={game_idx}. Using last available QUERY.")
-                        current_round_idx = len(model_input['round_to_index']) - 1
-
-                    pred_alpha_theta_cur = outputs['alpha_theta'][0, current_round_idx]
-                    pred_beta_theta_cur = outputs['beta_theta'][0, current_round_idx]
-                    pred_alpha_demo_cur = outputs['alpha_demo'][0, current_round_idx]
-                    pred_beta_demo_cur = outputs['beta_demo'][0, current_round_idx]
-
-                    theta_betas_str = serialize_betas(pred_alpha_theta_cur, pred_beta_theta_cur)
-
-                    novice_demo_idx = demo_order_map['novice']
-                    novice_betas_str = serialize_betas(
-                        pred_alpha_demo_cur[novice_demo_idx, :],
-                        pred_beta_demo_cur[novice_demo_idx, :]
-                    )
-
-                    expert_demo_idx = demo_order_map['expert']
-                    expert_betas_str = serialize_betas(
-                        pred_alpha_demo_cur[expert_demo_idx, :],
-                        pred_beta_demo_cur[expert_demo_idx, :]
-                    )
-
-                    if beta_method == "theta_betas":
-                        pred_alpha = pred_alpha_theta_cur
-                        pred_beta = pred_beta_theta_cur
-                    elif beta_method == "novice_betas":
-                        pred_alpha = pred_alpha_demo_cur[demo_order_map['novice'], :]
-                        pred_beta = pred_beta_demo_cur[demo_order_map['novice'], :]
-                    elif beta_method == "expert_betas":
-                        pred_alpha = pred_alpha_demo_cur[demo_order_map['expert'], :]
-                        pred_beta = pred_beta_demo_cur[demo_order_map['expert'], :]
-                    elif beta_method == "recent_betas":
-                        last_demo_game_idx = max(g for g in visible_games if g in demo_games)
-                        last_demo_df = session_df[session_df['game_index'] == last_demo_game_idx]
-                        last_demo_type = last_demo_df.iloc[0]['demonstrator_type']
-                        recent_demo_idx = demo_order_map[last_demo_type]
-                        pred_alpha = pred_alpha_demo_cur[recent_demo_idx, :]
-                        pred_beta = pred_beta_demo_cur[recent_demo_idx, :]
-                    else:
-                        raise ValueError(f"Unknown beta_method: {beta_method}")
-
-                    bandit_payoffs = parse_bandit_payoffs(game_df.iloc[0]['zone_bandit'])
-
-                    trajectory = thompson_sampling_step(
-                        pred_alpha.cpu(),
-                        pred_beta.cpu(),
-                        bandit_payoffs,
-                        learner_steps
-                    )
-
-                    for step_idx, (action_idx, reward) in enumerate(trajectory):
-                        row = {
-                            'rollout_id': rollout_id,
-                            'session_id': session_df.iloc[0]['session_id'],
-                            'session_index': session_df.iloc[0]['session_index'],
-                            'anonymous_id': session_df.iloc[0]['anonymous_id'],
-                            'position': action_idx,
-                            'action': 'shoot',
-                            'game': 'play',
-                            'game_sequence': game_seq,
-                            'game_index': game_idx,
-                            'round_index': current_round,
-                            'demonstrator_type': np.nan,
-                            'zone_bandit': game_df.iloc[0]['zone_bandit'],
-                            'zone_global_index': current_zone,
-                            'reward_generated': bool(reward),
-                            'learner_segment_input': learner_segment_input,
-                            'beta_method': beta_method,
-                            'theta_betas': theta_betas_str,
-                            'expert_betas': expert_betas_str,
-                            'novice_betas': novice_betas_str
-                        }
-                        result_rows.append(row)
-                        simulated_data_rows.append(row)
-
-            all_rollout_rows.extend(result_rows)
-    
-    return pd.DataFrame(all_rollout_rows)
 
 
 def main():
@@ -1011,27 +989,49 @@ def main():
         
         if 'normalization' not in checkpoint:
             raise ValueError("Checkpoint missing 'normalization' parameters")
-        
+
         alpha0 = checkpoint['normalization']['alpha0']
         beta0 = checkpoint['normalization']['beta0']
         print(f"  alpha0={alpha0}, beta0={beta0}")
-        
+
+        # Mirror eval.py: if the checkpoint normalized beliefs during training,
+        # wire up a BeliefNormalizer so inference denormalizes before computing
+        # N_tot. Without this the per-cutoff experience numbers would be in
+        # normalized space and meaningless.
+        normalizer = None
+        if checkpoint['normalization'].get('normalize_beliefs', False):
+            norm_dict = checkpoint['normalization']
+            if 'expert_N_max' in norm_dict:
+                max_exp = norm_dict['expert_N_max']
+            elif 'N_max' in norm_dict:
+                print("WARNING: checkpoint uses deprecated 'N_max' key in normalization dict.")
+                max_exp = norm_dict['N_max']
+            else:
+                raise ValueError("Checkpoint normalization missing both 'expert_N_max' and 'N_max'")
+            normalizer = BeliefNormalizer(
+                max_experience=max_exp,
+                alpha0=norm_dict['alpha0'],
+                beta0=norm_dict['beta0'],
+            )
+            print("✓ Using belief normalization")
+
         # Run inference on each session for all 8 combinations
         print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) x 8 combinations...")
-        
-        all_results = []
-        
+
+        per_game_results = []
+        per_cutoff_results = []
+
         for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
-            for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"], 
+            for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"],
                                     desc=f"Beta method ({learner_input})", position=1, leave=False):
-                
+
                 session_ids = df['session_id'].unique()
-                for session_id in tqdm(session_ids, 
-                                      desc=f"Sessions ({learner_input}, {beta_method})", 
+                for session_id in tqdm(session_ids,
+                                      desc=f"Sessions ({learner_input}, {beta_method})",
                                       position=2, leave=False):
                     session_df = df[df['session_id'] == session_id].copy()
-                    
-                    result_df = run_inference_on_session(
+
+                    per_game_df, per_cutoff_df = run_inference_on_session(
                         session_df,
                         model,
                         device,
@@ -1045,23 +1045,46 @@ def main():
                         beta_method=beta_method,
                         num_rollouts=args.num_rollouts,
                         seed=args.seed,
-                        masking_strategy=masking_strategy
+                        masking_strategy=masking_strategy,
+                        normalizer=normalizer,
                     )
-                    
-                    all_results.append(result_df)
-        
+
+                    per_game_results.append(per_game_df)
+                    per_cutoff_results.append(per_cutoff_df)
+
         print("\nCombining all results...")
-        final_df = pd.concat(all_results, ignore_index=True)
-        
+        final_per_game_df = pd.concat(per_game_results, ignore_index=True)
+        final_per_cutoff_df = pd.concat(per_cutoff_results, ignore_index=True)
+
+        # hybrid_model_predictions.csv — per-game / per-step (existing consumer: analysis_report.qmd)
         output_path = Path(args.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        print(f"\nSaving results to {args.output_path}...")
-        final_df.to_csv(args.output_path, index=False)
-        
-        print(f"\nDone! Generated {len(final_df)} rows for {final_df['session_id'].nunique()} sessions")
+        print(f"\nSaving per-game predictions to {output_path}...")
+        final_per_game_df.to_csv(output_path, index=False)
+
+        # Per-cutoff predictions split by mode, written to $OUTPUT_DATA_DIR/eval/data/
+        # (consumer: eval_report.qmd N_total comparison plot).
+        output_data_dir = os.environ.get('OUTPUT_DATA_DIR')
+        if not output_data_dir:
+            raise RuntimeError("OUTPUT_DATA_DIR environment variable is not set")
+        eval_data_dir = Path(output_data_dir) / 'eval' / 'data'
+        eval_data_dir.mkdir(parents=True, exist_ok=True)
+
+        human_cutoff_df = final_per_cutoff_df[final_per_cutoff_df['learner_segment_input'] == 'human']
+        model_cutoff_df = final_per_cutoff_df[final_per_cutoff_df['learner_segment_input'] == 'model']
+
+        human_cutoff_path = eval_data_dir / 'human_mode_inference_predictions.csv'
+        model_cutoff_path = eval_data_dir / 'model_mode_inference_predictions.csv'
+        print(f"Saving human-mode per-cutoff predictions to {human_cutoff_path}...")
+        human_cutoff_df.to_csv(human_cutoff_path, index=False)
+        print(f"Saving model-mode per-cutoff predictions to {model_cutoff_path}...")
+        model_cutoff_df.to_csv(model_cutoff_path, index=False)
+
+        print(f"\nDone! Per-game rows: {len(final_per_game_df)}, per-cutoff rows: {len(final_per_cutoff_df)}")
+        print(f"  Sessions: {final_per_game_df['session_id'].nunique()}")
         print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
-        print(f"Output saved to: {args.output_path}")
+        print(f"Per-game output: {output_path}")
+        print(f"Per-cutoff outputs: {human_cutoff_path}, {model_cutoff_path}")
         
         finalize_run_yaml(inference_dir, status='completed', subdir='metadata')
         print(f"\n{'='*60}")
