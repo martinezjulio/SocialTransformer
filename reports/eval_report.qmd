@@ -49,26 +49,28 @@ cat("Inference model mode:   ", nrow(model_infer_df), "rows\n")
 ## Build Long-Form Per-Cutoff Table
 
 ```{r build-long}
-# Which beta_method to draw for the inference frames. Options:
-#   "theta_betas"  — model's bandit-payoff belief (default canonical view)
-#   "expert_betas" — expert demonstrator belief head
-#   "novice_betas" — novice demonstrator belief head
-#   "recent_betas" — most-recent demonstrator's belief head
-# Only affects the inference panels; eval doesn't have a beta_method column.
-inference_beta_method <- "theta_betas"
+# Beta-method labels used for the new model-mode comparison figure.
+beta_method_levels <- c("theta_betas", "expert_betas", "novice_betas", "recent_betas")
+beta_method_labels <- c(
+  theta_betas  = "Environment Priors",
+  expert_betas = "Expert-Head Priors",
+  novice_betas = "Novice-Head Priors",
+  recent_betas = "Most-Recent-Watched Priors"
+)
 
 # Unified long-form frame with columns:
-#   source, example_key, cutoff, segment_type, segment_order, game_sequence,
-#   round_index, expert_N_tot_pred, novice_N_tot_pred
+#   source, beta_method, example_key, cutoff, segment_type, segment_order,
+#   game_sequence, round_index, expert_N_tot_pred, novice_N_tot_pred,
+#   segment_mean_reward
 #
 # Filtering convention for the experience plot x-axis:
 #   - watch-first segment_order only (human task has no play-first rounds)
 #   - segment_type in {bandit_sep, demo, learner}; drop query (no new info)
 #   - keep only the FIRST bandit_sep per example (cutoff == 1) so the
 #     "no context" anchor appears once and later bandit_sep's don't clutter
-#   - inference frames: filter to inference_beta_method (one canonical curve)
-#     and average expert/novice N_tot across rollouts per session × cutoff
-prepare_source <- function(df, source_label, key_col, beta_method_filter = NULL) {
+#   - inference frames: carry beta_method through (no longer filtered to one
+#     canonical curve), average across rollouts per session × cutoff × method
+prepare_source <- function(df, source_label, key_col) {
   if (!(key_col %in% names(df))) {
     stop(sprintf("Column %s missing from %s data", key_col, source_label))
   }
@@ -78,17 +80,20 @@ prepare_source <- function(df, source_label, key_col, beta_method_filter = NULL)
            segment_type %in% c("bandit_sep", "demo", "learner")) %>%
     filter(!(segment_type == "bandit_sep" & cutoff != 1))
 
-  if (!is.null(beta_method_filter) && "beta_method" %in% names(out)) {
-    out <- out %>% filter(beta_method == beta_method_filter)
+  has_beta <- "beta_method" %in% names(out)
+  if (!has_beta) {
+    # Simulated Test source has no beta_method; sentinel keeps bind_rows happy.
+    out <- out %>% mutate(beta_method = NA_character_)
   }
 
-  grouping <- c(key_col, "cutoff", "segment_type", "segment_order",
-                "game_sequence", "round_index")
+  grouping <- c(key_col, "beta_method", "cutoff", "segment_type",
+                "segment_order", "game_sequence", "round_index")
   out <- out %>%
     group_by(across(all_of(grouping))) %>%
     summarise(
-      expert_N_tot_pred = mean(expert_N_tot_pred, na.rm = TRUE),
-      novice_N_tot_pred = mean(novice_N_tot_pred, na.rm = TRUE),
+      expert_N_tot_pred   = mean(expert_N_tot_pred,   na.rm = TRUE),
+      novice_N_tot_pred   = mean(novice_N_tot_pred,   na.rm = TRUE),
+      segment_mean_reward = mean(segment_mean_reward, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     rename(example_key = !!key_col) %>%
@@ -101,16 +106,15 @@ prepare_source <- function(df, source_label, key_col, beta_method_filter = NULL)
 }
 
 eval_session  <- prepare_source(eval_df,        "Simulated Test",  "example_id")
-human_session <- prepare_source(human_infer_df, "Human Inference", "session_id",
-                                beta_method_filter = inference_beta_method)
-model_session <- prepare_source(model_infer_df, "Model Inference", "session_id",
-                                beta_method_filter = inference_beta_method)
+human_session <- prepare_source(human_infer_df, "Human Inference", "session_id")
+model_session <- prepare_source(model_infer_df, "Model Inference", "session_id")
 
 all_sessions <- bind_rows(eval_session, human_session, model_session) %>%
   mutate(source = factor(source,
                          levels = c("Simulated Test", "Human Inference", "Model Inference")))
 
-# Pivot expert/novice into a long demonstrator_type column.
+# Pivot expert/novice into a long demonstrator_type column for the N_tot plots.
+# segment_mean_reward stays as a wide column (one float per row, no demo split).
 all_long <- all_sessions %>%
   pivot_longer(cols = c(expert_N_tot_pred, novice_N_tot_pred),
                names_to = "demonstrator_type",
@@ -123,13 +127,20 @@ cat("\nRows per source after filtering:\n")
 print(table(all_sessions$source))
 cat("\nGame sequences found:\n")
 print(table(all_sessions$source, all_sessions$game_sequence))
+cat("\nBeta methods present (inference sources only):\n")
+print(table(all_sessions$source, all_sessions$beta_method, useNA = "ifany"))
 ```
 
 ## 3 x 2 N_total Comparison Figure
 
 ```{r ntot-comparison, fig.width=18, fig.height=9}
+# The N_total plot pins inference sources to the canonical theta_betas curve.
+# (The model-mode 4-method comparison is rendered in a separate figure below.)
+ntot_long <- all_long %>%
+  filter(source == "Simulated Test" | beta_method == "theta_betas")
+
 # Aggregate to mean +/- SE across sessions per (source, game_sequence, cutoff, demo_type).
-summary_df <- all_long %>%
+summary_df <- ntot_long %>%
   filter(!is.na(n_total)) %>%
   group_by(source, game_sequence, cutoff, segment_type, demonstrator_type) %>%
   summarise(
@@ -147,7 +158,7 @@ summary_df <- summary_df %>%
   mutate(game_sequence = factor(game_sequence, levels = sequence_levels,
                                 labels = c("Expert First", "Novice First")))
 
-all_long_plot <- all_long %>%
+all_long_plot <- ntot_long %>%
   filter(!is.na(n_total),
          game_sequence %in% sequence_levels) %>%
   mutate(game_sequence = factor(game_sequence, levels = sequence_levels,
@@ -201,12 +212,7 @@ segment_label_for <- function(cutoff, sequence_label) {
   )
 }
 
-build_panel <- function(source_label, sequence_label) {
-  panel_summary <- summary_df %>%
-    filter(source == source_label, game_sequence == sequence_label)
-  panel_indiv <- all_long_plot %>%
-    filter(source == source_label, game_sequence == sequence_label)
-
+build_panel <- function(panel_summary, title, sequence_label) {
   labels_df <- segment_label_for(NULL, sequence_label)
   x_breaks  <- labels_df$cutoff
 
@@ -227,7 +233,7 @@ build_panel <- function(source_label, sequence_label) {
     scale_x_continuous(breaks = x_breaks, labels = labels_df$label) +
     coord_cartesian(xlim = c(0.5, 17.5), ylim = y_limits) +
     labs(
-      title = paste0(source_label, ": ", sequence_label),
+      title = title,
       x = "Cutoff (most recent segment visible)",
       y = expression(N[total]),
       color = "Demonstrator"
@@ -241,11 +247,22 @@ build_panel <- function(source_label, sequence_label) {
     )
 }
 
+# Pretty per-source panel title prefixes. The model column gets a parenthetical
+# tag so it's explicit which Thompson prior is being shown.
+ntot_source_titles <- c(
+  "Simulated Test"  = "Simulated Test",
+  "Human Inference" = "Human Inference",
+  "Model Inference" = "Model Inference (Environment Priors)"
+)
+
 panels <- list()
 for (seq_label in c("Expert First", "Novice First")) {
   for (source_label in levels(summary_df$source)) {
+    panel_summary <- summary_df %>%
+      filter(source == source_label, game_sequence == seq_label)
+    panel_title <- paste0(ntot_source_titles[[source_label]], ": ", seq_label)
     panels[[paste(seq_label, source_label, sep = " | ")]] <-
-      build_panel(source_label, seq_label)
+      build_panel(panel_summary, panel_title, seq_label)
   }
 }
 
@@ -261,7 +278,11 @@ grid_plot <- (panels[[1]] | panels[[2]] | panels[[3]]) /
     )
   )
 
-legend_plot <- build_panel("Simulated Test", "Expert First") +
+legend_plot <- build_panel(
+    summary_df %>% filter(source == "Simulated Test", game_sequence == "Expert First"),
+    "Simulated Test: Expert First",
+    "Expert First"
+  ) +
   theme(legend.position = "bottom",
         legend.text  = element_text(size = 12),
         legend.title = element_text(size = 12, margin = margin(r = 25)))
@@ -277,4 +298,167 @@ ggsave(
   plot = final_plot, width = 18, height = 9, dpi = 150, bg = "white"
 )
 cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_comparison.png"), "\n")
+```
+
+## Model-Mode N_total by Thompson Prior Method
+
+```{r ntot-model-beta-methods-comparison, fig.width=22, fig.height=9}
+# Model-mode posteriors for all four Thompson-sampling prior conditions.
+# Reuses the same x-axis convention, ground-truth dashed lines, and
+# expert/novice colors as ntot_comparison.png.
+model_beta_long <- all_long %>%
+  filter(source == "Model Inference",
+         !is.na(beta_method),
+         beta_method %in% beta_method_levels,
+         !is.na(n_total),
+         game_sequence %in% sequence_levels) %>%
+  mutate(
+    game_sequence = factor(game_sequence, levels = sequence_levels,
+                           labels = c("Expert First", "Novice First")),
+    beta_method = factor(beta_method, levels = beta_method_levels)
+  )
+
+model_beta_summary <- model_beta_long %>%
+  group_by(beta_method, game_sequence, cutoff, segment_type, demonstrator_type) %>%
+  summarise(
+    mean_n_total = mean(n_total, na.rm = TRUE),
+    se_n_total   = sd(n_total,  na.rm = TRUE) / sqrt(n()),
+    n_obs        = n(),
+    .groups = "drop"
+  )
+
+model_panels <- list()
+for (seq_label in c("Expert First", "Novice First")) {
+  for (bm in beta_method_levels) {
+    panel_summary <- model_beta_summary %>%
+      filter(beta_method == bm, game_sequence == seq_label)
+    panel_title <- paste0(beta_method_labels[[bm]], ": ", seq_label)
+    model_panels[[paste(seq_label, bm, sep = " | ")]] <-
+      build_panel(panel_summary, panel_title, seq_label)
+  }
+}
+
+model_grid <- (model_panels[[1]] | model_panels[[2]] | model_panels[[3]] | model_panels[[4]]) /
+              (model_panels[[5]] | model_panels[[6]] | model_panels[[7]] | model_panels[[8]]) +
+  plot_annotation(
+    title = "Model Inference: N_total by Thompson Prior Method",
+    subtitle = "Per-cutoff posterior N_total across the four Thompson-sampling prior conditions",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+model_legend_plot <- build_panel(
+    model_beta_summary %>%
+      filter(beta_method == "theta_betas", game_sequence == "Expert First"),
+    "legend",
+    "Expert First"
+  ) +
+  theme(legend.position = "bottom",
+        legend.text  = element_text(size = 12),
+        legend.title = element_text(size = 12, margin = margin(r = 25)))
+model_legend_grob <- cowplot::get_legend(model_legend_plot)
+
+model_final_plot <- model_grid / wrap_elements(model_legend_grob) +
+  plot_layout(heights = c(1, 1, 0.08))
+
+print(model_final_plot)
+
+ggsave(
+  filename = file.path(eval_fig_dir, "ntot_model_beta_methods_comparison.png"),
+  plot = model_final_plot, width = 22, height = 9, dpi = 150, bg = "white"
+)
+cat("\nFigure saved to:", file.path(eval_fig_dir, "ntot_model_beta_methods_comparison.png"), "\n")
+```
+
+## Per-Game Mean Reward Comparison
+
+```{r mean-reward-comparison, fig.width=18, fig.height=9}
+# Per-game mean reward (over the 6 trials of the game ending at this cutoff).
+# Same x-axis as ntot_comparison.png minus the bandit_sep "None" anchor (no
+# reward associated). Inference sources are pinned to the canonical
+# theta_betas curve here too, matching the first figure.
+reward_sessions <- all_sessions %>%
+  filter(source == "Simulated Test" | beta_method == "theta_betas",
+         segment_order == "watch-first",
+         segment_type %in% c("demo", "learner"),
+         !is.na(segment_mean_reward),
+         game_sequence %in% sequence_levels) %>%
+  mutate(game_sequence = factor(game_sequence, levels = sequence_levels,
+                                labels = c("Expert First", "Novice First")))
+
+reward_summary <- reward_sessions %>%
+  group_by(source, game_sequence, cutoff, segment_type) %>%
+  summarise(
+    mean_reward = mean(segment_mean_reward, na.rm = TRUE),
+    se_reward   = sd(segment_mean_reward,  na.rm = TRUE) / sqrt(n()),
+    n_obs       = n(),
+    .groups = "drop"
+  )
+
+reward_y_limits <- c(0, 1)
+
+reward_source_titles <- c(
+  "Simulated Test"  = "Simulated Test",
+  "Human Inference" = "Human Inference",
+  "Model Inference" = "Model Inference (Environment Priors)"
+)
+
+build_reward_panel <- function(panel_summary, title, sequence_label) {
+  labels_df <- segment_label_for(NULL, sequence_label)
+  x_breaks  <- labels_df$cutoff
+
+  ggplot(panel_summary, aes(x = cutoff, y = mean_reward)) +
+    geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
+    geom_line(linewidth = 1, color = "#2ca02c") +
+    geom_point(size = 2, color = "#2ca02c") +
+    geom_errorbar(aes(ymin = mean_reward - se_reward,
+                      ymax = mean_reward + se_reward),
+                  width = 0.3, color = "#2ca02c") +
+    scale_x_continuous(breaks = x_breaks, labels = labels_df$label) +
+    coord_cartesian(xlim = c(0.5, 17.5), ylim = reward_y_limits) +
+    labs(
+      title = title,
+      x = "Game (segment ending at this cutoff)",
+      y = "Mean reward (per game, 6 trials)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title  = element_text(face = "bold", size = 12),
+      axis.title  = element_text(size = 10),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+      legend.position = "none"
+    )
+}
+
+reward_panels <- list()
+for (seq_label in c("Expert First", "Novice First")) {
+  for (source_label in levels(reward_summary$source)) {
+    panel_summary <- reward_summary %>%
+      filter(source == source_label, game_sequence == seq_label)
+    panel_title <- paste0(reward_source_titles[[source_label]], ": ", seq_label)
+    reward_panels[[paste(seq_label, source_label, sep = " | ")]] <-
+      build_reward_panel(panel_summary, panel_title, seq_label)
+  }
+}
+
+reward_final_plot <- (reward_panels[[1]] | reward_panels[[2]] | reward_panels[[3]]) /
+                     (reward_panels[[4]] | reward_panels[[5]] | reward_panels[[6]]) +
+  plot_annotation(
+    title = "Per-Game Mean Reward",
+    subtitle = "Mean reward over the 6 trials of each game (demo or play), x-axis matches the N_total plot minus the no-context anchor",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+print(reward_final_plot)
+
+ggsave(
+  filename = file.path(eval_fig_dir, "mean_reward_comparison.png"),
+  plot = reward_final_plot, width = 18, height = 9, dpi = 150, bg = "white"
+)
+cat("\nFigure saved to:", file.path(eval_fig_dir, "mean_reward_comparison.png"), "\n")
 ```

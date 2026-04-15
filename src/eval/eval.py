@@ -230,6 +230,24 @@ def evaluate_single_example(
         seg_info = example["segment_info"][cutoff - 1]
         round_idx = seg_info["round"]
         bandit_id = int(example["round_bandit_map"][round_idx])
+
+        # Mean reward over the 6 trials of the game ending at this cutoff
+        # (demo / learner only; bandit_sep and query are structural-only and
+        # have no per-step reward to average). Slice the example's raw events
+        # for this segment using the same boundary convention used for
+        # tokenization.
+        if seg_info["type"] in ("demo", "learner"):
+            start_pos = example["segment_boundaries"][cutoff - 1]
+            end_pos = example["segment_boundaries"][cutoff]
+            seg_events = example["events"][start_pos:end_pos]
+            if seg_events:
+                segment_mean_reward = float(
+                    sum(int(ev[3]) for ev in seg_events) / len(seg_events)
+                )
+            else:
+                segment_mean_reward = float('nan')
+        else:
+            segment_mean_reward = float('nan')
         
         # Create attention mask for this cutoff
         attn_mask = create_segment_mask_single(
@@ -343,6 +361,9 @@ def evaluate_single_example(
             "expert_N_tot_true": true_expert_N,
             "expert_N_tot_pred": pred_expert_N,
             "expert_N_tot_raw": demo0_N if expert_id == 0 else demo1_N,
+
+            # Mean reward over the 6 trials of the game ending at this cutoff
+            "segment_mean_reward": segment_mean_reward,
             
             # Novice metrics
             "novice_alpha_corr": novice_alpha_corr,
