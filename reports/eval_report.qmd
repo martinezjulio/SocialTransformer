@@ -755,9 +755,14 @@ MIN_CLUSTER_N <- 3L  # min n for a cluster cell to count in the k-vs-alignment s
 K_FIXED       <- 3L  # fixed k used by the interpretable-baseline subsection
 
 # Helper used both by the downstream alignment figure and by the k sweep below.
-# For each (session, method) pair, compute the Pearson correlation between the
-# human 6-dim reward vector and the model's 6-dim reward vector, then aggregate
-# to a cluster x method grid of mean within-cluster r.
+# For each (cluster, method) pair compute the Pearson correlation between the
+# *cluster-mean* human reward curve and the *cluster-mean* model reward curve
+# (correlation of means). This is noise-reduced vs the old mean-of-correlations
+# formulation: individual 6-point reward vectors are very noisy, so averaging
+# rows within the cluster first before correlating gives a quantity that
+# reflects whether the cluster's aggregate behaviour tracks the model. The
+# column is still called `mean_fit` to avoid disrupting downstream schema;
+# the value is now cor(colMeans(human_rows), colMeans(model_rows)).
 compute_alignment_matrix <- function(hm, model_mats, km_labels) {
   row_var <- apply(hm, 1, var)
   nd <- rownames(hm)[row_var > 0 & !is.na(row_var)]
@@ -765,23 +770,28 @@ compute_alignment_matrix <- function(hm, model_mats, km_labels) {
     return(tibble(cluster = integer(), method = character(),
                   mean_fit = numeric(), n = integer()))
   }
-  per_session <- imap_dfr(model_mats, function(mmat, bm) {
-    tibble(
-      session = nd,
-      method  = bm,
-      fit     = map_dbl(nd, function(s) {
-        mv <- mmat[s, ]
-        if (!any(is.finite(mv)) || var(mv, na.rm = TRUE) == 0) return(NA_real_)
-        suppressWarnings(cor(hm[s, ], mv, use = "complete.obs"))
-      })
-    )
+  nd_labels <- km_labels[nd]
+  clusters  <- sort(unique(nd_labels))
+
+  imap_dfr(model_mats, function(mmat, bm) {
+    map_dfr(clusters, function(cid) {
+      sess <- nd[nd_labels == cid]
+      n <- length(sess)
+      if (n == 0) {
+        return(tibble(cluster = cid, method = bm,
+                      mean_fit = NA_real_, n = 0L))
+      }
+      hc <- colMeans(hm[sess, , drop = FALSE], na.rm = TRUE)
+      mc <- colMeans(mmat[sess, , drop = FALSE], na.rm = TRUE)
+      r <- if (!any(is.finite(hc)) || !any(is.finite(mc)) ||
+               var(hc, na.rm = TRUE) == 0 || var(mc, na.rm = TRUE) == 0) {
+        NA_real_
+      } else {
+        suppressWarnings(cor(hc, mc, use = "complete.obs"))
+      }
+      tibble(cluster = cid, method = bm, mean_fit = r, n = n)
+    })
   })
-  per_session %>%
-    mutate(cluster = km_labels[session]) %>%
-    group_by(cluster, method) %>%
-    summarise(mean_fit = mean(fit, na.rm = TRUE),
-              n        = sum(!is.na(fit)),
-              .groups  = "drop")
 }
 
 # k sweep per cohort. For each k record (1) tot.withinss (for the elbow plot)
@@ -1007,7 +1017,10 @@ build_profile_panel <- function(cohort_label, clusterings_obj,
 
   all_cols <- c(cluster_cols, method_palette)
 
+  labels_df <- segment_label_for(NULL, cohort_label) %>% filter(cutoff != 1)
+
   ggplot(mapping = aes(x = cutoff, y = mean_reward, color = series)) +
+    geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
     geom_line(data = methods,   linetype = "dashed", linewidth = 0.8, alpha = 0.9) +
     geom_errorbar(data = methods,
                   aes(ymin = mean_reward - se_reward,
@@ -1021,11 +1034,13 @@ build_profile_panel <- function(cohort_label, clusterings_obj,
                   width = 0.3, linewidth = 0.7) +
     geom_point(data = centroids, size = 2.8) +
     scale_color_manual(values = all_cols, name = NULL) +
-    coord_cartesian(ylim = c(0, 6)) +
+    scale_x_continuous(breaks = labels_df$cutoff, labels = labels_df$label) +
+    coord_cartesian(xlim = c(1.5, 17.5), ylim = c(0, 6)) +
     labs(title = sprintf("%s (k=%d)", cohort_label, cl$k),
-         x = "Cutoff", y = ylab) +
+         x = "Game (segment ending at this cutoff)", y = ylab) +
     theme_minimal() +
     theme(plot.title = element_text(face = "bold", size = 13),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
           legend.position = "right",
           legend.text = element_text(size = 9))
 }
@@ -1089,7 +1104,7 @@ align_fig_k3 <- (align_panels_k3[[1]] | align_panels_k3[[2]]) +
   plot_layout(guides = "collect") +
   plot_annotation(
     title    = "Cluster x Model-Method Alignment (k = 3)",
-    subtitle = "Mean within-cluster Pearson r between per-session human and model reward vectors",
+    subtitle = "Pearson r between cluster-mean human and cluster-mean model reward curves",
     theme = theme(
       plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
       plot.subtitle = element_text(size = 11, hjust = 0.5)
@@ -1123,9 +1138,9 @@ align_sweep_fig <- ggplot(align_sweep_df, aes(k, max_fit)) +
   scale_x_continuous(breaks = 3:10) +
   coord_cartesian(ylim = c(-0.2, 1)) +
   labs(title = "Best Cluster x Method Alignment vs k",
-       subtitle = sprintf("Max mean within-cluster Pearson r (n >= %d). Red = chosen k per cohort.",
+       subtitle = sprintf("Max Pearson r between cluster-mean human and cluster-mean model curves (n >= %d). Red = chosen k per cohort.",
                           MIN_CLUSTER_N),
-       x = "k", y = "max mean within-cluster r") +
+       x = "k", y = "max cluster-mean r") +
   theme_minimal() +
   theme(strip.text    = element_text(face = "bold"),
         plot.title    = element_text(face = "bold", size = 13),
@@ -1193,16 +1208,22 @@ build_best_profile_panel <- function(cohort_label,
     cohort_label, cl$k, best_cluster, method_series_name, best_r, best_n
   )
 
+  labels_df <- segment_label_for(NULL, cohort_label) %>% filter(cutoff != 1)
+
   ggplot(mapping = aes(x = cutoff, y = mean_reward, color = series)) +
+    geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
     geom_line(data = method_line,  linetype = "dashed", linewidth = 1.1) +
     geom_point(data = method_line, size = 2.8, shape = 17) +
     geom_line(data = cluster_line, linewidth = 1.3) +
     geom_point(data = cluster_line, size = 3.0) +
     scale_color_manual(values = line_cols, name = NULL) +
-    coord_cartesian(ylim = c(0, 6)) +
-    labs(title = panel_title, x = "Cutoff", y = ylab) +
+    scale_x_continuous(breaks = labels_df$cutoff, labels = labels_df$label) +
+    coord_cartesian(xlim = c(1.5, 17.5), ylim = c(0, 6)) +
+    labs(title = panel_title,
+         x = "Game (segment ending at this cutoff)", y = ylab) +
     theme_minimal() +
     theme(plot.title = element_text(face = "bold", size = 12),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
           legend.position = "bottom",
           legend.text = element_text(size = 10))
 }
@@ -1233,7 +1254,7 @@ align_fig_best <- (align_panels_best[[1]] | align_panels_best[[2]]) +
   plot_layout(guides = "collect") +
   plot_annotation(
     title    = "Cluster x Model-Method Alignment (alignment-optimized k)",
-    subtitle = "Mean within-cluster Pearson r between per-session human and model reward vectors",
+    subtitle = "Pearson r between cluster-mean human and cluster-mean model reward curves",
     theme = theme(
       plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
       plot.subtitle = element_text(size = 11, hjust = 0.5)
@@ -1338,7 +1359,7 @@ align_fig_expected <- (align_panels_expected[[1]] | align_panels_expected[[2]]) 
   plot_layout(guides = "collect") +
   plot_annotation(
     title    = "Cluster x Model-Method Alignment (expected reward, k = 3)",
-    subtitle = "Mean within-cluster Pearson r between per-session human and model expected-reward vectors",
+    subtitle = "Pearson r between cluster-mean human and cluster-mean model expected-reward curves",
     theme = theme(
       plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
       plot.subtitle = element_text(size = 11, hjust = 0.5)
@@ -1398,9 +1419,9 @@ align_sweep_fig_exp <- ggplot(align_sweep_df_exp, aes(k, max_fit)) +
   scale_x_continuous(breaks = 3:10) +
   coord_cartesian(ylim = c(-0.2, 1)) +
   labs(title = "Best Cluster x Method Alignment vs k (expected reward)",
-       subtitle = sprintf("Max mean within-cluster Pearson r (n >= %d). Red = chosen k per cohort.",
+       subtitle = sprintf("Max Pearson r between cluster-mean human and cluster-mean model curves (n >= %d). Red = chosen k per cohort.",
                           MIN_CLUSTER_N),
-       x = "k", y = "max mean within-cluster r") +
+       x = "k", y = "max cluster-mean r") +
   theme_minimal() +
   theme(strip.text    = element_text(face = "bold"),
         plot.title    = element_text(face = "bold", size = 13),
@@ -1452,7 +1473,7 @@ align_fig_best_exp <- (align_panels_best_exp[[1]] | align_panels_best_exp[[2]]) 
   plot_layout(guides = "collect") +
   plot_annotation(
     title    = "Cluster x Model-Method Alignment (alignment-optimized k, expected reward)",
-    subtitle = "Mean within-cluster Pearson r between per-session human and model expected-reward vectors",
+    subtitle = "Pearson r between cluster-mean human and cluster-mean model expected-reward curves",
     theme = theme(
       plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
       plot.subtitle = element_text(size = 11, hjust = 0.5)
