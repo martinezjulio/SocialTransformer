@@ -621,15 +621,23 @@ def run_inference_on_session(
                 g_df.iloc[0]['zone_bandit']
             )
 
-    # Total reward summed over the 6 trials of each demo/learner game, as
-    # observed in the experiment CSV. Used for the segment_total_reward
-    # column on demo cutoffs (always) and learner cutoffs (human mode).
-    # Model-mode learner cutoffs override this with the spliced Thompson
-    # trajectory total.
+    # Per-game reward summaries observed in the experiment CSV. Two parallel
+    # columns are maintained:
+    #   * human_segment_total_reward    — observed 0/1 sum (luck-dependent)
+    #   * human_segment_expected_reward — sum of the TRUE payoff of the arm
+    #     chosen on each trial (decision quality without outcome noise)
+    # Used on demo cutoffs (always) and learner cutoffs (human mode).
+    # Model-mode learner cutoffs override these with the spliced Thompson
+    # trajectory values.
     human_segment_total_reward: Dict[int, float] = {}
+    human_segment_expected_reward: Dict[int, float] = {}
     for seg_idx, g_idx in seg_idx_to_game_idx.items():
         g_df = session_df[session_df['game_index'] == g_idx]
         human_segment_total_reward[seg_idx] = float(g_df['reward_generated'].sum())
+        payoffs = parse_bandit_payoffs(g_df.iloc[0]['zone_bandit'])
+        human_segment_expected_reward[seg_idx] = float(
+            sum(payoffs[int(pos)] for pos in g_df['position'])
+        )
 
     def _denorm_demo(alpha_demo: torch.Tensor, beta_demo: torch.Tensor):
         if normalizer is not None:
@@ -773,17 +781,20 @@ def run_inference_on_session(
                 post_beta_demo[novice_demo_idx, :].detach().cpu(),
             )
 
-            # Total reward summed over the 6 trials of the game ending at
-            # this cutoff. Demo cutoffs always come from session_df
-            # (demonstrators play once per game in the experiment). Learner
-            # cutoffs come from session_df in human mode and from the spliced
-            # Thompson trajectory in model mode. Non-game cutoffs (bandit_sep,
-            # query) get NaN.
+            # Per-game reward summaries for the game ending at this cutoff.
+            # Two parallel columns: segment_total_reward (observed 0/1 sum)
+            # and segment_expected_reward (sum of true payoffs of chosen
+            # arms). Demo cutoffs always come from session_df. Learner
+            # cutoffs come from session_df in human mode and from the
+            # spliced Thompson trajectory in model mode. Non-game cutoffs
+            # (bandit_sep, query) get NaN.
             if seg_type == "demo":
                 segment_total_reward = human_segment_total_reward[seg_idx]
+                segment_expected_reward = human_segment_expected_reward[seg_idx]
             elif seg_type == "learner":
                 if learner_segment_input == "human":
                     segment_total_reward = human_segment_total_reward[seg_idx]
+                    segment_expected_reward = human_segment_expected_reward[seg_idx]
                 else:
                     g_idx = seg_idx_to_game_idx[seg_idx]
                     traj = learner_trajectories.get(g_idx)
@@ -791,10 +802,16 @@ def run_inference_on_session(
                         segment_total_reward = float(
                             sum(int(r) for _, r in traj)
                         )
+                        seg_payoffs = learner_seg_bandit_payoffs[seg_idx]
+                        segment_expected_reward = float(
+                            sum(float(seg_payoffs[a]) for a, _ in traj)
+                        )
                     else:
                         segment_total_reward = float('nan')
+                        segment_expected_reward = float('nan')
             else:
                 segment_total_reward = float('nan')
+                segment_expected_reward = float('nan')
 
             per_cutoff_rows.append({
                 'session_id': session_id_val,
@@ -811,6 +828,7 @@ def run_inference_on_session(
                 'expert_N_tot_pred': expert_n_tot,
                 'novice_N_tot_pred': novice_n_tot,
                 'segment_total_reward': segment_total_reward,
+                'segment_expected_reward': segment_expected_reward,
                 'theta_betas': theta_betas_str,
                 'expert_betas': expert_betas_str,
                 'novice_betas': novice_betas_str,
