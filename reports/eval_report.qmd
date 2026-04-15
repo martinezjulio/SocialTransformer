@@ -473,21 +473,25 @@ reward_color_labels <- c(
 build_reward_panel <- function(demo_rows, play_rows, title, sequence_label) {
   labels_df <- segment_label_for(NULL, sequence_label) %>% filter(cutoff != 1)
   x_breaks  <- labels_df$cutoff
+  play_model_rows <- play_rows %>% filter(series != "Human play")
+  play_human_rows <- play_rows %>% filter(series == "Human play")
 
   ggplot() +
     geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
-    geom_line(data = play_rows,
+    # Model play curves first (drawn underneath)
+    geom_line(data = play_model_rows,
               aes(x = cutoff, y = mean_reward, color = series, group = series),
               linewidth = 0.9) +
-    geom_errorbar(data = play_rows,
+    geom_errorbar(data = play_model_rows,
                   aes(x = cutoff,
                       ymin = mean_reward - se_reward,
                       ymax = mean_reward + se_reward,
                       color = series),
                   width = 0.3) +
-    geom_point(data = play_rows,
+    geom_point(data = play_model_rows,
                aes(x = cutoff, y = mean_reward, color = series),
                size = 2.5) +
+    # Demo points (on top of model curves)
     geom_errorbar(data = demo_rows,
                   aes(x = cutoff,
                       ymin = mean_reward - se_reward,
@@ -497,6 +501,19 @@ build_reward_panel <- function(demo_rows, play_rows, title, sequence_label) {
     geom_point(data = demo_rows,
                aes(x = cutoff, y = mean_reward, color = segment_role),
                size = 3) +
+    # Human play drawn last so it sits on top, with a thicker stroke
+    geom_line(data = play_human_rows,
+              aes(x = cutoff, y = mean_reward, color = series, group = series),
+              linewidth = 1.4) +
+    geom_errorbar(data = play_human_rows,
+                  aes(x = cutoff,
+                      ymin = mean_reward - se_reward,
+                      ymax = mean_reward + se_reward,
+                      color = series),
+                  width = 0.3, linewidth = 0.9) +
+    geom_point(data = play_human_rows,
+               aes(x = cutoff, y = mean_reward, color = series),
+               size = 3.2) +
     scale_color_manual(
       values = reward_color_values,
       breaks = reward_color_breaks,
@@ -535,24 +552,57 @@ grid_plot <- (panels[["Expert First"]] | panels[["Novice First"]]) +
     )
   )
 
-legend_plot <- build_reward_panel(
-    demo_rows = demo_summary %>% filter(game_sequence == "Expert First"),
-    play_rows = play_summary %>% filter(game_sequence == "Expert First"),
-    title     = "legend",
-    sequence_label = "Expert First"
+# Two stacked legends: demo (expert/novice) on top, play series below. Built
+# from single-group mini-plots so each has its own color scale.
+demo_legend_plot <- ggplot(demo_summary,
+                           aes(x = cutoff, y = mean_reward, color = segment_role)) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c(expert_demo = "#1f77b4", novice_demo = "#d62728"),
+    breaks = c("expert_demo", "novice_demo"),
+    labels = c("Expert (watch)", "Novice (watch)")
   ) +
-  theme(legend.position = "bottom",
-        legend.text  = element_text(size = 11),
-        legend.title = element_blank()) +
+  theme_minimal() +
+  theme(legend.position   = "bottom",
+        legend.text       = element_text(size = 11, margin = margin(l = 4, r = 18)),
+        legend.title      = element_blank(),
+        legend.key.width  = grid::unit(1.2, "cm"),
+        legend.spacing.x  = grid::unit(0.6, "cm")) +
   guides(color = guide_legend(nrow = 1))
-legend_grob <- cowplot::get_legend(legend_plot)
+demo_legend_grob <- cowplot::get_legend(demo_legend_plot)
 
-final_plot <- grid_plot / wrap_elements(legend_grob) +
-  plot_layout(heights = c(1, 0.12))
+play_series_levels <- c(
+  "Human play",
+  "Model: Environment priors",
+  "Model: Expert-head priors",
+  "Model: Novice-head priors",
+  "Model: Most-recent-watched priors"
+)
+play_legend_plot <- ggplot(play_summary,
+                           aes(x = cutoff, y = mean_reward, color = series)) +
+  geom_line(aes(group = series), linewidth = 0.9) +
+  scale_color_manual(
+    values = reward_color_values[play_series_levels],
+    breaks = play_series_levels,
+    labels = play_series_levels
+  ) +
+  theme_minimal() +
+  theme(legend.position   = "bottom",
+        legend.text       = element_text(size = 11, margin = margin(l = 4, r = 18)),
+        legend.title      = element_blank(),
+        legend.key.width  = grid::unit(1.2, "cm"),
+        legend.spacing.x  = grid::unit(0.6, "cm")) +
+  guides(color = guide_legend(nrow = 1))
+play_legend_grob <- cowplot::get_legend(play_legend_plot)
+
+final_plot <- grid_plot /
+  wrap_elements(demo_legend_grob) /
+  wrap_elements(play_legend_grob) +
+  plot_layout(heights = c(1, 0.08, 0.08))
 
 out_path <- file.path(eval_fig_dir, "mean_reward_comparison.png")
 ggsave(filename = out_path, plot = final_plot,
-       width = 14, height = 6, dpi = 150, bg = "white")
+       width = 14, height = 6.5, dpi = 150, bg = "white")
 cat("\nFigure saved to:", out_path, "\n")
 print(final_plot)
 ```
