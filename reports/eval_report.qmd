@@ -95,9 +95,10 @@ prepare_source <- function(df, source_label, key_col) {
   out <- out %>%
     group_by(across(all_of(grouping))) %>%
     summarise(
-      expert_N_tot_pred   = mean(expert_N_tot_pred,   na.rm = TRUE),
-      novice_N_tot_pred   = mean(novice_N_tot_pred,   na.rm = TRUE),
-      segment_total_reward = mean(segment_total_reward, na.rm = TRUE),
+      expert_N_tot_pred       = mean(expert_N_tot_pred,       na.rm = TRUE),
+      novice_N_tot_pred       = mean(novice_N_tot_pred,       na.rm = TRUE),
+      segment_total_reward    = mean(segment_total_reward,    na.rm = TRUE),
+      segment_expected_reward = mean(segment_expected_reward, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     rename(example_key = !!key_col) %>%
@@ -631,13 +632,15 @@ cluster_cutoffs <- sort(unique(
   participant_play$cutoff[participant_play$source == "Human Inference"]
 ))
 
-build_cohort <- function(cohort_label) {
-  pp <- participant_play %>% filter(game_sequence == cohort_label)
+build_cohort <- function(cohort_label, reward_col = "segment_total_reward") {
+  pp <- participant_play %>%
+    filter(game_sequence == cohort_label,
+           !is.na(.data[[reward_col]]))
 
   human_df <- pp %>%
     filter(source == "Human Inference") %>%
     group_by(example_key, cutoff) %>%
-    summarise(reward = mean(segment_total_reward, na.rm = TRUE), .groups = "drop") %>%
+    summarise(reward = mean(.data[[reward_col]], na.rm = TRUE), .groups = "drop") %>%
     pivot_wider(names_from = cutoff, values_from = reward) %>%
     arrange(example_key)
 
@@ -651,7 +654,7 @@ build_cohort <- function(cohort_label) {
     mm <- pp %>%
       filter(source == "Model Inference", beta_method == bm) %>%
       group_by(example_key, cutoff) %>%
-      summarise(reward = mean(segment_total_reward, na.rm = TRUE), .groups = "drop") %>%
+      summarise(reward = mean(.data[[reward_col]], na.rm = TRUE), .groups = "drop") %>%
       pivot_wider(names_from = cutoff, values_from = reward) %>%
       arrange(example_key)
     stopifnot(identical(mm$example_key, sessions))
@@ -810,11 +813,13 @@ for (cohort_label in names(cohorts)) {
 ```
 
 ```{r participant-corr-heatmap, fig.width=14, fig.height=6.5}
-build_corr_heatmap <- function(cohort_label) {
-  cl <- clusterings_k3[[cohort_label]]
+# Parameterized corr-heatmap builder so the expected-reward section below
+# can reuse it with its own clusterings/cohorts pair.
+build_corr_heatmap <- function(cohort_label, clusterings_obj, cohorts_obj) {
+  cl <- clusterings_obj[[cohort_label]]
   corr_mat <- cl$corr_mat
   leaf_order <- cl$nondeg_rows[cl$hc_order]
-  n_total <- length(cohorts[[cohort_label]]$sessions)
+  n_total <- length(cohorts_obj[[cohort_label]]$sessions)
   panel_title <- sprintf("%s (%d participants)", cohort_label, n_total)
   df <- as.data.frame(corr_mat) %>%
     rownames_to_column("s1") %>%
@@ -834,7 +839,8 @@ build_corr_heatmap <- function(cohort_label) {
           plot.title  = element_text(face = "bold", size = 13))
 }
 
-corr_panels <- map(names(cohorts), build_corr_heatmap)
+corr_panels <- map(names(cohorts),
+                   function(co) build_corr_heatmap(co, clusterings_k3, cohorts))
 corr_fig <- (corr_panels[[1]] | corr_panels[[2]]) +
   plot_layout(guides = "collect") +
   plot_annotation(
@@ -890,10 +896,12 @@ method_palette   <- c(
   "Most-Recent-Watched Priors" = "#8c564b"
 )
 
-build_profile_panel <- function(cohort_label, clusterings_obj) {
+build_profile_panel <- function(cohort_label, clusterings_obj,
+                                cohorts_obj = cohorts,
+                                ylab = "Total reward (out of 6)") {
   cl  <- clusterings_obj[[cohort_label]]
-  hm  <- cohorts[[cohort_label]]$human_mat
-  mms <- cohorts[[cohort_label]]$model_mats
+  hm  <- cohorts_obj[[cohort_label]]$human_mat
+  mms <- cohorts_obj[[cohort_label]]$model_mats
 
   cutoff_cols <- as.integer(colnames(hm))
   km_lab      <- cl$km_labels[rownames(hm)]
@@ -931,7 +939,7 @@ build_profile_panel <- function(cohort_label, clusterings_obj) {
     scale_color_manual(values = all_cols, name = NULL) +
     coord_cartesian(ylim = c(0, 6)) +
     labs(title = sprintf("%s (k=%d)", cohort_label, cl$k),
-         x = "Cutoff", y = "Total reward (out of 6)") +
+         x = "Cutoff", y = ylab) +
     theme_minimal() +
     theme(plot.title = element_text(face = "bold", size = 13),
           legend.position = "right",
@@ -961,11 +969,11 @@ print(profile_fig)
 # off "cluster 2 looks most like expert-head priors" etc. Parameterized over
 # the clusterings object so the alignment-optimized subsection below can
 # reuse the same helper.
-build_alignment_df <- function(clusterings_obj) {
-  map_dfr(names(cohorts), function(cohort_label) {
+build_alignment_df <- function(clusterings_obj, cohorts_obj = cohorts) {
+  map_dfr(names(cohorts_obj), function(cohort_label) {
     cl  <- clusterings_obj[[cohort_label]]
-    hm  <- cohorts[[cohort_label]]$human_mat
-    mms <- cohorts[[cohort_label]]$model_mats
+    hm  <- cohorts_obj[[cohort_label]]$human_mat
+    mms <- cohorts_obj[[cohort_label]]$model_mats
     compute_alignment_matrix(hm, mms, cl$km_labels) %>%
       mutate(method = factor(method, levels = beta_method_levels,
                              labels = beta_method_labels[beta_method_levels]),
@@ -1149,4 +1157,109 @@ ggsave(file.path(eval_fig_dir, "participant_cluster_method_alignment_best_k.png"
 cat("\nFigure saved to:",
     file.path(eval_fig_dir, "participant_cluster_method_alignment_best_k.png"), "\n")
 print(align_fig_best)
+```
+
+## Participant Clustering by Expected Reward
+
+Same clustering pipeline as above, but the per-game reward used to build
+the participant reward vectors is the **expected reward** — the sum, over
+each game's 6 trials, of the TRUE payoff of the arm the participant chose.
+This strips out outcome noise: two participants who consistently pick the
+same high-payoff arm get identical expected-reward trajectories even if
+their observed 0/1 trajectories diverge. Scoped to fixed k=3 only (the
+alignment-optimized subsection above is not duplicated here).
+
+```{r participant-expected-clustering-compute}
+cohorts_expected <- list(
+  "Expert First" = build_cohort("Expert First", reward_col = "segment_expected_reward"),
+  "Novice First" = build_cohort("Novice First", reward_col = "segment_expected_reward")
+)
+
+for (cohort_label in names(cohorts_expected)) {
+  cat(sprintf("%s (expected): %d participants, human_mat %s\n",
+              cohort_label,
+              length(cohorts_expected[[cohort_label]]$sessions),
+              paste(dim(cohorts_expected[[cohort_label]]$human_mat), collapse = " x ")))
+}
+
+clusterings_k3_expected <- map(cohorts_expected,
+                               function(c) compute_clusters(c, k = K_FIXED))
+
+for (cohort_label in names(cohorts_expected)) {
+  cl <- clusterings_k3_expected[[cohort_label]]
+  cat(sprintf("%s (expected, k=%d): %d constant-reward participants\n",
+              cohort_label, cl$k, cl$degenerate_n))
+  cat(sprintf("  k-means cluster sizes: %s\n",
+              paste(as.integer(table(cl$km_labels)), collapse = ", ")))
+}
+```
+
+```{r participant-expected-corr-heatmap, fig.width=14, fig.height=6.5}
+corr_panels_expected <- map(names(cohorts_expected),
+                            function(co) build_corr_heatmap(co, clusterings_k3_expected, cohorts_expected))
+corr_fig_expected <- (corr_panels_expected[[1]] | corr_panels_expected[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Pairwise Participant Expected-Reward Correlation",
+    subtitle = "Pearson r over 6-game expected-reward vectors, rows/cols ordered by hierarchical clustering leaves",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle = element_text(size = 12, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_expected_reward_correlation.png"),
+       corr_fig_expected, width = 14, height = 6.5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_reward_correlation.png"), "\n")
+print(corr_fig_expected)
+```
+
+```{r participant-expected-cluster-profiles, fig.width=14, fig.height=6}
+profile_panels_expected <- map(
+  names(cohorts_expected),
+  function(co) build_profile_panel(co, clusterings_k3_expected,
+                                   cohorts_obj = cohorts_expected,
+                                   ylab = "Total expected reward (out of 6)")
+)
+profile_fig_expected <- (profile_panels_expected[[1]] | profile_panels_expected[[2]]) +
+  plot_annotation(
+    title    = "Cluster Expected-Reward Profiles (solid) vs Model-Method Means (dashed)",
+    subtitle = "Solid: k-means centroid expected reward across the 6 play games. Dashed: cohort mean per Thompson prior method.",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_expected_cluster_profiles.png"),
+       profile_fig_expected, width = 14, height = 6, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_cluster_profiles.png"), "\n")
+print(profile_fig_expected)
+```
+
+```{r participant-expected-cluster-method-alignment, fig.width=12, fig.height=5}
+alignment_df_expected <- build_alignment_df(clusterings_k3_expected,
+                                            cohorts_obj = cohorts_expected)
+align_panels_expected <- map(
+  names(cohorts_expected),
+  function(co) build_align_panel(co, alignment_df_expected, clusterings_k3_expected)
+)
+align_fig_expected <- (align_panels_expected[[1]] | align_panels_expected[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Cluster x Model-Method Alignment (expected reward, k = 3)",
+    subtitle = "Mean within-cluster Pearson r between per-session human and model expected-reward vectors",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_expected_cluster_method_alignment.png"),
+       align_fig_expected, width = 12, height = 5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_cluster_method_alignment.png"), "\n")
+print(align_fig_expected)
 ```
