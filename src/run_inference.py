@@ -621,14 +621,15 @@ def run_inference_on_session(
                 g_df.iloc[0]['zone_bandit']
             )
 
-    # Mean reward over the 6 trials of each demo/learner game, as observed in
-    # the experiment CSV. Used for the segment_mean_reward column on demo
-    # cutoffs (always) and learner cutoffs (human mode). Model-mode learner
-    # cutoffs override this with the spliced Thompson trajectory mean.
-    human_segment_mean_reward: Dict[int, float] = {}
+    # Total reward summed over the 6 trials of each demo/learner game, as
+    # observed in the experiment CSV. Used for the segment_total_reward
+    # column on demo cutoffs (always) and learner cutoffs (human mode).
+    # Model-mode learner cutoffs override this with the spliced Thompson
+    # trajectory total.
+    human_segment_total_reward: Dict[int, float] = {}
     for seg_idx, g_idx in seg_idx_to_game_idx.items():
         g_df = session_df[session_df['game_index'] == g_idx]
-        human_segment_mean_reward[seg_idx] = float(g_df['reward_generated'].mean())
+        human_segment_total_reward[seg_idx] = float(g_df['reward_generated'].sum())
 
     def _denorm_demo(alpha_demo: torch.Tensor, beta_demo: torch.Tensor):
         if normalizer is not None:
@@ -772,27 +773,28 @@ def run_inference_on_session(
                 post_beta_demo[novice_demo_idx, :].detach().cpu(),
             )
 
-            # Mean reward over the 6 trials of the game ending at this cutoff.
-            # Demo cutoffs always come from session_df (demonstrators play once
-            # per game in the experiment). Learner cutoffs come from session_df
-            # in human mode and from the spliced Thompson trajectory in model
-            # mode. Non-game cutoffs (bandit_sep, query) get NaN.
+            # Total reward summed over the 6 trials of the game ending at
+            # this cutoff. Demo cutoffs always come from session_df
+            # (demonstrators play once per game in the experiment). Learner
+            # cutoffs come from session_df in human mode and from the spliced
+            # Thompson trajectory in model mode. Non-game cutoffs (bandit_sep,
+            # query) get NaN.
             if seg_type == "demo":
-                segment_mean_reward = human_segment_mean_reward[seg_idx]
+                segment_total_reward = human_segment_total_reward[seg_idx]
             elif seg_type == "learner":
                 if learner_segment_input == "human":
-                    segment_mean_reward = human_segment_mean_reward[seg_idx]
+                    segment_total_reward = human_segment_total_reward[seg_idx]
                 else:
                     g_idx = seg_idx_to_game_idx[seg_idx]
                     traj = learner_trajectories.get(g_idx)
                     if traj:
-                        segment_mean_reward = float(
-                            sum(int(r) for _, r in traj) / len(traj)
+                        segment_total_reward = float(
+                            sum(int(r) for _, r in traj)
                         )
                     else:
-                        segment_mean_reward = float('nan')
+                        segment_total_reward = float('nan')
             else:
-                segment_mean_reward = float('nan')
+                segment_total_reward = float('nan')
 
             per_cutoff_rows.append({
                 'session_id': session_id_val,
@@ -808,7 +810,7 @@ def run_inference_on_session(
                 'round_index': int(round_idx),
                 'expert_N_tot_pred': expert_n_tot,
                 'novice_N_tot_pred': novice_n_tot,
-                'segment_mean_reward': segment_mean_reward,
+                'segment_total_reward': segment_total_reward,
                 'theta_betas': theta_betas_str,
                 'expert_betas': expert_betas_str,
                 'novice_betas': novice_betas_str,
