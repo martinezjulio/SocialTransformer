@@ -609,6 +609,71 @@ cat("\nFigure saved to:", out_path, "\n")
 print(final_plot)
 ```
 
+```{r mean-reward-curve-correlation, fig.width=13, fig.height=5.5}
+# Pearson correlation across cutoffs between the 5 per-cohort play curves
+# from mean_reward_comparison.png. Each row of `play_summary` is already
+# filtered to `segment_role == "play"`, so watch-game points are excluded.
+# Curves are first averaged across participants (mean_reward per cutoff)
+# and then correlated — the r captures whether two strategies have the
+# same *shape* of per-game reward trajectory across the 6 play games.
+curve_levels <- c(
+  "Human play",
+  "Model: Environment priors",
+  "Model: Expert-head priors",
+  "Model: Novice-head priors",
+  "Model: Most-recent-watched priors"
+)
+
+build_curve_corr_panel <- function(cohort_label) {
+  wide <- play_summary %>%
+    filter(game_sequence == cohort_label) %>%
+    select(series, cutoff, mean_reward) %>%
+    pivot_wider(names_from = cutoff, values_from = mean_reward) %>%
+    mutate(series = factor(series, levels = curve_levels)) %>%
+    arrange(series)
+  mat <- as.matrix(wide %>% select(-series))
+  rownames(mat) <- as.character(wide$series)
+  corr <- cor(t(mat))
+
+  corr_long <- as.data.frame(as.table(corr)) %>%
+    rename(row = Var1, col = Var2, r = Freq) %>%
+    mutate(row = factor(row, levels = rev(curve_levels)),
+           col = factor(col, levels = curve_levels))
+
+  ggplot(corr_long, aes(col, row, fill = r)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", r)), size = 3.5) +
+    scale_fill_gradient2(limits = c(-1, 1), low = "#2166ac",
+                         mid = "white", high = "#b2182b", midpoint = 0) +
+    coord_fixed() +
+    labs(title = cohort_label, x = NULL, y = NULL, fill = "r") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+          axis.text.y = element_text(size = 9),
+          plot.title  = element_text(face = "bold", size = 13),
+          panel.grid  = element_blank())
+}
+
+curve_corr_panels <- map(c("Expert First", "Novice First"),
+                         build_curve_corr_panel)
+curve_corr_fig <- (curve_corr_panels[[1]] | curve_corr_panels[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Correlation of Per-Game Reward Curves",
+    subtitle = "Pearson r between the 5 play curves in mean_reward_comparison.png (play segments only, watch games excluded)",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "mean_reward_curve_correlation.png"),
+       curve_corr_fig, width = 13, height = 5.5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "mean_reward_curve_correlation.png"), "\n")
+print(curve_corr_fig)
+```
+
 ## Participant Clustering
 
 ```{r participant-clustering-prep}
@@ -723,30 +788,35 @@ compute_alignment_matrix <- function(hm, model_mats, km_labels) {
 # and (2) the best cell of the cluster x method alignment matrix — the
 # quantity we want to maximize when picking k. The min-n filter prevents
 # "winning" by letting k-means produce a singleton with a trivially extreme
-# correlation.
-sweep_results <- imap_dfr(cohorts, function(cohort_data, cohort_label) {
-  hm  <- cohort_data$human_mat
-  mms <- cohort_data$model_mats
-  map_dfr(2:10, function(k) {
-    set.seed(42)
-    km <- kmeans(hm, centers = k, nstart = 25)
-    km_labels <- setNames(as.integer(km$cluster), rownames(hm))
-    align <- compute_alignment_matrix(hm, mms, km_labels) %>%
-      filter(n >= MIN_CLUSTER_N)
-    if (nrow(align) == 0) {
-      tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
-             max_fit = NA_real_, best_cluster = NA_integer_,
-             best_method = NA_character_, best_n = NA_integer_)
-    } else {
-      best <- align %>% slice_max(mean_fit, n = 1, with_ties = FALSE)
-      tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
-             max_fit      = best$mean_fit,
-             best_cluster = best$cluster,
-             best_method  = best$method,
-             best_n       = best$n)
-    }
+# correlation. Factored into a helper so the same sweep can be re-run
+# against cohorts_expected in the expected-reward section below.
+run_alignment_sweep <- function(cohorts_obj, k_range = 2:10) {
+  imap_dfr(cohorts_obj, function(cohort_data, cohort_label) {
+    hm  <- cohort_data$human_mat
+    mms <- cohort_data$model_mats
+    map_dfr(k_range, function(k) {
+      set.seed(42)
+      km <- kmeans(hm, centers = k, nstart = 25)
+      km_labels <- setNames(as.integer(km$cluster), rownames(hm))
+      align <- compute_alignment_matrix(hm, mms, km_labels) %>%
+        filter(n >= MIN_CLUSTER_N)
+      if (nrow(align) == 0) {
+        tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
+               max_fit = NA_real_, best_cluster = NA_integer_,
+               best_method = NA_character_, best_n = NA_integer_)
+      } else {
+        best <- align %>% slice_max(mean_fit, n = 1, with_ties = FALSE)
+        tibble(cohort = cohort_label, k = k, wss = km$tot.withinss,
+               max_fit      = best$mean_fit,
+               best_cluster = best$cluster,
+               best_method  = best$method,
+               best_n       = best$n)
+      }
+    })
   })
-})
+}
+
+sweep_results <- run_alignment_sweep(cohorts)
 
 # Pick k per cohort by maximizing best (cluster, method) alignment over
 # k in 3..10. k=2 is excluded because two clusters is rarely an interesting
@@ -912,21 +982,26 @@ build_profile_panel <- function(cohort_label, clusterings_obj,
     paste0("Cluster ", cluster_ids)
   )
 
-  centroids <- imap_dfr(split(rownames(hm), km_lab), function(ss, cid) {
+  # mean +/- SE across sessions, per (series, cutoff). SE = sd / sqrt(n).
+  summarise_mat <- function(mat, series_name) {
     tibble(
-      cutoff = cutoff_cols,
-      mean_reward = colMeans(hm[ss, , drop = FALSE]),
-      series = paste0("Cluster ", cid)
+      cutoff      = cutoff_cols,
+      mean_reward = colMeans(mat, na.rm = TRUE),
+      se_reward   = apply(mat, 2, function(x) {
+        x <- x[is.finite(x)]
+        if (length(x) < 2) NA_real_ else sd(x) / sqrt(length(x))
+      }),
+      series      = series_name
     )
+  }
+
+  centroids <- imap_dfr(split(rownames(hm), km_lab), function(ss, cid) {
+    summarise_mat(hm[ss, , drop = FALSE], paste0("Cluster ", cid))
   }) %>%
     mutate(series = factor(series, levels = names(cluster_cols)))
 
   methods <- imap_dfr(mms, function(mmat, bm) {
-    tibble(
-      cutoff = cutoff_cols,
-      mean_reward = colMeans(mmat, na.rm = TRUE),
-      series = beta_method_labels[[bm]]
-    )
+    summarise_mat(mmat, beta_method_labels[[bm]])
   }) %>%
     mutate(series = factor(series, levels = names(method_palette)))
 
@@ -934,7 +1009,16 @@ build_profile_panel <- function(cohort_label, clusterings_obj,
 
   ggplot(mapping = aes(x = cutoff, y = mean_reward, color = series)) +
     geom_line(data = methods,   linetype = "dashed", linewidth = 0.8, alpha = 0.9) +
+    geom_errorbar(data = methods,
+                  aes(ymin = mean_reward - se_reward,
+                      ymax = mean_reward + se_reward),
+                  width = 0.3, linewidth = 0.5, alpha = 0.9) +
+    geom_point(data = methods, size = 2, shape = 17, alpha = 0.9) +
     geom_line(data = centroids, linewidth = 1.3) +
+    geom_errorbar(data = centroids,
+                  aes(ymin = mean_reward - se_reward,
+                      ymax = mean_reward + se_reward),
+                  width = 0.3, linewidth = 0.7) +
     geom_point(data = centroids, size = 2.8) +
     scale_color_manual(values = all_cols, name = NULL) +
     coord_cartesian(ylim = c(0, 6)) +
@@ -1062,12 +1146,16 @@ print(align_sweep_fig)
 # of the cohort mean) so the two lines in the plot correspond exactly to
 # the r value the sweep reported — otherwise the dashed line wouldn't
 # match what the correlation actually measured.
-build_best_profile_panel <- function(cohort_label) {
-  cl  <- clusterings_best[[cohort_label]]
-  hm  <- cohorts[[cohort_label]]$human_mat
-  mms <- cohorts[[cohort_label]]$model_mats
+build_best_profile_panel <- function(cohort_label,
+                                     clusterings_obj = clusterings_best,
+                                     cohorts_obj     = cohorts,
+                                     sweep_obj       = sweep_results,
+                                     ylab            = "Total reward (out of 6)") {
+  cl  <- clusterings_obj[[cohort_label]]
+  hm  <- cohorts_obj[[cohort_label]]$human_mat
+  mms <- cohorts_obj[[cohort_label]]$model_mats
 
-  best <- sweep_results %>%
+  best <- sweep_obj %>%
     filter(cohort == cohort_label, k == cl$k)
   best_cluster <- best$best_cluster
   best_method  <- best$best_method
@@ -1112,7 +1200,7 @@ build_best_profile_panel <- function(cohort_label) {
     geom_point(data = cluster_line, size = 3.0) +
     scale_color_manual(values = line_cols, name = NULL) +
     coord_cartesian(ylim = c(0, 6)) +
-    labs(title = panel_title, x = "Cutoff", y = "Total reward (out of 6)") +
+    labs(title = panel_title, x = "Cutoff", y = ylab) +
     theme_minimal() +
     theme(plot.title = element_text(face = "bold", size = 12),
           legend.position = "bottom",
@@ -1262,4 +1350,118 @@ ggsave(file.path(eval_fig_dir, "participant_expected_cluster_method_alignment.pn
 cat("\nFigure saved to:",
     file.path(eval_fig_dir, "participant_expected_cluster_method_alignment.png"), "\n")
 print(align_fig_expected)
+```
+
+### Alignment-Optimized k (expected reward)
+
+```{r participant-expected-sweep-compute}
+sweep_results_expected <- run_alignment_sweep(cohorts_expected)
+
+K_BY_COHORT_EXPECTED <- sweep_results_expected %>%
+  filter(k >= 3) %>%
+  group_by(cohort) %>%
+  slice_max(max_fit, n = 1, with_ties = FALSE) %>%
+  select(cohort, k) %>%
+  deframe()
+
+cat(sprintf("Alignment-optimized k per cohort (expected reward, max best cluster x method alignment, n >= %d):\n",
+            MIN_CLUSTER_N))
+for (co in names(K_BY_COHORT_EXPECTED)) {
+  best <- sweep_results_expected %>%
+    filter(cohort == co, k == K_BY_COHORT_EXPECTED[[co]])
+  cat(sprintf("  %s: k=%d, best cluster=%d with %s, r=%.2f (n=%d)\n",
+              co, best$k, best$best_cluster, best$best_method,
+              best$max_fit, best$best_n))
+}
+
+clusterings_best_expected <- imap(cohorts_expected,
+                                  function(cohort_data, cohort_label) {
+  compute_clusters(cohort_data, k = K_BY_COHORT_EXPECTED[[cohort_label]])
+})
+```
+
+```{r participant-expected-alignment-sweep, fig.width=10, fig.height=4}
+align_sweep_df_exp <- sweep_results_expected %>%
+  filter(k >= 3) %>%
+  mutate(cohort = factor(cohort, levels = names(cohorts_expected)))
+
+align_best_df_exp <- align_sweep_df_exp %>%
+  group_by(cohort) %>%
+  slice_max(max_fit, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+align_sweep_fig_exp <- ggplot(align_sweep_df_exp, aes(k, max_fit)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_point(data = align_best_df_exp, color = "red", size = 4) +
+  facet_wrap(~ cohort, nrow = 1) +
+  scale_x_continuous(breaks = 3:10) +
+  coord_cartesian(ylim = c(-0.2, 1)) +
+  labs(title = "Best Cluster x Method Alignment vs k (expected reward)",
+       subtitle = sprintf("Max mean within-cluster Pearson r (n >= %d). Red = chosen k per cohort.",
+                          MIN_CLUSTER_N),
+       x = "k", y = "max mean within-cluster r") +
+  theme_minimal() +
+  theme(strip.text    = element_text(face = "bold"),
+        plot.title    = element_text(face = "bold", size = 13),
+        plot.subtitle = element_text(size = 10))
+
+ggsave(file.path(eval_fig_dir, "participant_expected_alignment_sweep.png"),
+       align_sweep_fig_exp, width = 10, height = 4, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_alignment_sweep.png"), "\n")
+print(align_sweep_fig_exp)
+```
+
+```{r participant-expected-cluster-best-profile, fig.width=14, fig.height=5}
+best_profile_panels_exp <- map(
+  names(cohorts_expected),
+  function(co) build_best_profile_panel(
+    co,
+    clusterings_obj = clusterings_best_expected,
+    cohorts_obj     = cohorts_expected,
+    sweep_obj       = sweep_results_expected,
+    ylab            = "Total expected reward (out of 6)"
+  )
+)
+best_profile_fig_exp <- (best_profile_panels_exp[[1]] | best_profile_panels_exp[[2]]) +
+  plot_annotation(
+    title    = "Best Cluster vs Best Method (alignment-optimized k, expected reward)",
+    subtitle = "Solid: winning cluster centroid. Dashed: winning method mean on the same sessions.",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_expected_cluster_best_profile.png"),
+       best_profile_fig_exp, width = 14, height = 5, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_cluster_best_profile.png"), "\n")
+print(best_profile_fig_exp)
+```
+
+```{r participant-expected-cluster-method-alignment-best, fig.width=12, fig.height=9}
+alignment_df_best_exp <- build_alignment_df(clusterings_best_expected,
+                                            cohorts_obj = cohorts_expected)
+align_panels_best_exp <- map(
+  names(cohorts_expected),
+  function(co) build_align_panel(co, alignment_df_best_exp, clusterings_best_expected)
+)
+align_fig_best_exp <- (align_panels_best_exp[[1]] | align_panels_best_exp[[2]]) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title    = "Cluster x Model-Method Alignment (alignment-optimized k, expected reward)",
+    subtitle = "Mean within-cluster Pearson r between per-session human and model expected-reward vectors",
+    theme = theme(
+      plot.title    = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
+  )
+
+ggsave(file.path(eval_fig_dir, "participant_expected_cluster_method_alignment_best_k.png"),
+       align_fig_best_exp, width = 12, height = 9, dpi = 150, bg = "white")
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "participant_expected_cluster_method_alignment_best_k.png"), "\n")
+print(align_fig_best_exp)
 ```
