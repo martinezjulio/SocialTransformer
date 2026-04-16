@@ -34,8 +34,11 @@ if [ $? -eq 0 ]; then
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
-    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_expert_first.png"
-    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_novice_first.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_expert_first_sigma_avg.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_expert_first_sigma_pooled.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_novice_first_sigma_avg.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_novice_first_sigma_pooled.png"
+    echo "Figures: $OUTPUT_DATA_DIR/eval/figures/per_session_beta_priors/ (one per participant)"
 else
     echo ""
     echo "=================================="
