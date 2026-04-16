@@ -609,6 +609,151 @@ cat("\nFigure saved to:", out_path, "\n")
 print(final_plot)
 ```
 
+## Per-Arm Beta Prior Comparison (model mode, one figure per sequence)
+
+```{r beta-prior-comparison, fig.width=14, fig.height=10}
+# Per-arm Beta priors used for Thompson sampling at the cutoff immediately
+# before each play game, averaged across sessions/rollouts. Each subplot shows
+# one arm reindexed by true-payoff rank (rank 1 = lowest θ*, rank 12 = highest),
+# since the 12 arm payoffs in the human experiment are a fixed set permuted per
+# game. Four beta-prediction methods are overlaid per subplot. Two figures are
+# produced — Expert First and Novice First — using the same session pool as the
+# "Per-Game Total Reward Comparison" section above.
+
+parse_beta_string <- function(s) {
+  m <- stringr::str_match_all(s, "\\(([0-9.eE+-]+),\\s*([0-9.eE+-]+)\\)")[[1]]
+  tibble(
+    arm_position = seq_len(nrow(m)) - 1L,
+    alpha        = as.numeric(m[, 2]),
+    beta         = as.numeric(m[, 3])
+  )
+}
+
+parse_true_payoffs_vec <- function(s) {
+  as.numeric(stringr::str_split(s, ",", simplify = TRUE))
+}
+
+canonical_thetas <- sort(c(0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45,
+                           0.5, 0.55, 0.6, 0.75, 0.8))
+
+# Filter model_infer_df to the same pool as the reward comparison, then keep
+# only the demo cutoffs whose NEXT cutoff in the session is a learner segment
+# — those demo cutoffs are the "prior to each play game" state. The stored α/β
+# at a demo cutoff are the post-segment predictions, which are identical to
+# the pre-pass predictions Thompson uses at the subsequent learner cutoff.
+prior_rows <- model_infer_df %>%
+  filter(segment_order == "watch-first",
+         game_sequence %in% sequence_levels) %>%
+  group_by(session_id, rollout_id, beta_method) %>%
+  arrange(cutoff, .by_group = TRUE) %>%
+  mutate(next_segment_type = lead(segment_type)) %>%
+  filter(segment_type == "demo", next_segment_type == "learner") %>%
+  mutate(play_game_index = row_number()) %>%
+  ungroup() %>%
+  mutate(beta_string = dplyr::case_when(
+    beta_method == "theta_betas"  ~ theta_betas,
+    beta_method == "expert_betas" ~ expert_betas,
+    beta_method == "novice_betas" ~ novice_betas,
+    beta_method == "recent_betas" ~ recent_betas
+  ))
+
+# Explode each row into 12 per-arm records.
+per_arm <- prior_rows %>%
+  select(session_id, rollout_id, beta_method, game_sequence,
+         play_game_index, beta_string, true_payoffs) %>%
+  rowwise() %>%
+  mutate(arm_df = list({
+    df <- parse_beta_string(beta_string)
+    df$theta_star <- parse_true_payoffs_vec(true_payoffs)[df$arm_position + 1]
+    df
+  })) %>%
+  ungroup() %>%
+  select(-beta_string, -true_payoffs) %>%
+  tidyr::unnest(arm_df) %>%
+  group_by(session_id, rollout_id, beta_method, play_game_index) %>%
+  mutate(arm_rank = rank(theta_star, ties.method = "first")) %>%
+  ungroup() %>%
+  mutate(
+    mu    = alpha / (alpha + beta),
+    sigma = sqrt(alpha * beta /
+                 ((alpha + beta)^2 * (alpha + beta + 1)))
+  )
+
+agg <- per_arm %>%
+  group_by(game_sequence, beta_method, play_game_index, arm_rank) %>%
+  summarise(
+    mean_mu    = mean(mu,    na.rm = TRUE),
+    mean_sigma = mean(sigma, na.rm = TRUE),
+    n_obs      = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    theta_star   = canonical_thetas[arm_rank],
+    arm_label    = sprintf("Arm %d (\u03b8*=%.2f)", arm_rank, theta_star),
+    game_sequence = factor(game_sequence, levels = sequence_levels,
+                           labels = c("Expert First", "Novice First")),
+    beta_method  = factor(beta_method, levels = beta_method_levels)
+  )
+
+arm_label_levels <- agg %>%
+  distinct(arm_rank, arm_label) %>%
+  arrange(arm_rank) %>%
+  pull(arm_label)
+agg <- agg %>% mutate(arm_label = factor(arm_label, levels = arm_label_levels))
+
+beta_method_colors <- c(
+  theta_betas  = "#ff7f0e",
+  expert_betas = "#2ca02c",
+  novice_betas = "#9467bd",
+  recent_betas = "#8c564b"
+)
+
+build_beta_prior_panel <- function(rows, seq_label) {
+  ggplot(rows, aes(x = play_game_index,
+                   color = beta_method, fill = beta_method)) +
+    geom_ribbon(aes(ymin = mean_mu - mean_sigma,
+                    ymax = mean_mu + mean_sigma),
+                alpha = 0.2, color = NA) +
+    geom_line(aes(y = mean_mu), linewidth = 0.9) +
+    geom_point(aes(y = mean_mu), size = 1.8) +
+    geom_hline(aes(yintercept = theta_star),
+               linetype = "dashed", color = "black") +
+    facet_wrap(~ arm_label, ncol = 4) +
+    scale_color_manual(values = beta_method_colors,
+                       breaks = beta_method_levels,
+                       labels = unname(beta_method_labels[beta_method_levels])) +
+    scale_fill_manual(values = beta_method_colors,
+                      breaks = beta_method_levels,
+                      labels = unname(beta_method_labels[beta_method_levels])) +
+    coord_cartesian(ylim = c(0, 1)) +
+    scale_x_continuous(breaks = 1:6) +
+    labs(title = paste0("Per-Arm Beta Prior Comparison \u2014 ", seq_label),
+         subtitle = "Model-mode priors to Thompson sampling at each play game. Mean \u00b1 1\u03c3, averaged across sessions.",
+         x = "Play game index (1..6 in session order)",
+         y = "Reward probability \u03b8",
+         color = NULL, fill = NULL) +
+    theme_minimal() +
+    theme(plot.title    = element_text(face = "bold", size = 14),
+          plot.subtitle = element_text(size = 10),
+          strip.text    = element_text(size = 10, face = "bold"),
+          legend.position = "bottom")
+}
+
+for (seq_label in c("Expert First", "Novice First")) {
+  panel <- build_beta_prior_panel(
+    agg %>% filter(game_sequence == seq_label),
+    seq_label
+  )
+  file_slug <- if (seq_label == "Expert First") "expert_first" else "novice_first"
+  out_path <- file.path(eval_fig_dir,
+                        paste0("beta_prior_comparison_", file_slug, ".png"))
+  ggsave(filename = out_path, plot = panel,
+         width = 14, height = 10, dpi = 150, bg = "white")
+  cat("\nFigure saved to:", out_path, "\n")
+  print(panel)
+}
+```
+
 ```{r mean-reward-curve-correlation, fig.width=13, fig.height=5.5}
 # Pearson correlation across cutoffs between the 5 per-cohort play curves
 # from mean_reward_comparison.png. Each row of `play_summary` is already

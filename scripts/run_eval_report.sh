@@ -11,6 +11,11 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 echo "=================================="
+echo "Re-running inference (recent_betas + true_payoffs columns)"
+echo "=================================="
+bash "${SCRIPT_DIR}/run_inference.sh" || { echo "Inference failed"; exit 1; }
+
+echo "=================================="
 echo "Rendering eval report"
 echo "=================================="
 echo "Eval data: $OUTPUT_DATA_DIR/eval/data/"
@@ -29,6 +34,8 @@ if [ $? -eq 0 ]; then
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
     echo "Figure: $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_expert_first.png"
+    echo "Figure: $OUTPUT_DATA_DIR/eval/figures/beta_prior_comparison_novice_first.png"
 else
     echo ""
     echo "=================================="
