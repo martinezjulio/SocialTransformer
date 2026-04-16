@@ -631,10 +631,12 @@ def run_inference_on_session(
     # trajectory values.
     human_segment_total_reward: Dict[int, float] = {}
     human_segment_expected_reward: Dict[int, float] = {}
+    seg_true_payoffs: Dict[int, List[float]] = {}
     for seg_idx, g_idx in seg_idx_to_game_idx.items():
         g_df = session_df[session_df['game_index'] == g_idx]
         human_segment_total_reward[seg_idx] = float(g_df['reward_generated'].sum())
         payoffs = parse_bandit_payoffs(g_df.iloc[0]['zone_bandit'])
+        seg_true_payoffs[seg_idx] = payoffs
         human_segment_expected_reward[seg_idx] = float(
             sum(payoffs[int(pos)] for pos in g_df['position'])
         )
@@ -664,6 +666,13 @@ def run_inference_on_session(
             model.eval()
             return model(tensors_state, custom_attn_mask=mask)
 
+    def _most_recent_demo_agent_idx(upper_inclusive: int) -> Optional[int]:
+        for idx in range(upper_inclusive, -1, -1):
+            prior = segment_info[idx]
+            if prior['type'] == 'demo':
+                return prior['agent'] - 1
+        return None
+
     def _choose_thompson_betas(pre_alpha_theta, pre_beta_theta,
                                pre_alpha_demo, pre_beta_demo, seg_idx):
         """Pick (alpha, beta) the Thompson sampler should draw from."""
@@ -674,17 +683,9 @@ def run_inference_on_session(
         if beta_method == "expert_betas":
             return pre_alpha_demo[expert_demo_idx, :], pre_beta_demo[expert_demo_idx, :]
         if beta_method == "recent_betas":
-            # Walk back from this segment to find the most recent demo segment
-            # that was visible pre-cutoff.
-            for prior_idx in range(seg_idx - 1, -1, -1):
-                prior = segment_info[prior_idx]
-                if prior['type'] == 'demo':
-                    prior_demo_model_idx = prior['agent'] - 1
-                    return (
-                        pre_alpha_demo[prior_demo_model_idx, :],
-                        pre_beta_demo[prior_demo_model_idx, :],
-                    )
-            # Fallback: no demo visible yet → use theta_betas.
+            recent_idx = _most_recent_demo_agent_idx(seg_idx - 1)
+            if recent_idx is not None:
+                return (pre_alpha_demo[recent_idx, :], pre_beta_demo[recent_idx, :])
             return pre_alpha_theta, pre_beta_theta
         raise ValueError(f"Unknown beta_method: {beta_method}")
 
@@ -771,6 +772,21 @@ def run_inference_on_session(
             novice_betas_str = serialize_betas(
                 post_alpha_demo[novice_demo_idx, :], post_beta_demo[novice_demo_idx, :]
             )
+            recent_demo_idx = _most_recent_demo_agent_idx(seg_idx)
+            if recent_demo_idx is not None:
+                recent_betas_str = serialize_betas(
+                    post_alpha_demo[recent_demo_idx, :],
+                    post_beta_demo[recent_demo_idx, :],
+                )
+            else:
+                recent_betas_str = theta_betas_str
+
+            true_payoffs_list = seg_true_payoffs.get(seg_idx)
+            true_payoffs_str = (
+                ','.join(f"{p:.4f}" for p in true_payoffs_list)
+                if true_payoffs_list is not None
+                else ''
+            )
 
             expert_n_tot = _n_tot(
                 post_alpha_demo[expert_demo_idx, :].detach().cpu(),
@@ -832,6 +848,8 @@ def run_inference_on_session(
                 'theta_betas': theta_betas_str,
                 'expert_betas': expert_betas_str,
                 'novice_betas': novice_betas_str,
+                'recent_betas': recent_betas_str,
+                'true_payoffs': true_payoffs_str,
             })
 
             if seg_idx in seg_idx_to_game_idx:
