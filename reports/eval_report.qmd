@@ -611,15 +611,24 @@ print(final_plot)
 
 ## Per-Arm Beta Prior Comparison (model mode, one figure per sequence)
 
-```{r beta-prior-comparison, fig.width=14, fig.height=10}
-# Per-arm Beta priors used for Thompson sampling at the cutoff immediately
-# before each play game, averaged across sessions/rollouts. Each subplot shows
-# one arm reindexed by true-payoff rank (rank 1 = lowest θ*, rank 12 = highest),
-# since the 12 arm payoffs in the human experiment are a fixed set permuted per
-# game. Four beta-prediction methods are overlaid per subplot. Two figures are
-# produced — Expert First and Novice First — using the same session pool as the
-# "Per-Game Total Reward Comparison" section above.
+Per-arm Beta priors used for Thompson sampling at the cutoff immediately before
+each play game. Arms are reindexed by true-payoff rank (rank 1 = lowest θ*,
+rank 12 = highest), since the 12 arm payoffs in the human experiment are a
+fixed set permuted per game. Three beta-prediction methods are overlaid per
+subplot. Two figures per σ variant are produced — Expert First and Novice First
+— using the same session pool as the "Per-Game Total Reward Comparison" section.
 
+Two σ aggregation variants are shown. They differ because Beta σ is nonlinear
+in α,β (Jensen's inequality):
+
+- **σ average**: compute σ\_i = sqrt(α\_i β\_i / ((α\_i+β\_i)² (α\_i+β\_i+1)))
+  per session, then average the σ\_i. Captures the *typical session's*
+  posterior width.
+- **σ of pooled α,β**: average α and β across sessions first, then compute σ
+  from (mean α, mean β). Captures the width of the *pooled-evidence* posterior,
+  and usually shows a more pronounced narrowing across play games.
+
+```{r beta-prior-comparison, fig.width=14, fig.height=10}
 parse_beta_string <- function(s) {
   m <- stringr::str_match_all(s, "\\(([0-9.eE+-]+),\\s*([0-9.eE+-]+)\\)")[[1]]
   tibble(
@@ -641,9 +650,12 @@ canonical_thetas <- sort(c(0.0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45,
 # — those demo cutoffs are the "prior to each play game" state. The stored α/β
 # at a demo cutoff are the post-segment predictions, which are identical to
 # the pre-pass predictions Thompson uses at the subsequent learner cutoff.
+beta_method_plot_levels <- setdiff(beta_method_levels, "recent_betas")
+
 prior_rows <- model_infer_df %>%
   filter(segment_order == "watch-first",
-         game_sequence %in% sequence_levels) %>%
+         game_sequence %in% sequence_levels,
+         beta_method %in% beta_method_plot_levels) %>%
   group_by(session_id, rollout_id, beta_method) %>%
   arrange(cutoff, .by_group = TRUE) %>%
   mutate(next_segment_type = lead(segment_type)) %>%
@@ -653,13 +665,12 @@ prior_rows <- model_infer_df %>%
   mutate(beta_string = dplyr::case_when(
     beta_method == "theta_betas"  ~ theta_betas,
     beta_method == "expert_betas" ~ expert_betas,
-    beta_method == "novice_betas" ~ novice_betas,
-    beta_method == "recent_betas" ~ recent_betas
+    beta_method == "novice_betas" ~ novice_betas
   ))
 
 # Explode each row into 12 per-arm records.
 per_arm <- prior_rows %>%
-  select(session_id, rollout_id, beta_method, game_sequence,
+  select(session_id, anonymous_id, rollout_id, beta_method, game_sequence,
          play_game_index, beta_string, true_payoffs) %>%
   rowwise() %>%
   mutate(arm_df = list({
@@ -679,79 +690,176 @@ per_arm <- prior_rows %>%
                  ((alpha + beta)^2 * (alpha + beta + 1)))
   )
 
-agg <- per_arm %>%
+arm_label_levels <- sprintf("Arm %d (\u03b8*=%.2f)", 1:12, canonical_thetas)
+
+finalize_agg <- function(df) {
+  df %>%
+    mutate(
+      theta_star    = canonical_thetas[arm_rank],
+      arm_label     = factor(
+        sprintf("Arm %d (\u03b8*=%.2f)", arm_rank, theta_star),
+        levels = arm_label_levels
+      ),
+      game_sequence = factor(game_sequence, levels = sequence_levels,
+                             labels = c("Expert First", "Novice First")),
+      beta_method   = factor(beta_method, levels = beta_method_plot_levels)
+    )
+}
+
+# Variant 1: average of per-session sigma ("typical session width").
+agg_sigma_avg <- per_arm %>%
   group_by(game_sequence, beta_method, play_game_index, arm_rank) %>%
   summarise(
     mean_mu    = mean(mu,    na.rm = TRUE),
-    mean_sigma = mean(sigma, na.rm = TRUE),
+    band_sigma = mean(sigma, na.rm = TRUE),
+    n_obs      = n(),
+    .groups = "drop"
+  ) %>%
+  finalize_agg()
+
+# Variant 2: sigma computed from pooled (mean) alpha and beta ("pooled-evidence
+# posterior width").
+agg_sigma_pooled <- per_arm %>%
+  group_by(game_sequence, beta_method, play_game_index, arm_rank) %>%
+  summarise(
+    mean_alpha = mean(alpha, na.rm = TRUE),
+    mean_beta  = mean(beta,  na.rm = TRUE),
     n_obs      = n(),
     .groups = "drop"
   ) %>%
   mutate(
-    theta_star   = canonical_thetas[arm_rank],
-    arm_label    = sprintf("Arm %d (\u03b8*=%.2f)", arm_rank, theta_star),
-    game_sequence = factor(game_sequence, levels = sequence_levels,
-                           labels = c("Expert First", "Novice First")),
-    beta_method  = factor(beta_method, levels = beta_method_levels)
-  )
-
-arm_label_levels <- agg %>%
-  distinct(arm_rank, arm_label) %>%
-  arrange(arm_rank) %>%
-  pull(arm_label)
-agg <- agg %>% mutate(arm_label = factor(arm_label, levels = arm_label_levels))
+    mean_mu    = mean_alpha / (mean_alpha + mean_beta),
+    band_sigma = sqrt(mean_alpha * mean_beta /
+                      ((mean_alpha + mean_beta)^2 *
+                       (mean_alpha + mean_beta + 1)))
+  ) %>%
+  finalize_agg()
 
 beta_method_colors <- c(
   theta_betas  = "#ff7f0e",
   expert_betas = "#2ca02c",
-  novice_betas = "#9467bd",
-  recent_betas = "#8c564b"
+  novice_betas = "#9467bd"
 )
 
-build_beta_prior_panel <- function(rows, seq_label) {
-  ggplot(rows, aes(x = play_game_index,
-                   color = beta_method, fill = beta_method)) +
-    geom_ribbon(aes(ymin = mean_mu - mean_sigma,
-                    ymax = mean_mu + mean_sigma),
-                alpha = 0.2, color = NA) +
-    geom_line(aes(y = mean_mu), linewidth = 0.9) +
-    geom_point(aes(y = mean_mu), size = 1.8) +
+play_game_labels <- c("Play 1 (R1)", "Play 2 (R1)",
+                      "Play 1 (R2)", "Play 2 (R2)",
+                      "Play 1 (R3)", "Play 2 (R3)")
+
+build_beta_prior_panel <- function(rows, seq_label, subtitle) {
+  dodge <- position_dodge(width = 0.35)
+  ggplot(rows, aes(x = play_game_index, color = beta_method,
+                   group = beta_method)) +
+    geom_vline(xintercept = c(2.5, 4.5),
+               linetype = "dashed", color = "gray60") +
+    geom_line(aes(y = mean_mu), linewidth = 0.7,
+              position = dodge, alpha = 0.6) +
+    geom_errorbar(aes(ymin = mean_mu - band_sigma,
+                      ymax = mean_mu + band_sigma),
+                  width = 0.25, linewidth = 0.6, position = dodge) +
+    geom_point(aes(y = mean_mu), size = 2, position = dodge) +
     geom_hline(aes(yintercept = theta_star),
                linetype = "dashed", color = "black") +
     facet_wrap(~ arm_label, ncol = 4) +
     scale_color_manual(values = beta_method_colors,
-                       breaks = beta_method_levels,
-                       labels = unname(beta_method_labels[beta_method_levels])) +
-    scale_fill_manual(values = beta_method_colors,
-                      breaks = beta_method_levels,
-                      labels = unname(beta_method_labels[beta_method_levels])) +
-    coord_cartesian(ylim = c(0, 1)) +
-    scale_x_continuous(breaks = 1:6) +
+                       breaks = beta_method_plot_levels,
+                       labels = unname(beta_method_labels[beta_method_plot_levels])) +
+    coord_cartesian(ylim = c(0, 1), xlim = c(0.5, 6.5)) +
+    scale_x_continuous(breaks = 1:6, labels = play_game_labels) +
     labs(title = paste0("Per-Arm Beta Prior Comparison \u2014 ", seq_label),
-         subtitle = "Model-mode priors to Thompson sampling at each play game. Mean \u00b1 1\u03c3, averaged across sessions.",
-         x = "Play game index (1..6 in session order)",
+         subtitle = subtitle,
+         x = "Play game (prior to Thompson sampling)",
          y = "Reward probability \u03b8",
          color = NULL, fill = NULL) +
     theme_minimal() +
     theme(plot.title    = element_text(face = "bold", size = 14),
           plot.subtitle = element_text(size = 10),
           strip.text    = element_text(size = 10, face = "bold"),
+          axis.text.x   = element_text(angle = 45, hjust = 1, size = 8),
           legend.position = "bottom")
 }
 
-for (seq_label in c("Expert First", "Novice First")) {
-  panel <- build_beta_prior_panel(
-    agg %>% filter(game_sequence == seq_label),
-    seq_label
-  )
-  file_slug <- if (seq_label == "Expert First") "expert_first" else "novice_first"
-  out_path <- file.path(eval_fig_dir,
-                        paste0("beta_prior_comparison_", file_slug, ".png"))
-  ggsave(filename = out_path, plot = panel,
-         width = 14, height = 10, dpi = 150, bg = "white")
-  cat("\nFigure saved to:", out_path, "\n")
-  print(panel)
+sigma_variants <- list(
+  list(slug = "sigma_avg",
+       agg  = agg_sigma_avg,
+       subtitle = "Mean \u00b1 1\u03c3. Band = average of per-session Beta \u03c3 (\"typical session width\")."),
+  list(slug = "sigma_pooled",
+       agg  = agg_sigma_pooled,
+       subtitle = "Mean \u00b1 1\u03c3. Band = Beta \u03c3 computed from session-mean \u03b1, \u03b2 (\"pooled-evidence width\").")
+)
+
+for (v in sigma_variants) {
+  for (seq_label in c("Expert First", "Novice First")) {
+    panel <- build_beta_prior_panel(
+      v$agg %>% filter(game_sequence == seq_label),
+      seq_label, v$subtitle
+    )
+    file_slug <- if (seq_label == "Expert First") "expert_first" else "novice_first"
+    out_path <- file.path(
+      eval_fig_dir,
+      sprintf("beta_prior_comparison_%s_%s.png", file_slug, v$slug)
+    )
+    ggsave(filename = out_path, plot = panel,
+           width = 14, height = 10, dpi = 150, bg = "white")
+    cat("\nFigure saved to:", out_path, "\n")
+    print(panel)
+  }
 }
+```
+
+```{r beta-prior-per-session, include=FALSE}
+# Per-participant raw Beta prior figures. No aggregation — each session has one
+# (alpha, beta) per (method, play_game, arm), so mu and sigma are computed
+# directly. Not shown inline; saved to a dedicated subdirectory for offline
+# inspection.
+per_session_fig_dir <- file.path(eval_fig_dir, "per_session_beta_priors")
+dir.create(per_session_fig_dir, recursive = TRUE, showWarnings = FALSE)
+
+slugify <- function(s) {
+  s <- gsub("[^A-Za-z0-9._-]+", "_", s)
+  gsub("^_+|_+$", "", s)
+}
+
+# With multiple rollouts this keeps only the first — per-session plots should
+# reflect raw predictions, not a rollout average.
+session_rows <- per_arm %>%
+  group_by(session_id) %>%
+  filter(rollout_id == min(rollout_id)) %>%
+  ungroup() %>%
+  mutate(
+    theta_star    = canonical_thetas[arm_rank],
+    arm_label     = factor(
+      sprintf("Arm %d (\u03b8*=%.2f)", arm_rank, theta_star),
+      levels = arm_label_levels
+    ),
+    game_sequence = factor(game_sequence, levels = sequence_levels,
+                           labels = c("Expert First", "Novice First")),
+    beta_method   = factor(beta_method, levels = beta_method_plot_levels),
+    mean_mu       = mu,
+    band_sigma    = sigma
+  )
+
+participants <- session_rows %>%
+  distinct(anonymous_id, session_id, game_sequence) %>%
+  arrange(anonymous_id, session_id)
+
+for (i in seq_len(nrow(participants))) {
+  p_anon <- participants$anonymous_id[i]
+  p_sess <- participants$session_id[i]
+  p_seq  <- as.character(participants$game_sequence[i])
+  rows <- session_rows %>%
+    filter(anonymous_id == p_anon, session_id == p_sess)
+  panel <- build_beta_prior_panel(
+    rows, p_seq,
+    sprintf("Participant %s (session %s) \u2014 raw \u03bc \u00b1 1\u03c3 per arm.",
+            p_anon, p_sess)
+  ) +
+    labs(title = sprintf("Beta Priors \u2014 %s (%s)", p_anon, p_seq))
+  fname <- sprintf("%s_%s.png", slugify(p_anon), slugify(p_seq))
+  ggsave(filename = file.path(per_session_fig_dir, fname),
+         plot = panel, width = 14, height = 10, dpi = 120, bg = "white")
+}
+cat(sprintf("\nSaved %d per-session figures to %s\n",
+            nrow(participants), per_session_fig_dir))
 ```
 
 ```{r mean-reward-curve-correlation, fig.width=13, fig.height=5.5}
