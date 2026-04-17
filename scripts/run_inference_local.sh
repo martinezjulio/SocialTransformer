@@ -15,7 +15,7 @@ conda activate SocialTransformer
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
 VERSION="${VERSION:-pilot_D}"
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_data.csv"
-OUTPUT_PATH="${TRAINING_DATA_ROOT_DIR}/model_predictions/hybrid_model_predictions.csv"
+OUTPUT_PATH="${TRAINING_DATA_ROOT_DIR}/model_predictions/experiment_trial_predictions.csv"
 DEVICE="cpu"  # Options: cuda, cpu
 NUM_ROLLOUTS=10  # Number of independent rollouts per session (default: 10 for variance reduction)
 SEED=42  # Base random seed for reproducibility
@@ -153,7 +153,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Inference completed successfully!"
     echo "=================================="
-    echo "Hybrid predictions saved to: $OUTPUT_DATA_DIR/analysis/"
+    echo "Experiment predictions saved to: $OUTPUT_PATH"
     echo ""
     echo "The output contains:"
     echo "  - Original demonstration segments from human data (duplicated across rollouts)"

@@ -79,7 +79,7 @@ test sets.
 
 5. **`src/eval/eval.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
 
-6. **`src/run_inference.py`** — Loads a trained model and runs inference on human experiment data via a unified cutoff sweep over the full tokenized session. Human mode uses the real learner actions; model mode runs a pre-segment forward pass per learner segment, feeds the resulting belief into Thompson sampling, and splices the sampled actions back into the shared tensors so later cutoffs condition on the simulated play. Emits two output schemas per run: `hybrid_model_predictions.csv` (per-game / per-Thompson-step rows for behavior analysis) and `{human,model}_mode_inference_predictions.csv` (per-cutoff posterior rows for the N_total experience plots).
+6. **`src/run_inference.py`** — Loads a trained model and runs inference on human experiment data via a unified cutoff sweep over the full tokenized session. Human mode uses the real learner actions; model mode runs a pre-segment forward pass per learner segment, feeds the resulting belief into Thompson sampling, and splices the sampled actions back into the shared tensors so later cutoffs condition on the simulated play. Emits two output schemas per run: `experiment_trial_predictions.csv` (per-trial behavior rows containing both human and model learner segments) and `experiment_cutoff_{human,model}_predictions.csv` (per-cutoff posterior rows for the N_total experience plots).
 
 ### Key Design Decisions
 
@@ -99,23 +99,24 @@ $OUTPUT_DATA_DIR/
     wandb_<id>/
       checkpoints/            # .pt files (local or downloaded from wandb)
       wandb/                  # wandb logs
-  eval/                       # Per-cutoff posterior outputs (overwrites on re-run)
-    data/                     #   eval_test_predictions.csv           (from eval.py)
-                              #   human_mode_inference_predictions.csv (from run_inference.py)
-                              #   model_mode_inference_predictions.csv (from run_inference.py)
-    figures/                  #   ntot_comparison.png, evaluation_summary.png
-    reports/                  #   eval_report.html (rendered by Quarto)
-    metadata/                 # config.yaml, run.yaml
-  inference/                  # Per-game / per-Thompson-step behavior rows (overwrites on re-run)
-    data/                     #   hybrid_model_predictions.csv (from run_inference.py)
-    metadata/                 # config.yaml, run.yaml
+  eval/                       # All eval + inference outputs (flat layout, overwrites on re-run)
+    data/                     # CSVs — naming: {source}_{shape}[_{mode}]_predictions.csv
+                              #   test_trial_model_predictions.csv        (from eval.py)
+                              #   test_cutoff_model_predictions.csv       (from eval.py)
+                              #   experiment_trial_predictions.csv        (from run_inference.py — both human & model rows)
+                              #   experiment_cutoff_human_predictions.csv (from run_inference.py)
+                              #   experiment_cutoff_model_predictions.csv (from run_inference.py)
+    figures/                  # eval_report + hybrid_model_pipeline_eval figures
+                              #   hybrid_model_pipeline_sessions/ — per-session PNGs
+    metadata/                 # eval_run.yaml, eval_config.yaml (from eval.py)
+                              # inference_run.yaml, inference_config.yaml (from run_inference.py)
   analysis/                   # Analysis outputs (overwrites on re-run)
     data/                     # analysis CSVs
     figures/                  # analysis plots
     metadata/                 # config.yaml, run.yaml
 ```
 
-Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run. The `eval/` and `inference/` split is by output schema, not by pipeline stage: `run_inference.py` writes to both on a single run (per-cutoff posterior rows to `eval/data/`, per-game/per-step behavior rows to `inference/data/`).
+Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run. Both `eval.py` and `run_inference.py` now write to `eval/` (one shared flat layout). File naming encodes source (`test` = synthetic test set, `experiment` = human data) and shape (`trial` = per-trial rows, `cutoff` = per-cutoff posterior rows). The `experiment_trial_predictions.csv` file contains both `learner_segment_input ∈ {human, model}` rows in the same file and therefore carries no mode suffix.
 
 ### Checkpoint Loading
 
@@ -145,7 +146,7 @@ The R/Quarto analysis environment uses `renv` (at repo root) for R package manag
 # One-time: install R packages
 bash scripts/setup_r_env.sh
 
-# Render analysis (requires inference data in $OUTPUT_DATA_DIR/inference/data/)
+# Render analysis (requires experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/data/)
 bash scripts/run_analysis.sh
 ```
 
@@ -158,10 +159,11 @@ repo root/
 ├── renv.lock                          # Locked R dependencies
 ├── renv/                              # renv bootstrap files
 └── reports/
-    ├── analysis_report.qmd           # Behavior analysis (reward, choice, entropy, correlations) — reads hybrid_model_predictions.csv
-    ├── eval_report.qmd                # N_total experience comparison (3x2 plot across eval + inference modes) — reads the per-cutoff CSVs in eval/data/
+    ├── analysis_report.qmd                # Behavior analysis (reward, choice, entropy, correlations) — reads experiment_trial_predictions.csv
+    ├── eval_report.qmd                     # N_total experience comparison (3x2 plot) — reads the per-cutoff CSVs in eval/data/
+    ├── hybrid_model_pipeline_eval.qmd      # Per-session + cross-session rank-space diagnostics (issue #11) — reads experiment_trial_predictions.csv + experiment_cutoff_model_predictions.csv (or the test_* pair when data_source=test)
     └── r/
-        ├── reward_plots.R             # R helper scripts (plots, preprocessing)
+        ├── reward_plots.R                  # R helper scripts (plots, preprocessing)
         ├── entropy_plots.R
         ├── choice_frequencies.R
         ├── correlations.R
@@ -171,6 +173,7 @@ repo root/
         ├── individual_behavior_distribution.R
         ├── experience_plots.R
         ├── behavior_distribution_average.R
+        ├── hybrid_pipeline_plots.R         # Hybrid pipeline rank-space plotting helpers (issue #11)
         └── preprocess.R
 ```
 

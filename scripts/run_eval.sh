@@ -202,33 +202,55 @@ quarto render reports/eval_report.qmd --output-dir "$OUTPUT_DATA_DIR/eval"
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
-    echo "All steps completed successfully!"
+    echo "Step 3 completed: Eval report"
     echo "=================================="
-    echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
-    echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
-    echo "Report:     $OUTPUT_DATA_DIR/eval/eval_report.html"
-    echo "Figures:"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_reward_correlation.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_cluster_diagnostic.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_cluster_profiles.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_cluster_method_alignment.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_alignment_sweep.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_cluster_best_profile.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_cluster_method_alignment_best_k.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_reward_correlation.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_profiles.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_method_alignment.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_alignment_sweep.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_best_profile.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_expected_cluster_method_alignment_best_k.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_curve_correlation.png"
 else
     echo ""
     echo "=================================="
     echo "ERROR: Eval report rendering failed!"
+    echo "=================================="
+    exit 1
+fi
+
+# ==============================================================================
+# Step 4: Render hybrid model pipeline eval report
+# ==============================================================================
+HYBRID_PIPELINE_DATA_SOURCE="${HYBRID_PIPELINE_DATA_SOURCE:-experiment}"  # experiment | test
+
+echo "=================================="
+echo "Step 4: Rendering hybrid pipeline eval report (source=$HYBRID_PIPELINE_DATA_SOURCE)..."
+echo "=================================="
+
+quarto render reports/hybrid_model_pipeline_eval.qmd \
+    --output-dir "$OUTPUT_DATA_DIR/eval" \
+    -P experiment_name:"$EXPERIMENT_NAME" \
+    -P version:"$VERSION" \
+    -P data_source:"$HYBRID_PIPELINE_DATA_SOURCE"
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "=================================="
+    echo "All steps completed successfully!"
+    echo "=================================="
+    echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
+    echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
+    echo "Reports:"
+    echo "  - $OUTPUT_DATA_DIR/eval/eval_report.html"
+    echo "  - $OUTPUT_DATA_DIR/eval/hybrid_model_pipeline_eval.html"
+    echo "Figures (eval_report):"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_reward_correlation.png"
+    echo "  - ... (see reports/eval_report.qmd)"
+    echo "Figures (hybrid_model_pipeline_eval):"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_expert_first.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_novice_first.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_model_pipeline_sessions/"
+else
+    echo ""
+    echo "=================================="
+    echo "ERROR: Hybrid pipeline eval report rendering failed!"
     echo "=================================="
     exit 1
 fi

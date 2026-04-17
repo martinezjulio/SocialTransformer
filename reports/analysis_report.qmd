@@ -29,7 +29,7 @@ output_data_dir      <- Sys.getenv("OUTPUT_DATA_DIR")
 experiment_data_dir  <- Sys.getenv("EXPERIMENT_DATA_DIR")
 experiment_data_path <- file.path(experiment_data_dir, params$experiment_name,
                                   params$version, "preprocessed_data.csv")
-inference_data_dir   <- file.path(output_data_dir, "inference", "data")
+inference_data_dir   <- file.path(output_data_dir, "eval", "data")
 analysis_fig_dir     <- file.path(output_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
@@ -125,7 +125,7 @@ if (!dir.exists(fig_dir)) {
   dir.create(fig_dir, recursive = TRUE)
 }
 
-model_df <- read_csv(file.path(inference_data_dir, "hybrid_model_predictions.csv"))
+model_df <- read_csv(file.path(inference_data_dir, "experiment_trial_predictions.csv"))
 model_df <- filter(model_df, learner_segment_input == "model" & beta_method == "theta_betas")
 # head(model_df)
 ```
@@ -160,7 +160,7 @@ print(p_experience)
 ```{r}
 
 # Load your filtered data
-model_df <- read_csv(file.path(inference_data_dir, "hybrid_model_predictions.csv")) %>%
+model_df <- read_csv(file.path(inference_data_dir, "experiment_trial_predictions.csv")) %>%
   filter(learner_segment_input == "model" & beta_method == "theta_betas")
 
 # Parse the theta_betas predictions

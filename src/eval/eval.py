@@ -423,6 +423,95 @@ def evaluate_single_example(
     return results
 
 
+def build_trial_rows_for_example(example: Dict, ex_idx: int) -> List[Dict]:
+    """
+    Emit one row per simulator trial for a single synthetic example, matching
+    the schema of experiment_trial_predictions.csv (from run_inference.py).
+    Synthetic trajectories come from the data generator rather than from a
+    trained model running Thompson sampling, so prior-source distinctions
+    don't apply: every row is tagged with learner_segment_input='model' and
+    beta_method='simulator', and the per-trial posterior columns are empty.
+    Consumers that need per-prior groupings should use the human-data pipeline.
+    """
+    events = example["events"]
+    segment_info = example["segment_info"]
+    boundaries = example["segment_boundaries"]
+    round_bandit_map = example["round_bandit_map"]
+    bandits = example["labels"]["bandits"]
+
+    # game_sequence + expert/novice mapping (reuses eval logic)
+    first_demo_agent = None
+    for seg in segment_info:
+        if seg["type"] == "demo":
+            first_demo_agent = seg["agent"] - 1  # agent 1/2 -> demo_id 0/1
+            break
+    demo0_N = bandits[0]["demonstrators"][0]["N_tot"]
+    demo1_N = bandits[0]["demonstrators"][1]["N_tot"]
+    expert_demo_id = 0 if demo0_N > demo1_N else 1
+    game_sequence = (
+        "expert-play-novice-play-choice"
+        if first_demo_agent == expert_demo_id
+        else "novice-play-expert-play-choice"
+    )
+
+    session_id = f"synth_{ex_idx}"
+    session_index = ex_idx
+    anonymous_id = session_id
+
+    # Within each round, demo/learner segments alternate watch/play. Track the
+    # in-round index so we can assign a contiguous game_index = 4*round + idx.
+    round_game_counter: Dict[int, int] = {}
+    rows: List[Dict] = []
+    for seg_idx, seg in enumerate(segment_info):
+        if seg["type"] not in ("demo", "learner"):
+            continue
+        round_idx = seg["round"]
+        in_round = round_game_counter.get(round_idx, 0)
+        game_index = 4 * round_idx + in_round
+        round_game_counter[round_idx] = in_round + 1
+
+        start = boundaries[seg_idx]
+        end = boundaries[seg_idx + 1] if (seg_idx + 1) < len(boundaries) else len(events)
+        seg_events = events[start:end]
+        if not seg_events:
+            continue
+
+        if seg["type"] == "demo":
+            game = "watch"
+            demo_id = seg["agent"] - 1
+            demonstrator_type = "expert" if demo_id == expert_demo_id else "novice"
+        else:
+            game = "play"
+            demonstrator_type = float("nan")
+
+        bandit_id = int(seg_events[0][0])
+        zone_bandit = ",".join(f"{p:.6g}" for p in bandits[bandit_id]["theta"])
+
+        for ev in seg_events:
+            rows.append({
+                "session_id": session_id,
+                "session_index": session_index,
+                "anonymous_id": anonymous_id,
+                "position": int(ev[2]),
+                "action": "shoot",
+                "game": game,
+                "game_sequence": game_sequence,
+                "game_index": game_index,
+                "round_index": round_idx,
+                "demonstrator_type": demonstrator_type,
+                "zone_bandit": zone_bandit,
+                "zone_global_index": int(round_bandit_map[round_idx]),
+                "reward_generated": bool(ev[3]),
+                "rollout_id": 0,
+                "learner_segment_input": "model",
+                "beta_method": "simulator",
+                "theta_betas": float("nan"),
+                "expert_betas": float("nan"),
+                "novice_betas": float("nan"),
+            })
+    return rows
+
+
 def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluation"):
     """Generate comprehensive visualization of evaluation results."""
     
@@ -662,9 +751,12 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate model on test set")
     parser.add_argument("--test_manifest", type=str, required=True,
         help="Path to test manifest.json")
-    parser.add_argument("--output_path", type=str, 
-        default="data/evaluation/eval_test_predictions.csv",
-        help="Path to save evaluation results")
+    parser.add_argument("--output_path", type=str,
+        default="data/evaluation/test_cutoff_model_predictions.csv",
+        help="Path to save per-cutoff evaluation results")
+    parser.add_argument("--trial_output_path", type=str,
+        default="data/evaluation/test_trial_model_predictions.csv",
+        help="Path to save per-trial trajectories (mirrors experiment_trial_predictions.csv schema)")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("--max_examples", type=int, default=None,
         help="Max examples to evaluate (None = all)")
@@ -704,8 +796,10 @@ def main():
     write_config_yaml(eval_dir, vars(args), subdir='metadata')
 
     # Set output paths to eval directory
-    if args.output_path == "data/evaluation/eval_test_predictions.csv":
-        args.output_path = str(eval_dir / 'data' / 'eval_test_predictions.csv')
+    if args.output_path == "data/evaluation/test_cutoff_model_predictions.csv":
+        args.output_path = str(eval_dir / 'data' / 'test_cutoff_model_predictions.csv')
+    if args.trial_output_path == "data/evaluation/test_trial_model_predictions.csv":
+        args.trial_output_path = str(eval_dir / 'data' / 'test_trial_model_predictions.csv')
     if args.plot_output_dir == "figures/evaluation":
         args.plot_output_dir = str(eval_dir / 'figures')
     
@@ -885,9 +979,24 @@ def main():
         output_path = Path(args.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
     
-        # Save results
-        print(f"\nSaving results to {args.output_path}...")
+        # Save per-cutoff results
+        print(f"\nSaving per-cutoff results to {args.output_path}...")
         df.to_csv(args.output_path, index=False)
+
+        # Emit per-trial CSV for the hybrid pipeline report (synthetic source).
+        print(f"\nBuilding per-trial rows from {len(all_examples)} examples...")
+        trial_rows: List[Dict] = []
+        for ex_idx, example in enumerate(all_examples):
+            try:
+                trial_rows.extend(build_trial_rows_for_example(example, ex_idx))
+            except Exception as e:
+                print(f"  Warning: Failed to build trial rows for example {ex_idx}: {e}")
+                continue
+        trial_df = pd.DataFrame(trial_rows)
+        trial_output_path = Path(args.trial_output_path)
+        trial_output_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Saving per-trial results to {trial_output_path} ({len(trial_df)} rows)...")
+        trial_df.to_csv(trial_output_path, index=False)
     
         # Print summary statistics
         print("\n" + "="*60)

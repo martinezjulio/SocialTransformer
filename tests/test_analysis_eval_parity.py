@@ -1,9 +1,9 @@
 """Regression test for issue #9 — analysis and eval pipelines must agree.
 
 The analysis report aggregates per-step `reward_generated` values from
-`hybrid_model_predictions.csv` into per-(game_sequence, game_index) means.
+`experiment_trial_predictions.csv` into per-(game_sequence, game_index) means.
 The eval report aggregates per-segment `segment_total_reward` values from
-`model_mode_inference_predictions.csv` into per-(game_sequence, cutoff) means.
+`experiment_cutoff_model_predictions.csv` into per-(game_sequence, cutoff) means.
 
 These are two paths to the same numbers. If they ever diverge, a filter
 or aggregation bug has been introduced somewhere (see issue #9 for history).
