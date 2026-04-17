@@ -10,6 +10,7 @@ This script:
 """
 
 import argparse
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -167,41 +168,46 @@ def serialize_betas(alpha: torch.Tensor, beta: torch.Tensor) -> str:
     return str(pairs)
 
 
+def _rollout_seed(base_seed: int, session_id: str, rollout_id: int) -> int:
+    # Stable hash (SHA-256) avoids PYTHONHASHSEED non-determinism across processes.
+    digest = hashlib.sha256(f"{session_id}|{rollout_id}".encode()).digest()
+    return (base_seed + int.from_bytes(digest[:4], "big")) % (2**31)
+
+
 def thompson_sampling_step(
-    alpha: torch.Tensor, 
-    beta: torch.Tensor, 
+    alpha: torch.Tensor,
+    beta: torch.Tensor,
     bandit_payoffs: List[float],
-    num_steps: int = 6
+    num_steps: int = 6,
+    *,
+    rng: random.Random,
+    np_rng: np.random.Generator,
 ) -> List[Tuple[int, int]]:
     """
     Run Thompson sampling for a learner segment.
-    
+
     Args:
         alpha: Initial alpha parameters [K]
         beta: Initial beta parameters [K]
         bandit_payoffs: True payoff probabilities for each arm
         num_steps: Number of actions to take (default 6)
-        
+        rng: Python RNG for reward Bernoulli draws
+        np_rng: Numpy generator for Thompson action sampling
+
     Returns:
         List of (action, reward) tuples
     """
     alpha = alpha.clone()
     beta = beta.clone()
     trajectory = []
-    
+
     for _ in range(num_steps):
-        # Sample action using Thompson sampling
-        action = thompson_sample_action(alpha, beta)
-        
-        # Generate reward from true bandit
-        reward = 1 if random.random() < bandit_payoffs[action] else 0
-        
+        action = thompson_sample_action(alpha, beta, np_rng)
+        reward = 1 if rng.random() < bandit_payoffs[action] else 0
         trajectory.append((action, reward))
-        
-        # Update beliefs
         alpha[action] += reward
         beta[action] += (1 - reward)
-    
+
     return trajectory
 
 
@@ -680,9 +686,11 @@ def run_inference_on_session(
     per_cutoff_rows = []
 
     for rollout_id in range(num_rollouts):
-        rollout_seed = seed + rollout_id
-        random.seed(rollout_seed)
-        np.random.seed(rollout_seed)
+        # Per-(session, rollout) RNGs so sessions are statistically independent
+        # while the same --seed still produces byte-identical CSVs across runs.
+        rollout_seed = _rollout_seed(seed, str(session_id_val), rollout_id)
+        rng = random.Random(rollout_seed)
+        np_rng = np.random.default_rng(rollout_seed)
 
         # Fresh tensors per rollout so Thompson splices never leak across rollouts.
         full_tensors = {k: v.clone() for k, v in original_tensors.items()}
@@ -730,6 +738,8 @@ def run_inference_on_session(
                         pred_beta.detach().cpu(),
                         learner_seg_bandit_payoffs[seg_idx],
                         seg_len,
+                        rng=rng,
+                        np_rng=np_rng,
                     )
                     for step_idx, (action_idx, reward) in enumerate(trajectory):
                         pos = start_pos + step_idx
