@@ -55,7 +55,11 @@ wandb agent <sweep-id>
 ./scripts/complete_sweep.sh <sweep_id>
 ```
 
-There is no test suite; validation is done via `eval.py` against held-out test sets.
+Lightweight pytest suite under `tests/`. Run with `pytest tests/` inside the
+`SocialTransformer` conda env. Tests validate invariants of generated
+artifacts under `$OUTPUT_DATA_DIR` and auto-skip when required CSVs are
+missing. Broader validation still happens via `eval.py` against held-out
+test sets.
 
 ## Architecture
 

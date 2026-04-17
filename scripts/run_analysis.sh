@@ -10,14 +10,22 @@ source "${SCRIPT_DIR}/../.env"
 source "$CONDA_SETUP"
 conda activate SocialTransformer
 
+# Per-run selection — change these to render a different pilot.
+EXPERIMENT_NAME="transfer_bandits_choice_textbox"
+VERSION="pilot_C"
+
 echo "=================================="
 echo "Rendering analysis document"
 echo "=================================="
+echo "Pilot: $EXPERIMENT_NAME / $VERSION"
 echo "Data directory: $OUTPUT_DATA_DIR/inference/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."
-quarto render reports/analysis_report.qmd --output-dir "$OUTPUT_DATA_DIR/analysis"
+quarto render reports/analysis_report.qmd \
+    --output-dir "$OUTPUT_DATA_DIR/analysis" \
+    -P experiment_name="$EXPERIMENT_NAME" \
+    -P version="$VERSION"
 
 if [ $? -eq 0 ]; then
     echo ""

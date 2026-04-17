@@ -14,6 +14,12 @@ conda activate SocialTransformer
 
 export PYTHONPATH="src:$PYTHONPATH"
 
+# Per-run pilot selection — inherited by run_inference.sh (and the eval report
+# if/when it gains a params block). Change these to switch pilots.
+EXPERIMENT_NAME="transfer_bandits_choice_textbox"
+VERSION="pilot_C"
+export EXPERIMENT_NAME VERSION
+
 # Set parameters
 DATASET_NAME="demonstrations_data_00"
 TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
