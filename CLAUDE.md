@@ -24,7 +24,7 @@ cp .env.example .env
 # Edit .env with your paths:
 #   TRAINING_DATA_ROOT_DIR=/path/to/data
 #   OUTPUT_DATA_DIR=/path/to/experiments/dev
-#   EXPERIMENT_DATA_PATH=/path/to/data/experiment_data/.../preprocessed_data.csv
+#   EXPERIMENT_DATA_DIR=/path/to/experiment_data
 ```
 
 All shell scripts source `.env` automatically. Dataset names (e.g., `demonstrations_data_04`) are specified per-script/sweep and resolved against `TRAINING_DATA_ROOT_DIR` by `train.py`.
@@ -171,7 +171,6 @@ repo root/
         ├── individual_behavior_distribution.R
         ├── experience_plots.R
         ├── behavior_distribution_average.R
-        ├── plots.R
         └── preprocess.R
 ```
 
@@ -179,7 +178,7 @@ repo root/
 
 - **R runtime**: Installed via conda (`r-base`) in the `SocialTransformer` environment.
 - **R packages**: Managed by `renv` (at repo root, independent of conda). Run `renv::restore()` to install from `renv.lock`.
-- **Data paths**: `analysis_report.qmd` reads `OUTPUT_DATA_DIR` and `EXPERIMENT_DATA_PATH` from the root `.env` file via the `dotenv` R package.
+- **Data paths**: `analysis_report.qmd` reads `OUTPUT_DATA_DIR` and `EXPERIMENT_DATA_DIR` from the root `.env` file via the `dotenv` R package; the preprocessed CSV path is built from `EXPERIMENT_DATA_DIR` + report params (`experiment_name`, `version`).
 - **`here::here()`** resolves to the repo root (anchored by `.git/`). No `.here` sentinel needed.
 - **Figures**: All plots save to `$OUTPUT_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `reports/r/figures/` (gitignored) when run standalone.
 - **Preprocessing**: `reports/r/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
