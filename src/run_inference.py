@@ -67,48 +67,35 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     # Sort by session_id and game_index to maintain temporal order
     df_filtered = df_filtered.sort_values(['session_id', 'round_index', 'game_index']).reset_index(drop=True)
     
-    # Remove sessions with incomplete round structure (wrong round set or wrong game count)
+    # Validate session structure (expected to pass — preprocess.R drops bad sessions upstream).
     expected_rounds = {0, 1, 2}
     expected_games_per_round = 4  # watch, play, watch, play
     expected_shots_per_play = 6   # matches training T_learner; enforced strictly
-    incomplete_sessions = []
+
+    bad_sessions = {}
     for sid in df_filtered['session_id'].unique():
         sdf = df_filtered[df_filtered['session_id'] == sid]
         rounds = set(int(r) for r in sdf['round_index'].unique())
         n_games = sdf['game_index'].nunique()
+        reasons = []
         if rounds != expected_rounds or n_games != expected_games_per_round * len(expected_rounds):
-            incomplete_sessions.append(sid)
-
-    if incomplete_sessions:
-        print(f"\nRemoving {len(incomplete_sessions)} session(s) with incomplete round structure:")
-        for sid in incomplete_sessions:
-            sdf = df_filtered[df_filtered['session_id'] == sid]
-            rounds = sorted(int(r) for r in sdf['round_index'].unique())
-            n_games = sdf['game_index'].nunique()
-            print(f"  {sid}: rounds={rounds}, games={n_games}")
-        df_filtered = df_filtered[~df_filtered['session_id'].isin(incomplete_sessions)].reset_index(drop=True)
-
-    # Also drop sessions where any play game has fewer than the expected number
-    # of shot events. This matches the training distribution (fixed T_learner)
-    # and avoids variable-length learner segments that the model was not
-    # trained on.
-    short_play_sessions = []
-    for sid in df_filtered['session_id'].unique():
-        sdf = df_filtered[df_filtered['session_id'] == sid]
+            reasons.append(f"incomplete-rounds (rounds={sorted(rounds)}, n_games={n_games})")
         play_counts = sdf[sdf['game'] == 'play'].groupby('game_index').size()
         if (play_counts != expected_shots_per_play).any():
             bad = play_counts[play_counts != expected_shots_per_play].to_dict()
-            short_play_sessions.append((sid, bad))
+            reasons.append(f"short-play {bad}")
+        if reasons:
+            bad_sessions[sid] = reasons
 
-    if short_play_sessions:
-        print(f"\nRemoving {len(short_play_sessions)} session(s) with play games that do not have "
-              f"exactly {expected_shots_per_play} shots:")
-        for sid, bad in short_play_sessions:
-            print(f"  {sid}: {bad}")
-        drop_ids = {sid for sid, _ in short_play_sessions}
-        df_filtered = df_filtered[~df_filtered['session_id'].isin(drop_ids)].reset_index(drop=True)
+    if bad_sessions:
+        lines = [f"  {sid}: {'; '.join(rs)}" for sid, rs in bad_sessions.items()]
+        raise ValueError(
+            f"Found {len(bad_sessions)} session(s) with invalid structure in "
+            f"preprocessed_data.csv. Re-run reports/r/preprocess.R to regenerate.\n"
+            + "\n".join(lines)
+        )
 
-    print(f"Filtered to {len(df_filtered)} shot events from {df_filtered['session_id'].nunique()} sessions")
+    print(f"Validated {len(df_filtered)} shot events from {df_filtered['session_id'].nunique()} sessions")
 
     return df_filtered
 

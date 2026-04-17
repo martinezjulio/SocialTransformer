@@ -8,6 +8,9 @@ execute:
   warning: false
   message: false
   dir: project
+params:
+  experiment_name: transfer_bandits_choice_textbox
+  version: pilot_D
 ---
 
 ```{r}
@@ -22,10 +25,12 @@ library(ggtext)
 
 # Load environment variables from project root .env
 dotenv::load_dot_env(here::here(".env"))
-output_data_dir <- Sys.getenv("OUTPUT_DATA_DIR")
-experiment_data_path <- Sys.getenv("EXPERIMENT_DATA_PATH")
-inference_data_dir <- file.path(output_data_dir, "inference", "data")
-analysis_fig_dir <- file.path(output_data_dir, "analysis", "figures")
+output_data_dir      <- Sys.getenv("OUTPUT_DATA_DIR")
+experiment_data_dir  <- Sys.getenv("EXPERIMENT_DATA_DIR")
+experiment_data_path <- file.path(experiment_data_dir, params$experiment_name,
+                                  params$version, "preprocessed_data.csv")
+inference_data_dir   <- file.path(output_data_dir, "inference", "data")
+analysis_fig_dir     <- file.path(output_data_dir, "analysis", "figures")
 
 # Source the scripts that hold the real logic
 source(here::here("reports", "r", "reward_plots.R"))
@@ -44,8 +49,8 @@ source(here::here("reports", "r", "experience_plots.R"))
 ### Data
 
 ```{r}
-experiment_name <- "transfer_bandits_choice_textbox"
-version         <- "pilot_D"
+experiment_name <- params$experiment_name
+version         <- params$version
 run_individual_behavior <- TRUE
 
 # Create the figure directory
@@ -112,7 +117,7 @@ print(choice_feedback$feedback_text)
 ### Data
 
 ```{r}
-experiment_name <- "transfer_bandits_choice_textbox"
+experiment_name <- params$experiment_name
 version         <- "hybrid_model"
 
 fig_dir <- file.path(analysis_fig_dir, experiment_name, version)

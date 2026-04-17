@@ -11,7 +11,10 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_PATH}"
+# Pilot selection — override from caller (e.g. run_eval.sh) via env; else defaults apply.
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
+VERSION="${VERSION:-pilot_D}"
+EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_data.csv"
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS=5  # Number of independent rollouts per session
 SEED=42  # Base random seed for reproducibility
@@ -44,6 +47,7 @@ CHECKPOINT_SOURCE="wandb_artifact"
 echo "=================================="
 echo "Inference Configuration"
 echo "=================================="
+echo "Pilot: $EXPERIMENT_NAME / $VERSION"
 echo "Experiment data: $EXPERIMENT_DATA_PATH"
 echo "Device: $DEVICE"
 echo "Number of rollouts: $NUM_ROLLOUTS"
