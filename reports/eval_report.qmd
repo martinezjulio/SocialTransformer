@@ -25,9 +25,9 @@ output_data_dir <- Sys.getenv("OUTPUT_DATA_DIR")
 eval_data_dir <- file.path(output_data_dir, "eval", "data")
 eval_fig_dir  <- file.path(output_data_dir, "eval", "figures")
 
-eval_path        <- file.path(eval_data_dir, "eval_test_predictions.csv")
-human_infer_path <- file.path(eval_data_dir, "human_mode_inference_predictions.csv")
-model_infer_path <- file.path(eval_data_dir, "model_mode_inference_predictions.csv")
+eval_path        <- file.path(eval_data_dir, "test_cutoff_model_predictions.csv")
+human_infer_path <- file.path(eval_data_dir, "experiment_cutoff_human_predictions.csv")
+model_infer_path <- file.path(eval_data_dir, "experiment_cutoff_model_predictions.csv")
 
 if (!dir.exists(eval_fig_dir)) {
   dir.create(eval_fig_dir, recursive = TRUE)

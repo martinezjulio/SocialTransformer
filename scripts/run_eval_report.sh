@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render the eval report Quarto document (2x2 N_total comparison figure)
-# Requires: eval data in $OUTPUT_DATA_DIR/eval/data/ and inference data in $OUTPUT_DATA_DIR/inference/data/
+# Requires: eval data in $OUTPUT_DATA_DIR/eval/data/ (test_* and experiment_* CSVs)
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +19,6 @@ echo "=================================="
 echo "Rendering eval report"
 echo "=================================="
 echo "Eval data: $OUTPUT_DATA_DIR/eval/data/"
-echo "Inference data: $OUTPUT_DATA_DIR/inference/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."

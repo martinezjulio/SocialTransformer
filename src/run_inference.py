@@ -25,7 +25,7 @@ from tqdm import tqdm
 from models.BetaModel import SBIPosteriorTransformer, thompson_sample_action
 from models.load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
 from data.transforms import BeliefNormalizer
-from utils import setup_inference_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
+from utils import setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
 def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
@@ -515,8 +515,8 @@ def run_inference_on_session(
     normalizer: Optional[BeliefNormalizer] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Run inference on a single session, producing both per-game/per-step rows
-    (for hybrid_model_predictions.csv) and per-cutoff rows (for the N_total
+    Run inference on a single session, producing both per-trial rows
+    (for experiment_trial_predictions.csv) and per-cutoff rows (for the N_total
     experience plots).
 
     Unified cutoff sweep: the full session is tokenized once via
@@ -531,8 +531,8 @@ def run_inference_on_session(
     replaced with the real human actions.
 
     Returns:
-        per_game_df: per-game / per-Thompson-step rows with existing schema
-            (hybrid_model_predictions.csv consumer).
+        per_game_df: per-trial / per-Thompson-step rows with existing schema
+            (experiment_trial_predictions.csv consumer).
         per_cutoff_df: one row per (cutoff, rollout) tagged with
             segment_type / segment_order / game_sequence / round_index /
             expert_N_tot_pred / novice_N_tot_pred / beta strings.
@@ -911,7 +911,7 @@ def run_inference_on_session(
 def main():
     parser = argparse.ArgumentParser(description="Run model inference on human experiment data to generate hybrid predictions")
     parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
-    parser.add_argument("--output_path",type=str,default="data/model_predictions/hybrid_model_predictions.csv",help="Path to output CSV file")
+    parser.add_argument("--output_path",type=str,default="data/model_predictions/experiment_trial_predictions.csv",help="Path to output CSV file")
     parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
     parser.add_argument("--num_rollouts", type=int, default=1,
         help="Number of independent rollouts per session (default: 1)")
@@ -935,11 +935,12 @@ def main():
     
     args = parser.parse_args()
     
-    # Set up inference directory structure
-    inference_dir = setup_inference_directory()
-    print(f"Inference directory: {inference_dir}")
+    # Set up eval directory structure (all inference artifacts now live under eval/)
+    eval_dir = setup_eval_directory()
+    print(f"Output directory: {eval_dir}")
 
-    # Write run metadata
+    # Write run metadata under eval/metadata/ with an inference_ prefix so it
+    # doesn't collide with eval.py's run.yaml / config.yaml.
     metadata = {
         'script': 'run_inference.py',
         'command': ' '.join(sys.argv),
@@ -947,12 +948,12 @@ def main():
         'num_rollouts': args.num_rollouts,
         'seed': args.seed,
     }
-    write_run_yaml(inference_dir, metadata, subdir='metadata')
-    write_config_yaml(inference_dir, vars(args), subdir='metadata')
+    write_run_yaml(eval_dir, metadata, subdir='metadata', filename='inference_run.yaml')
+    write_config_yaml(eval_dir, vars(args), subdir='metadata', filename='inference_config.yaml')
 
-    # Update output path to use analysis directory if it's still default
-    if args.output_path == "data/model_predictions/hybrid_model_predictions.csv":
-        args.output_path = str(inference_dir / 'data' / 'hybrid_model_predictions.csv')
+    # Update output path to write the per-trial CSV into eval/data/ if still default
+    if args.output_path == "data/model_predictions/experiment_trial_predictions.csv":
+        args.output_path = str(eval_dir / 'data' / 'experiment_trial_predictions.csv')
     
     # Set device
     device = torch.device(args.device)
@@ -1113,37 +1114,35 @@ def main():
         final_per_game_df = pd.concat(per_game_results, ignore_index=True)
         final_per_cutoff_df = pd.concat(per_cutoff_results, ignore_index=True)
 
-        # hybrid_model_predictions.csv — per-game / per-step (existing consumer: analysis_report.qmd)
+        # experiment_trial_predictions.csv — per-game / per-step rows
+        # (consumer: analysis_report.qmd, hybrid_model_pipeline_eval.qmd).
         output_path = Path(args.output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"\nSaving per-game predictions to {output_path}...")
+        print(f"\nSaving per-trial predictions to {output_path}...")
         final_per_game_df.to_csv(output_path, index=False)
 
-        # Per-cutoff predictions split by mode, written to $OUTPUT_DATA_DIR/eval/data/
+        # Per-cutoff predictions split by learner mode, also under eval/data/
         # (consumer: eval_report.qmd N_total comparison plot).
-        output_data_dir = os.environ.get('OUTPUT_DATA_DIR')
-        if not output_data_dir:
-            raise RuntimeError("OUTPUT_DATA_DIR environment variable is not set")
-        eval_data_dir = Path(output_data_dir) / 'eval' / 'data'
+        eval_data_dir = eval_dir / 'data'
         eval_data_dir.mkdir(parents=True, exist_ok=True)
 
         human_cutoff_df = final_per_cutoff_df[final_per_cutoff_df['learner_segment_input'] == 'human']
         model_cutoff_df = final_per_cutoff_df[final_per_cutoff_df['learner_segment_input'] == 'model']
 
-        human_cutoff_path = eval_data_dir / 'human_mode_inference_predictions.csv'
-        model_cutoff_path = eval_data_dir / 'model_mode_inference_predictions.csv'
+        human_cutoff_path = eval_data_dir / 'experiment_cutoff_human_predictions.csv'
+        model_cutoff_path = eval_data_dir / 'experiment_cutoff_model_predictions.csv'
         print(f"Saving human-mode per-cutoff predictions to {human_cutoff_path}...")
         human_cutoff_df.to_csv(human_cutoff_path, index=False)
         print(f"Saving model-mode per-cutoff predictions to {model_cutoff_path}...")
         model_cutoff_df.to_csv(model_cutoff_path, index=False)
 
-        print(f"\nDone! Per-game rows: {len(final_per_game_df)}, per-cutoff rows: {len(final_per_cutoff_df)}")
+        print(f"\nDone! Per-trial rows: {len(final_per_game_df)}, per-cutoff rows: {len(final_per_cutoff_df)}")
         print(f"  Sessions: {final_per_game_df['session_id'].nunique()}")
         print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
-        print(f"Per-game output: {output_path}")
+        print(f"Per-trial output: {output_path}")
         print(f"Per-cutoff outputs: {human_cutoff_path}, {model_cutoff_path}")
-        
-        finalize_run_yaml(inference_dir, status='completed', subdir='metadata')
+
+        finalize_run_yaml(eval_dir, status='completed', subdir='metadata', filename='inference_run.yaml')
         print(f"\n{'='*60}")
         print("Inference completed successfully!")
         print(f"{'='*60}")
@@ -1152,13 +1151,13 @@ def main():
         print(f"\n{'='*60}")
         print("Inference interrupted by user")
         print(f"{'='*60}")
-        finalize_run_yaml(inference_dir, status='interrupted', subdir='metadata')
+        finalize_run_yaml(eval_dir, status='interrupted', subdir='metadata', filename='inference_run.yaml')
         raise
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"Inference failed with error: {e}")
         print(f"{'='*60}")
-        finalize_run_yaml(inference_dir, status='failed', subdir='metadata', error=str(e))
+        finalize_run_yaml(eval_dir, status='failed', subdir='metadata', filename='inference_run.yaml', error=str(e))
         raise
 
 

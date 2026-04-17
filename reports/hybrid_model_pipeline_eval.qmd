@@ -1,0 +1,180 @@
+---
+title: "Hybrid Model Pipeline: Per-Session and Cross-Session Diagnostics"
+format:
+  html:
+    toc: true
+    fig-width: 18
+    fig-height: 48
+execute:
+  echo: false
+  warning: false
+  message: false
+  dir: project
+params:
+  experiment_name: "transfer_bandits_choice_textbox"
+  version: "pilot_C"
+  data_source: "experiment"  # "experiment" (human) | "test" (synthetic)
+  prediction_context_beta_method: "theta_betas"
+  example_session_expert_first: null
+  example_session_novice_first: null
+---
+
+```{r setup}
+library(here)
+library(dotenv)
+library(tidyverse)
+library(stringr)
+library(patchwork)
+
+dotenv::load_dot_env(here::here(".env"))
+
+output_data_dir <- Sys.getenv("OUTPUT_DATA_DIR")
+if (output_data_dir == "") {
+  stop("OUTPUT_DATA_DIR env var is not set. Source .env before rendering.")
+}
+eval_data_dir        <- file.path(output_data_dir, "eval", "data")
+eval_fig_dir         <- file.path(output_data_dir, "eval", "figures")
+per_session_fig_dir  <- file.path(eval_fig_dir, "hybrid_model_pipeline_sessions")
+if (!dir.exists(eval_fig_dir))        dir.create(eval_fig_dir, recursive = TRUE)
+if (!dir.exists(per_session_fig_dir)) dir.create(per_session_fig_dir, recursive = TRUE)
+
+source(here::here("reports", "r", "hybrid_pipeline_plots.R"))
+
+data_source <- params$data_source
+if (!(data_source %in% c("experiment", "test"))) {
+  stop("params$data_source must be 'experiment' or 'test'")
+}
+
+if (data_source == "experiment") {
+  trial_path  <- file.path(eval_data_dir, "experiment_trial_predictions.csv")
+  cutoff_path <- file.path(eval_data_dir, "experiment_cutoff_model_predictions.csv")
+} else {
+  trial_path  <- file.path(eval_data_dir, "test_trial_model_predictions.csv")
+  cutoff_path <- file.path(eval_data_dir, "test_cutoff_model_predictions.csv")
+}
+stopifnot(file.exists(trial_path))
+stopifnot(file.exists(cutoff_path))
+```
+
+## Data source
+
+```{r data-source-info}
+cat(sprintf("Data source: %s\n", data_source))
+cat(sprintf("  Trial CSV:  %s\n", trial_path))
+cat(sprintf("  Cutoff CSV: %s\n", cutoff_path))
+cat(sprintf("  Prediction context beta_method: %s\n",
+            params$prediction_context_beta_method))
+```
+
+## Load data
+
+```{r load-data}
+# guess_max=Inf prevents readr from type-guessing on early NaN rows (see
+# reports/eval_report.qmd for the precedent).
+trial_df  <- read_csv(trial_path,  show_col_types = FALSE, guess_max = Inf)
+cutoff_df <- read_csv(cutoff_path, show_col_types = FALSE, guess_max = Inf)
+
+# Only include watch-first sequences (hybrid report is structured for them).
+trial_df  <- trial_df  %>% filter(game_sequence %in% VALID_GAME_SEQUENCES)
+cutoff_df <- cutoff_df %>% filter(game_sequence %in% VALID_GAME_SEQUENCES)
+if ("segment_order" %in% colnames(cutoff_df)) {
+  cutoff_df <- cutoff_df %>% filter(segment_order == "watch-first")
+}
+
+cat(sprintf("Trial rows:  %d  (sessions: %d)\n",
+            nrow(trial_df), dplyr::n_distinct(trial_df$session_id)))
+cat(sprintf("Cutoff rows: %d  (sessions: %d)\n",
+            nrow(cutoff_df), dplyr::n_distinct(cutoff_df$session_id)))
+
+if (data_source == "test") {
+  test_methods <- unique(trial_df$beta_method)
+  if (!any(names(BETA_METHOD_TO_PRIOR) %in% test_methods)) {
+    message("NOTE: synthetic trial CSV contains beta_method values ",
+            paste(test_methods, collapse = ", "),
+            " — hybrid prior groupings will be empty. The eval pipeline does ",
+            "not emit per-prior Thompson rollouts for synthetic test data; ",
+            "only the cross-prior prediction rows will populate.")
+  }
+}
+```
+
+```{r resolve-examples}
+resolve_example <- function(df, game_seq, override) {
+  if (!is.null(override) && !is.na(override) && nzchar(override)) {
+    return(override)
+  }
+  ids <- df %>% filter(game_sequence == game_seq) %>%
+    distinct(session_id) %>% dplyr::pull(session_id) %>% sort()
+  if (length(ids) == 0) NULL else ids[1]
+}
+example_expert_sid <- resolve_example(trial_df, GAME_SEQUENCE_EXPERT_FIRST,
+                                      params$example_session_expert_first)
+example_novice_sid <- resolve_example(trial_df, GAME_SEQUENCE_NOVICE_FIRST,
+                                      params$example_session_novice_first)
+
+cat(sprintf("Example expert-first session: %s\n",
+            if (is.null(example_expert_sid)) "<none found>" else example_expert_sid))
+cat(sprintf("Example novice-first session: %s\n",
+            if (is.null(example_novice_sid)) "<none found>" else example_novice_sid))
+```
+
+## Per-session view
+
+### Expert-first example
+
+```{r per-session-expert, fig.width=18, fig.height=48}
+if (!is.null(example_expert_sid)) {
+  plot_session(trial_df, cutoff_df, example_expert_sid,
+               params$prediction_context_beta_method)
+} else {
+  cat("No expert-first session available.\n")
+}
+```
+
+### Novice-first example
+
+```{r per-session-novice, fig.width=18, fig.height=48}
+if (!is.null(example_novice_sid)) {
+  plot_session(trial_df, cutoff_df, example_novice_sid,
+               params$prediction_context_beta_method)
+} else {
+  cat("No novice-first session available.\n")
+}
+```
+
+### All sessions (saved to subdirectory)
+
+```{r save-all-sessions}
+saved_paths <- save_per_session_figures(
+  trial_df, cutoff_df, per_session_fig_dir,
+  context_beta_method = params$prediction_context_beta_method
+)
+cat(sprintf("Saved %d per-session figures to %s\n",
+            length(saved_paths), per_session_fig_dir))
+```
+
+## Cross-session view
+
+### Expert-first
+
+```{r cross-expert, fig.width=18, fig.height=54}
+p_cross_ef <- plot_cross_session(trial_df, cutoff_df,
+                                 GAME_SEQUENCE_EXPERT_FIRST,
+                                 params$prediction_context_beta_method)
+ggsave(file.path(eval_fig_dir, "hybrid_pipeline_cross_session_expert_first.png"),
+       p_cross_ef, width = 18, height = 54, dpi = 150, bg = "white",
+       limitsize = FALSE)
+p_cross_ef
+```
+
+### Novice-first
+
+```{r cross-novice, fig.width=18, fig.height=54}
+p_cross_nf <- plot_cross_session(trial_df, cutoff_df,
+                                 GAME_SEQUENCE_NOVICE_FIRST,
+                                 params$prediction_context_beta_method)
+ggsave(file.path(eval_fig_dir, "hybrid_pipeline_cross_session_novice_first.png"),
+       p_cross_nf, width = 18, height = 54, dpi = 150, bg = "white",
+       limitsize = FALSE)
+p_cross_nf
+```

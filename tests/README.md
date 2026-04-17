@@ -18,8 +18,8 @@ rather than failures.
 ## What's here
 
 - `test_analysis_eval_parity.py` — ensures the analysis pipeline (reading
-  `hybrid_model_predictions.csv` and aggregating per-game) produces the same
+  `experiment_trial_predictions.csv` and aggregating per-game) produces the same
   per-game mean reward as the eval pipeline (reading
-  `model_mode_inference_predictions.csv` and aggregating per-cutoff). A failure
-  here means issue #9 has regressed: something is dropping sessions or
-  aggregating differently between the two reports.
+  `experiment_cutoff_model_predictions.csv` and aggregating per-cutoff). A
+  failure here means issue #9 has regressed: something is dropping sessions
+  or aggregating differently between the two reports.
