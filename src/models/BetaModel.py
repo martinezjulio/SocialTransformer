@@ -2,6 +2,7 @@
 import math
 from typing import Optional, Dict, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -736,12 +737,17 @@ class SBIPosteriorTransformer(nn.Module):
 # ---------------------------
 
 @torch.no_grad()
-def thompson_sample_action(alpha_star: torch.Tensor, beta_star: torch.Tensor) -> int:
+def thompson_sample_action(
+    alpha_star: torch.Tensor,
+    beta_star: torch.Tensor,
+    np_rng: "np.random.Generator",
+) -> int:
     """
     Draw a TS action from Beta(alpha_star, beta_star) per arm.
-    alpha_star, beta_star: [K]
+    alpha_star, beta_star: [K]. Uses an explicit numpy Generator so callers
+    control reproducibility without relying on torch's global RNG state.
     """
-    K = alpha_star.shape[0]
-    dist = torch.distributions.Beta(alpha_star, beta_star)
-    draws = dist.sample()
-    return int(torch.argmax(draws).item())
+    alpha_np = alpha_star.detach().cpu().numpy()
+    beta_np = beta_star.detach().cpu().numpy()
+    draws = np_rng.beta(alpha_np, beta_np)
+    return int(np.argmax(draws))

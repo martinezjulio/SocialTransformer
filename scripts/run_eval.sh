@@ -17,7 +17,7 @@ export PYTHONPATH="src:$PYTHONPATH"
 # Per-run pilot selection — inherited by run_inference.sh (and the eval report
 # if/when it gains a params block). Change these to switch pilots.
 EXPERIMENT_NAME="transfer_bandits_choice_textbox"
-VERSION="pilot_C"
+VERSION="pilot_D"
 export EXPERIMENT_NAME VERSION
 
 # Set parameters
