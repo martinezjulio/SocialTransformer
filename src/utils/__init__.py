@@ -107,31 +107,20 @@ def setup_eval_directory():
     return eval_dir
 
 
-def setup_inference_directory():
+def write_run_yaml(run_dir, metadata, subdir=None, filename='run.yaml'):
     """
-    Create inference directory structure under $OUTPUT_DATA_DIR/inference/.
-
-    Returns:
-        Path to inference directory
-    """
-    inference_dir = get_output_data_dir() / 'inference'
-    for subdir in ['data', 'metadata']:
-        (inference_dir / subdir).mkdir(parents=True, exist_ok=True)
-    return inference_dir
-
-
-def write_run_yaml(run_dir, metadata, subdir=None):
-    """
-    Write run.yaml with run metadata.
+    Write run YAML with run metadata.
 
     Args:
         run_dir: Path to run directory
         metadata: Dictionary of metadata to write
         subdir: Optional subdirectory within run_dir (e.g., 'metadata')
+        filename: Filename to write (default 'run.yaml'). Use a prefixed name
+            (e.g. 'inference_run.yaml') when multiple stages share a metadata dir.
     """
     target_dir = Path(run_dir) / subdir if subdir else Path(run_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    run_yaml_path = target_dir / 'run.yaml'
+    run_yaml_path = target_dir / filename
 
     # Add timestamp if not present
     if 'start_time' not in metadata:
@@ -148,34 +137,37 @@ def write_run_yaml(run_dir, metadata, subdir=None):
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def write_config_yaml(run_dir, config, subdir=None):
+def write_config_yaml(run_dir, config, subdir=None, filename='config.yaml'):
     """
-    Write config.yaml with experiment configuration.
+    Write config YAML with experiment configuration.
 
     Args:
         run_dir: Path to run directory
         config: Dictionary of configuration (e.g., argparse args as dict)
         subdir: Optional subdirectory within run_dir (e.g., 'metadata')
+        filename: Filename to write (default 'config.yaml'). Use a prefixed name
+            (e.g. 'inference_config.yaml') when multiple stages share a metadata dir.
     """
     target_dir = Path(run_dir) / subdir if subdir else Path(run_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    config_yaml_path = target_dir / 'config.yaml'
+    config_yaml_path = target_dir / filename
     with open(config_yaml_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-def finalize_run_yaml(run_dir, status='completed', subdir=None, **kwargs):
+def finalize_run_yaml(run_dir, status='completed', subdir=None, filename='run.yaml', **kwargs):
     """
-    Update run.yaml with completion information.
+    Update run YAML with completion information.
 
     Args:
         run_dir: Path to run directory
         status: Final status ('completed', 'failed', 'interrupted')
         subdir: Optional subdirectory within run_dir (e.g., 'metadata')
+        filename: Filename to update (default 'run.yaml').
         **kwargs: Additional fields to add (e.g., notes, best_checkpoint)
     """
     target_dir = Path(run_dir) / subdir if subdir else Path(run_dir)
-    run_yaml_path = target_dir / 'run.yaml'
+    run_yaml_path = target_dir / filename
 
     if run_yaml_path.exists():
         with open(run_yaml_path, 'r') as f:

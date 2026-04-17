@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render the Quarto analysis document
-# Requires: inference data in $OUTPUT_DATA_DIR/inference/data/
+# Requires: experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/data/
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +18,7 @@ echo "=================================="
 echo "Rendering analysis document"
 echo "=================================="
 echo "Pilot: $EXPERIMENT_NAME / $VERSION"
-echo "Data directory: $OUTPUT_DATA_DIR/inference/data/"
+echo "Data directory: $OUTPUT_DATA_DIR/eval/data/"
 echo ""
 
 cd "${SCRIPT_DIR}/.."
