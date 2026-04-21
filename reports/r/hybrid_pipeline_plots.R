@@ -272,25 +272,42 @@ build_stage_df <- function(trial_df, session_id) {
 # Per-session play-prior pulls/successes per (round_index, stage, prior, rank).
 # Fills missing (rank, prior) cells with zero so grouped bars are
 # consistent across all 12 ranks.
-build_play_prior_df <- function(trial_df, session_id) {
+#
+# `all_rollouts = FALSE` keeps the single-rollout slice used by per-session
+# figures (readable: one trajectory per session). `all_rollouts = TRUE`
+# averages pulls/successes across all rollouts per (round_index, stage,
+# prior, rank) so cross-session figures reflect the full N rollouts per
+# session rather than just rollout 0. (Watch data is rollout-invariant, so
+# build_stage_df doesn't need this param — see that function's comment.)
+build_play_prior_df <- function(trial_df, session_id, all_rollouts = FALSE) {
   sess <- trial_df %>% filter(session_id == !!session_id)
   plays <- sess %>%
     filter(game == "play",
-           rollout_id == 0L,
            learner_segment_input == "model",
-           beta_method %in% names(BETA_METHOD_TO_PRIOR)) %>%
-    mutate(prior = unname(BETA_METHOD_TO_PRIOR[beta_method]))
+           beta_method %in% names(BETA_METHOD_TO_PRIOR))
+  if (!all_rollouts) {
+    plays <- plays %>% filter(rollout_id == 0L)
+  }
+  plays <- plays %>% mutate(prior = unname(BETA_METHOD_TO_PRIOR[beta_method]))
   ranks <- build_session_ranks_by_round(trial_df, session_id)
-  agg <- plays %>%
+  per_rollout <- plays %>%
     mutate(within_round_idx = game_index - 4L * round_index,
            stage = stage_from_sequence_and_index(game_sequence, within_round_idx)) %>%
     left_join(ranks, by = c("round_index", "game_sequence", "zone_global_index",
                             "position" = "arm_id")) %>%
-    group_by(round_index, stage, prior, rank) %>%
+    group_by(rollout_id, round_index, stage, prior, rank) %>%
     summarise(
       successes = sum(as.logical(reward_generated), na.rm = TRUE),
       failures  = sum(!as.logical(reward_generated), na.rm = TRUE),
       pulls     = dplyr::n(),
+      .groups   = "drop"
+    )
+  agg <- per_rollout %>%
+    group_by(round_index, stage, prior, rank) %>%
+    summarise(
+      successes = mean(successes, na.rm = TRUE),
+      failures  = mean(failures, na.rm = TRUE),
+      pulls     = mean(pulls, na.rm = TRUE),
       .groups   = "drop"
     )
   agg %>%
@@ -380,7 +397,8 @@ build_cross_session_frames <- function(trial_df, cutoff_df, game_sequence_value,
   for (sid in session_ids) {
     ranks_sid <- build_session_ranks_by_round(trial_cond, sid)
     stage_sid <- build_stage_df(trial_cond, sid) %>% mutate(session_id = sid)
-    play_sid  <- build_play_prior_df(trial_cond, sid) %>% mutate(session_id = sid)
+    play_sid  <- build_play_prior_df(trial_cond, sid, all_rollouts = TRUE) %>%
+      mutate(session_id = sid)
     pred_sid  <- build_prediction_df(cutoff_cond, sid, context_beta_method, ranks_sid) %>%
       mutate(session_id = sid)
     stage_frames[[length(stage_frames) + 1]] <- stage_sid

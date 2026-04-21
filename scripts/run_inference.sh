@@ -16,7 +16,7 @@ EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
 VERSION="${VERSION:-pilot_D}"
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_data.csv"
 DEVICE="cuda"  # Options: cuda, cpu
-NUM_ROLLOUTS=5  # Number of independent rollouts per session
+NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"  # Inherited from run_eval.sh env if set; else default to 5
 SEED=42  # Base random seed for reproducibility
 
 # Optional: Override masking strategy from checkpoint (uncomment to use)
@@ -148,7 +148,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "The output contains:"
     echo "  - Original demonstration segments from human data (duplicated across rollouts)"
-    echo "  - Model-simulated learner segments (${NUM_ROLLOUTS} independent rollouts per session)"
+    echo "  - Model-simulated learner segments ($NUM_ROLLOUTS independent rollouts per session)"
     echo ""
 else
     echo ""

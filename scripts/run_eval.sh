@@ -20,6 +20,11 @@ EXPERIMENT_NAME="transfer_bandits_choice_textbox"
 VERSION="pilot_D"
 export EXPERIMENT_NAME VERSION
 
+# Number of independent Thompson sampling rollouts per session. Inherited by
+# run_inference.sh and flows through to every downstream report.
+NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"
+export NUM_ROLLOUTS
+
 # Set parameters
 DATASET_NAME="demonstrations_data_00"
 TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
@@ -58,6 +63,7 @@ echo "=================================="
 echo "Test manifest: $TEST_MANIFEST"
 echo "Output path: \$OUTPUT_DATA_DIR/eval/{data,figures,metadata}/"
 echo "Device: $DEVICE"
+echo "Rollouts (N): $NUM_ROLLOUTS"
 if [ -n "$MAX_EXAMPLES" ]; then
     echo "Max examples: $MAX_EXAMPLES"
 else
@@ -242,6 +248,8 @@ if [ $? -eq 0 ]; then
     echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_reward_correlation.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_demonstrator_watches.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_difference.png"
     echo "  - ... (see reports/eval_report.qmd)"
     echo "Figures (hybrid_model_pipeline_eval):"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_expert_first.png"

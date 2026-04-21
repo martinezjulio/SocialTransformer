@@ -927,6 +927,44 @@ cat("\nFigure saved to:",
 print(curve_corr_fig)
 ```
 
+## Play-Game Correlation with Same-Round Demonstrator Watches
+
+Pearson r between each play game's per-arm pull-count vector and the
+same-round demonstrator watch's per-arm pull-count vector. Five play
+sources are compared: human, and four hybrid model variants (Thompson
+sampling primed with the env-, expert-, novice-, and recent-watched
+Beta posteriors). Within-round only: at play 1 of each round the second
+demonstrator has not yet been watched, so their correlation is
+undefined (dashed line with 3 points at play-2 positions).
+
+```{r source-hybrid-correlations, include=FALSE}
+source(here("reports", "r", "correlations_hybrid.R"))
+```
+
+```{r compute-hybrid-correlations}
+hybrid_trial_df <- read_csv(
+  file.path(eval_data_dir, "experiment_trial_predictions.csv"),
+  show_col_types = FALSE
+)
+hybrid_corr_data <- compute_hybrid_correlations(hybrid_trial_df)
+cat(sprintf("Computed %d (session × round × play × source × demo) correlations\n",
+            nrow(hybrid_corr_data)))
+```
+
+```{r plot-hybrid-correlation-grid, fig.width=10, fig.height=14}
+hybrid_grid_fig <- plot_correlation_grid(hybrid_corr_data, eval_fig_dir)
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "play_game_correlation_demonstrator_watches.png"), "\n")
+print(hybrid_grid_fig)
+```
+
+```{r plot-hybrid-correlation-difference, fig.width=13, fig.height=5}
+hybrid_diff_fig <- plot_difference_panel(hybrid_corr_data, eval_fig_dir)
+cat("\nFigure saved to:",
+    file.path(eval_fig_dir, "play_game_correlation_difference.png"), "\n")
+print(hybrid_diff_fig)
+```
+
 ## Participant Clustering
 
 ```{r participant-clustering-prep}
