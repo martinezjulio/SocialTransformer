@@ -8,10 +8,15 @@ library(ggtext)
 # Constants
 # ---------------------------------------------------------------------------
 
+# Kept in lockstep with `reward_color_values` / `beta_method_colors` /
+# `method_palette` in reports/eval_report.qmd so one prior method has one
+# color across the entire report. Okabe-Ito hues for the three priors that
+# appear in this report (env / expert / novice); light shades are the
+# same hues desaturated for "failure" bars.
 HYBRID_COLORS <- list(
-  env    = list(dark = "#1D9E75", light = "#9FE1CB"),
-  expert = list(dark = "#BA7517", light = "#FAC775"),
-  novice = list(dark = "#D4537E", light = "#F4C0D1"),
+  env    = list(dark = "#E69F00", light = "#F5D78D"),
+  expert = list(dark = "#009E73", light = "#99DAC6"),
+  novice = list(dark = "#CC79A7", light = "#EDC6DA"),
   demo   = list(dark = "#5F5E5A", light = "#D3D1C7")
 )
 
