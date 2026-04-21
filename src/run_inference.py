@@ -923,8 +923,8 @@ def main():
     parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
     parser.add_argument("--output_path",type=str,default="data/model_predictions/experiment_trial_predictions.csv",help="Path to output CSV file")
     parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
-    parser.add_argument("--num_rollouts", type=int, default=1,
-        help="Number of independent rollouts per session (default: 1)")
+    parser.add_argument("--num_rollouts", type=int, default=5,
+        help="Number of independent rollouts per session (default: 5)")
     parser.add_argument("--seed", type=int, default=42,
         help="Base random seed for reproducibility (default: 42)")
     parser.add_argument("--masking_strategy_override", type=str, default=None,

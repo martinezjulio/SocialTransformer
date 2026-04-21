@@ -133,6 +133,12 @@ def test_sample_counts_match(hybrid_csv, model_mode_csv):
     analysis = _analysis_means(hybrid_csv)
     eval_side = _eval_means(model_mode_csv)
 
+    # Analysis groups by (session, rollout) so its count is N× the eval count
+    # (which collapses rollouts first). Derive N from the CSV so the test
+    # adapts to whatever NUM_ROLLOUTS the run used.
+    n_rollouts = pd.read_csv(hybrid_csv, usecols=["rollout_id"])["rollout_id"].nunique()
+    assert n_rollouts >= 1, "hybrid_csv has no rollout_id values"
+
     analysis = analysis.assign(
         cutoff=analysis["game_index"].astype(int).map(GAME_INDEX_TO_CUTOFF)
     )
@@ -141,11 +147,8 @@ def test_sample_counts_match(hybrid_csv, model_mode_csv):
         on=["game_sequence", "cutoff"],
         suffixes=("_analysis", "_eval"),
     )
-    mismatches = merged[merged["n_analysis"] != merged["n_eval"] * 5]
-    # Analysis groups by (session, rollout) — so expected count per cell is
-    # 5x the eval count (which collapses rollouts first). If that ratio
-    # breaks, rollout handling has changed.
+    mismatches = merged[merged["n_analysis"] != merged["n_eval"] * n_rollouts]
     assert mismatches.empty, (
-        "Row counts diverge between analysis (per session-rollout) and "
-        f"eval (per session × 5 rollouts):\n{mismatches.to_string(index=False)}"
+        f"Row counts diverge between analysis (per session-rollout) and "
+        f"eval (per session × {n_rollouts} rollouts):\n{mismatches.to_string(index=False)}"
     )
