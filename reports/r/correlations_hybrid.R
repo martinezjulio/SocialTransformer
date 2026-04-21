@@ -43,14 +43,21 @@ CONDITION_LEVELS <- c("expert_first", "novice_first")
 CONDITION_LABELS <- c(expert_first = "Expert First",
                       novice_first = "Novice First")
 
-# Issue-spec colors plus one addition for the recent prior.
+# Source colors — Okabe-Ito palette, kept in lockstep with the `series` /
+# `beta_method` / `method_palette` mappings elsewhere in eval_report.qmd so
+# one source has one color throughout the report.
 SOURCE_COLORS <- c(
-  human        = "#444441",
-  env_prior    = "#1D9E75",
-  expert_prior = "#BA7517",
-  novice_prior = "#D4537E",
-  recent_prior = "#2E8B7E"
+  human        = "#000000",
+  env_prior    = "#E69F00",
+  expert_prior = "#009E73",
+  novice_prior = "#CC79A7",
+  recent_prior = "#56B4E9"
 )
+
+# Demonstrator colors for the per-cell correlation grid — matches the
+# blue/red standard used by the N_total and mean_reward plots, plus
+# reports/r/correlations.R in the analysis pipeline.
+DEMO_COLORS <- c(expert = "#1f77b4", novice = "#d62728")
 
 HUMAN_TINT <- "#FAF7F0"
 NA_BAND    <- "#F1EFE8"
@@ -229,8 +236,6 @@ plot_correlation_cell <- function(agg, condition_name, play_source_name,
 
   panel_fill <- if (tinted) HUMAN_TINT else "white"
 
-  demo_colors <- c(expert = "#3C7CC9", novice = "#C25525")
-
   p <- ggplot() +
     geom_hline(yintercept = 0.5, linetype = "dotted", color = GRID_GREY) +
     geom_vline(xintercept = c(2.5, 4.5), color = GRID_GREY, linewidth = 0.3)
@@ -265,7 +270,7 @@ plot_correlation_cell <- function(agg, condition_name, play_source_name,
   y_title <- if (!is.null(row_label)) row_label else (if (show_y_axis) "Pearson r" else NULL)
 
   p <- p +
-    scale_color_manual(values = demo_colors, guide = "none") +
+    scale_color_manual(values = DEMO_COLORS, guide = "none") +
     scale_x_continuous(breaks = 1:6,
                        labels = c("P1", "P2", "P1", "P2", "P1", "P2")) +
     coord_cartesian(ylim = c(0, 1), xlim = c(0.7, 6.3)) +
@@ -337,8 +342,11 @@ plot_difference_panel <- function(corr_data, fig_dir = NULL) {
     mutate(
       play_source = factor(play_source, levels = PLAY_SOURCE_LEVELS),
       linetype    = if_else(condition == "expert_first", "solid", "dashed"),
-      linewidth   = if_else(play_source == "human", 2.4, 1.5),
-      pointsize   = if_else(play_source == "human", 3.5, 3.0)
+      # Human is the reference baseline so it gets a slightly heavier
+      # stroke, but we keep all lines on the lighter side so the 10-line
+      # panel stays legible.
+      linewidth   = if_else(play_source == "human", 1.6, 0.6),
+      pointsize   = if_else(play_source == "human", 2.8, 1.6)
     )
 
   p <- ggplot(diff_data,
@@ -364,8 +372,8 @@ plot_difference_panel <- function(corr_data, fig_dir = NULL) {
     coord_cartesian(ylim = c(-1, 1), xlim = c(0.7, 6.3)) +
     labs(
       title    = "Difference: corr(expert) − corr(novice) by play source",
-      subtitle = paste0("Solid = expert-first condition, dashed = novice-first. ",
-                        "Human drawn thicker as the reference baseline. ",
+      subtitle = paste0("Solid = expert-first, dashed = novice-first. ",
+                        "Human drawn slightly thicker as the reference baseline. ",
                         "P1 positions are structurally undefined (n/a bands)."),
       x = NULL, y = NULL
     ) +

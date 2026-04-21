@@ -449,11 +449,11 @@ play_summary <- reward_summary_all %>%
 reward_color_values <- c(
   expert_demo                          = "#1f77b4",
   novice_demo                          = "#d62728",
-  "Human play"                         = "#111111",
-  "Model: Environment priors"          = "#ff7f0e",
-  "Model: Expert-head priors"          = "#2ca02c",
-  "Model: Novice-head priors"          = "#9467bd",
-  "Model: Most-recent-watched priors"  = "#8c564b"
+  "Human play"                         = "#000000",
+  "Model: Environment priors"          = "#E69F00",
+  "Model: Expert-head priors"          = "#009E73",
+  "Model: Novice-head priors"          = "#CC79A7",
+  "Model: Most-recent-watched priors"  = "#56B4E9"
 )
 reward_color_breaks <- c(
   "expert_demo", "novice_demo",
@@ -480,10 +480,11 @@ build_reward_panel <- function(demo_rows, play_rows, title, sequence_label) {
 
   ggplot() +
     geom_vline(xintercept = c(6.5, 12.5), linetype = "dashed", color = "gray60") +
-    # Model play curves first (drawn underneath)
+    # Model play curves first (drawn underneath). Dashed so the solid
+    # human-play curve drawn last pops as the reference baseline.
     geom_line(data = play_model_rows,
               aes(x = cutoff, y = mean_reward, color = series, group = series),
-              linewidth = 0.9) +
+              linetype = "dashed", linewidth = 0.9) +
     geom_errorbar(data = play_model_rows,
                   aes(x = cutoff,
                       ymin = mean_reward - se_reward,
@@ -580,6 +581,8 @@ play_series_levels <- c(
   "Model: Novice-head priors",
   "Model: Most-recent-watched priors"
 )
+play_legend_linetypes <- c("solid", rep("dashed", length(play_series_levels) - 1))
+
 play_legend_plot <- ggplot(play_summary,
                            aes(x = cutoff, y = mean_reward, color = series)) +
   geom_line(aes(group = series), linewidth = 0.9) +
@@ -594,7 +597,8 @@ play_legend_plot <- ggplot(play_summary,
         legend.title      = element_blank(),
         legend.key.width  = grid::unit(1.2, "cm"),
         legend.spacing.x  = grid::unit(0.6, "cm")) +
-  guides(color = guide_legend(nrow = 1))
+  guides(color = guide_legend(nrow = 1,
+                              override.aes = list(linetype = play_legend_linetypes)))
 play_legend_grob <- cowplot::get_legend(play_legend_plot)
 
 final_plot <- grid_plot /
@@ -736,9 +740,9 @@ agg_sigma_pooled <- per_arm %>%
   finalize_agg()
 
 beta_method_colors <- c(
-  theta_betas  = "#ff7f0e",
-  expert_betas = "#2ca02c",
-  novice_betas = "#9467bd"
+  theta_betas  = "#E69F00",
+  expert_betas = "#009E73",
+  novice_betas = "#CC79A7"
 )
 
 play_game_labels <- c("Play 1 (R1)", "Play 2 (R1)",
@@ -1261,10 +1265,10 @@ print(elbow_fig)
 cluster_palette  <- c("#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e",
                       "#e6ab02", "#a6761d", "#666666", "#1f78b4", "#33a02c")
 method_palette   <- c(
-  "Environment Priors"         = "#ff7f0e",
-  "Expert-Head Priors"         = "#2ca02c",
-  "Novice-Head Priors"         = "#9467bd",
-  "Most-Recent-Watched Priors" = "#8c564b"
+  "Environment Priors"         = "#E69F00",
+  "Expert-Head Priors"         = "#009E73",
+  "Novice-Head Priors"         = "#CC79A7",
+  "Most-Recent-Watched Priors" = "#56B4E9"
 )
 
 build_profile_panel <- function(cohort_label, clusterings_obj,
