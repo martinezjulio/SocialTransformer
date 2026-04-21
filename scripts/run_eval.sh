@@ -247,6 +247,7 @@ if [ $? -eq 0 ]; then
     echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_entropy_comparison.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_reward_correlation.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_demonstrator_watches.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_difference.png"
