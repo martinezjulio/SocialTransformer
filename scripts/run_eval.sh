@@ -255,6 +255,8 @@ if [ $? -eq 0 ]; then
     echo "Figures (hybrid_model_pipeline_eval):"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_expert_first.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_novice_first.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_selection_probs_expert_first.png"
+    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_selection_probs_novice_first.png"
     echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_model_pipeline_sessions/"
 else
     echo ""
