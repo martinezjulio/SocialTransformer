@@ -296,10 +296,8 @@ def evaluate_single_example(
         true_alpha_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["alpha0"], dtype=torch.float32)
         true_beta_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["beta0"], dtype=torch.float32)
         
-        # Get predictions for this bandit
+        # Get demo predictions for this bandit
         # outputs are [B, num_queries, K] or [B, num_queries, D, K]
-        pred_alpha_theta = outputs["alpha_theta"][0, bandit_id].cpu()  # [K]
-        pred_beta_theta = outputs["beta_theta"][0, bandit_id].cpu()    # [K]
         pred_alpha_demo = outputs["alpha_demo"][0, bandit_id].cpu()    # [num_demos, K]
         pred_beta_demo = outputs["beta_demo"][0, bandit_id].cpu()      # [num_demos, K]
         
@@ -308,8 +306,13 @@ def evaluate_single_example(
             pred_alpha_demo = normalizer.denormalize_alpha(pred_alpha_demo)
             pred_beta_demo = normalizer.denormalize_beta(pred_beta_demo)
         
-        # Compute expected payoffs
-        pred_theta_expected = pred_alpha_theta / (pred_alpha_theta + pred_beta_theta)
+        # Compute expected payoffs (branch on environment theta head type)
+        if model.env_theta_loss == "bce":
+            pred_theta_expected = torch.sigmoid(outputs["theta_logits"][0, bandit_id].cpu())  # [K]
+        else:
+            pred_alpha_theta = outputs["alpha_theta"][0, bandit_id].cpu()  # [K]
+            pred_beta_theta = outputs["beta_theta"][0, bandit_id].cpu()    # [K]
+            pred_theta_expected = pred_alpha_theta / (pred_alpha_theta + pred_beta_theta)
         
         # Compute theta metrics
         theta_corr = torch.corrcoef(
@@ -864,6 +867,7 @@ def main():
             dim_feedforward=model_config['dim_feedforward'],
             dropout=model_config['dropout'],
             profile_method=profile_method,
+            env_theta_loss=model_config.get('env_theta_loss', 'bce'),
             experience_head_loss_type=experience_head_loss_type,
             theta_head_input=model_config.get('theta_head_input', 'query_only'),
             demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),

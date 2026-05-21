@@ -262,6 +262,7 @@ def main():
         dim_feedforward=model_config['dim_feedforward'],
         dropout=model_config['dropout'],
         profile_method=model_config.get('profile_method', 'no_profile'),
+        env_theta_loss=model_config.get('env_theta_loss', 'bce'),
         experience_head_loss_type=model_config.get('experience_head_loss_type', 'mse'),
         theta_head_input=model_config.get('theta_head_input', 'query_only'),
         demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),

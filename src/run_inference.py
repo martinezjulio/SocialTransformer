@@ -168,6 +168,19 @@ def serialize_betas(alpha: torch.Tensor, beta: torch.Tensor) -> str:
     return str(pairs)
 
 
+def serialize_thetas(theta: torch.Tensor) -> str:
+    """
+    Serialize a [K] tensor of per-arm theta point estimates to a string list.
+
+    Args:
+        theta: [K] tensor of expected payoffs (one per arm)
+
+    Returns:
+        String like "[t1, t2, ...]"
+    """
+    return str([float(t) for t in theta.cpu()])
+
+
 def _rollout_seed(base_seed: int, session_id: str, rollout_id: int) -> int:
     # Stable hash (SHA-256) avoids PYTHONHASHSEED non-determinism across processes.
     digest = hashlib.sha256(f"{session_id}|{rollout_id}".encode()).digest()
@@ -670,6 +683,11 @@ def run_inference_on_session(
                                pre_alpha_demo, pre_beta_demo, seg_idx):
         """Pick (alpha, beta) the Thompson sampler should draw from."""
         if beta_method == "theta_betas":
+            if pre_alpha_theta is None:
+                raise ValueError(
+                    "beta_method='theta_betas' is unavailable for env_theta_loss='bce' "
+                    "checkpoints — the BCE theta head produces no Beta posterior."
+                )
             return pre_alpha_theta, pre_beta_theta
         if beta_method == "novice_betas":
             return pre_alpha_demo[novice_demo_idx, :], pre_beta_demo[novice_demo_idx, :]
@@ -679,6 +697,11 @@ def run_inference_on_session(
             recent_idx = _most_recent_demo_agent_idx(seg_idx - 1)
             if recent_idx is not None:
                 return (pre_alpha_demo[recent_idx, :], pre_beta_demo[recent_idx, :])
+            if pre_alpha_theta is None:
+                raise ValueError(
+                    "beta_method='recent_betas' found no prior demonstrator to fall back "
+                    "on, and env_theta_loss='bce' provides no theta posterior fallback."
+                )
             return pre_alpha_theta, pre_beta_theta
         raise ValueError(f"Unknown beta_method: {beta_method}")
 
@@ -712,8 +735,11 @@ def run_inference_on_session(
                 if pre_mask_cutoff >= 1:
                     pre_outputs = _run_forward(full_tensors, pre_mask_cutoff)
                     current_round_idx = full_model_input['round_to_index'][round_idx]
-                    pre_alpha_theta = pre_outputs['alpha_theta'][0, current_round_idx]
-                    pre_beta_theta = pre_outputs['beta_theta'][0, current_round_idx]
+                    if model.env_theta_loss == "bce":
+                        pre_alpha_theta = pre_beta_theta = None
+                    else:
+                        pre_alpha_theta = pre_outputs['alpha_theta'][0, current_round_idx]
+                        pre_beta_theta = pre_outputs['beta_theta'][0, current_round_idx]
                     pre_alpha_demo_raw = pre_outputs['alpha_demo'][0, current_round_idx]
                     pre_beta_demo_raw = pre_outputs['beta_demo'][0, current_round_idx]
                     pre_alpha_demo, pre_beta_demo = _denorm_demo(
@@ -754,15 +780,23 @@ def run_inference_on_session(
             outputs = _run_forward(full_tensors, cutoff)
             current_round_idx = full_model_input['round_to_index'][round_idx]
 
-            post_alpha_theta = outputs['alpha_theta'][0, current_round_idx]
-            post_beta_theta = outputs['beta_theta'][0, current_round_idx]
             post_alpha_demo_raw = outputs['alpha_demo'][0, current_round_idx]
             post_beta_demo_raw = outputs['beta_demo'][0, current_round_idx]
             post_alpha_demo, post_beta_demo = _denorm_demo(
                 post_alpha_demo_raw, post_beta_demo_raw
             )
 
-            theta_betas_str = serialize_betas(post_alpha_theta, post_beta_theta)
+            # BCE env head: point estimate only (no Beta posterior → theta_betas empty).
+            # beta_nll: full posterior in theta_betas, plus its expected value.
+            if model.env_theta_loss == "bce":
+                theta_betas_str = ''
+                theta_predicted = torch.sigmoid(outputs['theta_logits'][0, current_round_idx])
+            else:
+                post_alpha_theta = outputs['alpha_theta'][0, current_round_idx]
+                post_beta_theta = outputs['beta_theta'][0, current_round_idx]
+                theta_betas_str = serialize_betas(post_alpha_theta, post_beta_theta)
+                theta_predicted = post_alpha_theta / (post_alpha_theta + post_beta_theta)
+            theta_predicted_str = serialize_thetas(theta_predicted)
             expert_betas_str = serialize_betas(
                 post_alpha_demo[expert_demo_idx, :], post_beta_demo[expert_demo_idx, :]
             )
@@ -843,6 +877,7 @@ def run_inference_on_session(
                 'segment_total_reward': segment_total_reward,
                 'segment_expected_reward': segment_expected_reward,
                 'theta_betas': theta_betas_str,
+                'theta_predicted': theta_predicted_str,
                 'expert_betas': expert_betas_str,
                 'novice_betas': novice_betas_str,
                 'recent_betas': recent_betas_str,
@@ -852,6 +887,7 @@ def run_inference_on_session(
             if seg_idx in seg_idx_to_game_idx:
                 game_pred_cache[seg_idx_to_game_idx[seg_idx]] = {
                     'theta_betas': theta_betas_str,
+                    'theta_predicted': theta_predicted_str,
                     'expert_betas': expert_betas_str,
                     'novice_betas': novice_betas_str,
                     'round_idx': int(round_idx),
@@ -862,6 +898,7 @@ def run_inference_on_session(
             game_df = session_df[session_df['game_index'] == game_idx]
             preds = game_pred_cache.get(game_idx)
             theta_str = preds['theta_betas'] if preds else np.nan
+            theta_pred_str = preds['theta_predicted'] if preds else np.nan
             expert_str = preds['expert_betas'] if preds else np.nan
             novice_str = preds['novice_betas'] if preds else np.nan
             round_idx_for_game = preds['round_idx'] if preds else int(game_df.iloc[0]['round_index'])
@@ -873,6 +910,7 @@ def run_inference_on_session(
                     row_dict['learner_segment_input'] = learner_segment_input
                     row_dict['beta_method'] = beta_method
                     row_dict['theta_betas'] = theta_str
+                    row_dict['theta_predicted'] = theta_pred_str
                     row_dict['expert_betas'] = expert_str
                     row_dict['novice_betas'] = novice_str
                     per_game_rows.append(row_dict)
@@ -885,6 +923,7 @@ def run_inference_on_session(
                         row_dict['learner_segment_input'] = learner_segment_input
                         row_dict['beta_method'] = beta_method
                         row_dict['theta_betas'] = theta_str
+                        row_dict['theta_predicted'] = theta_pred_str
                         row_dict['expert_betas'] = expert_str
                         row_dict['novice_betas'] = novice_str
                         per_game_rows.append(row_dict)
@@ -910,6 +949,7 @@ def run_inference_on_session(
                             'learner_segment_input': learner_segment_input,
                             'beta_method': beta_method,
                             'theta_betas': theta_str,
+                            'theta_predicted': theta_pred_str,
                             'expert_betas': expert_str,
                             'novice_betas': novice_str,
                         })
@@ -1045,6 +1085,7 @@ def main():
             dim_feedforward=model_config['dim_feedforward'],
             dropout=model_config['dropout'],
             profile_method=profile_method,
+            env_theta_loss=model_config.get('env_theta_loss', 'bce'),
             experience_head_loss_type=experience_head_loss_type,
             theta_head_input=model_config.get('theta_head_input', 'query_only'),
             demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
@@ -1083,14 +1124,20 @@ def main():
             )
             print("✓ Using belief normalization")
 
-        # Run inference on each session for all 8 combinations
-        print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) x 8 combinations...")
+        # Thompson beta methods. theta_betas needs a Beta posterior over theta,
+        # which a BCE environment head does not produce — drop it for those.
+        beta_methods = ["theta_betas", "novice_betas", "expert_betas", "recent_betas"]
+        if model.env_theta_loss == "bce":
+            beta_methods = [m for m in beta_methods if m != "theta_betas"]
+
+        # Run inference on each session for all combinations
+        print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) x {2 * len(beta_methods)} combinations...")
 
         per_game_results = []
         per_cutoff_results = []
 
         for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
-            for beta_method in tqdm(["theta_betas", "novice_betas", "expert_betas", "recent_betas"],
+            for beta_method in tqdm(beta_methods,
                                     desc=f"Beta method ({learner_input})", position=1, leave=False):
 
                 session_ids = df['session_id'].unique()

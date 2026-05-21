@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from data.dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
 from models.BetaModel import SBIPosteriorTransformer
 from data.transforms import BeliefNormalizer
-from models.losses import get_demo_belief_loss, requires_normalization, beta_nll_of_true_theta, experience_loss_log, get_experience_head_loss
+from models.losses import get_env_theta_loss, get_demo_belief_loss, requires_normalization, experience_loss_log, get_experience_head_loss
 from utils import get_run_id, setup_training_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_training_runs_dir
 
 import wandb
@@ -209,6 +209,7 @@ def save_checkpoint(
     max_experience: float = None,
     alpha0: float = None,
     beta0: float = None,
+    env_theta_loss: str = None, 
     demo_belief_loss: str = None,
     scheduler=None,
     model_config: dict = None,
@@ -255,6 +256,7 @@ def save_checkpoint(
             'normalize_beliefs': normalizer is not None,
         },
         'config': {
+            'env_theta_loss': env_theta_loss,
             'demo_belief_loss': demo_belief_loss,
             'experience_loss_weight': experience_loss_weight,
             'masking_strategy': model_config['masking_strategy'] if model_config else 'all_bandits',
@@ -313,6 +315,8 @@ def train_one_epoch(
     alpha0: float = 1.0,
     beta0: float = 1.0,
     use_segment_masking: bool = True,
+    env_loss_fn=None,
+    env_theta_loss: str = "bce",
     demo_loss_weight: float = 0.5,
     demo_loss_fn=None,
     normalizer=None,
@@ -390,16 +394,21 @@ def train_one_epoch(
         y_alpha_target = batch["y_alpha_demo"][batch_indices, target_bandits_tensor]  # [B, num_demos, K]
         y_beta_target = batch["y_beta_demo"][batch_indices, target_bandits_tensor]   # [B, num_demos, K]
         
-        # Extract predictions for target bandits
-        # out["alpha_theta"] is [B, num_queries, K]
-        # target_bandits_tensor is [B] with bandit indices
-        pred_alpha_theta = out["alpha_theta"][batch_indices, target_bandits_tensor]  # [B, K]
-        pred_beta_theta = out["beta_theta"][batch_indices, target_bandits_tensor]    # [B, K]
+        # Extract demo predictions for target bandits
+        # out["alpha_demo"] is [B, num_queries, D, K]; target_bandits_tensor is [B] with bandit indices
         pred_alpha_demo = out["alpha_demo"][batch_indices, target_bandits_tensor]    # [B, D, K]
         pred_beta_demo = out["beta_demo"][batch_indices, target_bandits_tensor]      # [B, D, K]
+
+        # Environment theta loss: branch on the configured loss function
+        if env_theta_loss == "bce":
+            pred_theta_logits = out["theta_logits"][batch_indices, target_bandits_tensor]  # [B, K]
+            loss_theta = env_loss_fn(pred_theta_logits, y_theta_target)
+        else:
+            pred_alpha_theta = out["alpha_theta"][batch_indices, target_bandits_tensor]  # [B, K]
+            pred_beta_theta = out["beta_theta"][batch_indices, target_bandits_tensor]    # [B, K]
+            loss_theta = env_loss_fn(pred_alpha_theta, pred_beta_theta, y_theta_target)
         
-        # Compute losses
-        loss_theta = beta_nll_of_true_theta(pred_alpha_theta, pred_beta_theta, y_theta_target)
+        # Compute remaining losses (demonstrator beliefs, experience)
         
         # Denormalize predictions if normalization was used
         if normalizer is not None:
@@ -509,6 +518,9 @@ def main():
     parser.add_argument("--num_layers", type=int, default=4, help="Number of transformer layers")
     parser.add_argument("--dim_feedforward", type=int, default=768, help="Dimension of feedforward network")
     parser.add_argument("--d_model", type=int, default=256, help="Model dimension")
+    parser.add_argument("--env_theta_loss", type=str, default="bce", 
+                        choices=["bce", "beta_nll"], 
+                        help="Loss function for the environment payoffs")
     parser.add_argument("--demo_loss_weight", type=float, default=0.5, help="Weight for demonstrator belief loss (0.0-2.0)")
     parser.add_argument("--demo_belief_loss", type=str, default="log_mse",
                         choices=["log_mse", "kl_divergence", "expected_value_mse", "cross_entropy"],
@@ -683,6 +695,7 @@ def main():
             "num_layers": args.num_layers,
             "dim_feedforward": args.dim_feedforward,
             "d_model": args.d_model,
+            "env_theta_loss": args.env_theta_loss,
             "demo_loss_weight": args.demo_loss_weight,
             "demo_belief_loss": args.demo_belief_loss,
             "experience_loss_weight": args.experience_loss_weight,
@@ -783,6 +796,7 @@ def main():
         dim_feedforward=args.dim_feedforward,
         dropout=args.dropout,
         profile_method=args.profile_method,
+        env_theta_loss=args.env_theta_loss,
         experience_head_loss_type=args.experience_head_loss_type,
         theta_head_input=args.theta_head_input,
         demo_beliefs_head_input=args.demo_beliefs_head_input,
@@ -806,6 +820,7 @@ def main():
         'LEARNER_RAW_ID': LEARNER_RAW_ID,
         'masking_strategy': args.masking_strategy,
         'profile_method': args.profile_method,
+        'env_theta_loss': args.env_theta_loss,
         'experience_head_loss_type': args.experience_head_loss_type,
         'theta_head_input': args.theta_head_input,
         'demo_beliefs_head_input': args.demo_beliefs_head_input,
@@ -911,9 +926,15 @@ def main():
     prev_best_checkpoint = None
     prev_latest_checkpoint = None
 
+    # Get the environment theta loss function
+    env_loss_fn = get_env_theta_loss(args.env_theta_loss)
+    print(f"Using {args.env_theta_loss} loss for environment theta payoffs")
+
     # Get the demo belief loss function
     demo_loss_fn = get_demo_belief_loss(args.demo_belief_loss)
     print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
+
+
     
     # Get the experience head loss function (only for profile methods)
     if args.profile_method != "no_profile":
@@ -942,6 +963,8 @@ def main():
                 model, train_loader, optimizer, device, 
             alpha0=alpha0,
             beta0=beta0,
+            env_loss_fn=env_loss_fn, 
+            env_theta_loss=args.env_theta_loss,
             demo_loss_weight=args.demo_loss_weight,
             demo_loss_fn=demo_loss_fn,
             normalizer=normalizer,
@@ -983,12 +1006,18 @@ def main():
                     y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
                     y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
                     
-                    # Extract predictions for last bandit
-                    # out["alpha_theta"] is [B, num_queries, K]
-                    pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
-                    pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
+                    # Extract demo predictions for last bandit
                     pred_alpha_demo_val = out["alpha_demo"][batch_indices, last_bandit_idx]    # [B, D, K]
                     pred_beta_demo_val = out["beta_demo"][batch_indices, last_bandit_idx]      # [B, D, K]
+
+                    # Environment theta loss: branch on the configured loss function
+                    if args.env_theta_loss == "bce":
+                        pred_theta_logits_val = out["theta_logits"][batch_indices, last_bandit_idx]  # [B, K]
+                        lt = env_loss_fn(pred_theta_logits_val, y_theta_last)
+                    else:
+                        pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
+                        pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
+                        lt = env_loss_fn(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
                     
                     # Denormalize predictions if needed
                     if normalizer is not None:
@@ -1002,10 +1031,9 @@ def main():
                         target_alpha_val = y_alpha_demo_last
                         target_beta_val = y_beta_demo_last
                     
-                    # Per-demonstrator loss
+                    # Per-demonstrator belief loss
                     num_demonstrators = y_alpha_demo_last.shape[1]
-                    lt = beta_nll_of_true_theta(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
-                    
+
                     ld = 0.0
                     for demo_id in range(num_demonstrators):
                         ld += demo_loss_fn(
@@ -1122,6 +1150,7 @@ def main():
                     max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
+                    env_theta_loss=args.env_theta_loss,
                     demo_belief_loss=args.demo_belief_loss,
                     scheduler=scheduler,
                     model_config=model_config,
@@ -1147,6 +1176,7 @@ def main():
                     max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
+                    env_theta_loss=args.env_theta_loss,
                     demo_belief_loss=args.demo_belief_loss,
                     scheduler=scheduler,
                     model_config=model_config,
@@ -1215,6 +1245,7 @@ def main():
                     max_experience=max_experience,
                     alpha0=alpha0,
                     beta0=beta0,
+                    env_theta_loss=args.env_theta_loss,
                     demo_belief_loss=args.demo_belief_loss,
                     scheduler=scheduler,
                     model_config=model_config,
@@ -1249,6 +1280,7 @@ def main():
                 max_experience=max_experience,
                 alpha0=alpha0,
                 beta0=beta0,
+                env_theta_loss=args.env_theta_loss, 
                 demo_belief_loss=args.demo_belief_loss,
                 scheduler=scheduler,
                 model_config=model_config,

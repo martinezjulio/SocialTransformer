@@ -1,6 +1,6 @@
 
 import math
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union
 
 import numpy as np
 import torch
@@ -293,10 +293,12 @@ class BanditPayoffsHead(nn.Module):
     Predict bandit payoffs (theta) via Beta distribution parameters.
     Configurable to use query embeddings and/or profile embeddings.
     """
-    def __init__(self, d_model: int, num_arms: int, input_mode: str = "query_only", num_demonstrators: int = 2):
+    def __init__(self, d_model: int, num_arms: int, input_mode: str = "query_only", num_demonstrators: int = 2, env_theta_loss: str = "bce"):
         super().__init__()
         self.num_arms = num_arms
         self.input_mode = input_mode
+        self.env_theta_loss = env_theta_loss
+        out_dim = num_arms if env_theta_loss == "bce" else 2 * num_arms
         
         # Determine input size based on mode
         if input_mode == "query_only":
@@ -311,19 +313,19 @@ class BanditPayoffsHead(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(input_size, d_model),
             nn.ReLU(),
-            nn.Linear(d_model, 2 * num_arms),
+            nn.Linear(d_model, out_dim),
         )
         self.softplus = nn.Softplus()
     
-    def forward(self, query_emb: torch.Tensor, profiles: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, query_emb: torch.Tensor, profiles: Optional[torch.Tensor] = None) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
             query_emb: [B, d_model] - QUERY token hidden state
             profiles: Optional [B, D, d_model] - profile hidden states
-        
+
         Returns:
-            alpha_theta: [B, K]
-            beta_theta: [B, K]
+            If env_theta_loss == "bce": theta_logits [B, K].
+            Otherwise: (alpha_theta [B, K], beta_theta [B, K]).
         """
         B = query_emb.shape[0]
         K = self.num_arms
@@ -341,10 +343,12 @@ class BanditPayoffsHead(nn.Module):
             mlp_input = torch.cat([query_emb, profiles.view(B, -1)], dim=-1)
         
         theta_out = self.mlp(mlp_input)
+        if self.env_theta_loss == "bce":
+            return theta_out # prediction for thetas directly
+        # else return the alphas and beta predictions
         theta_out = theta_out.view(B, 2, K)
         alpha_theta = self.softplus(theta_out[:, 0, :]) + 1e-3
         beta_theta = self.softplus(theta_out[:, 1, :]) + 1e-3
-        
         return alpha_theta, beta_theta
 
 
@@ -479,6 +483,7 @@ class SBIPosteriorTransformer(nn.Module):
         dim_feedforward: int = 1024,
         dropout: float = 0.1,
         profile_method: str = "no_profile",
+        env_theta_loss: str = "bce", 
         experience_head_loss_type: str = "mse",
         theta_head_input: str = "query_only",
         demo_beliefs_head_input: str = "query_and_profiles",
@@ -487,6 +492,7 @@ class SBIPosteriorTransformer(nn.Module):
         super().__init__()
         self.profile_method = profile_method
         self.num_demonstrators = num_demonstrators
+        self.env_theta_loss = env_theta_loss
         
         # Validate and override input modes for no_profile method
         if profile_method == "no_profile":
@@ -512,7 +518,8 @@ class SBIPosteriorTransformer(nn.Module):
         self.bandit_payoffs_head = BanditPayoffsHead(
             d_model, num_arms,
             input_mode=theta_head_input,
-            num_demonstrators=num_demonstrators
+            num_demonstrators=num_demonstrators,
+            env_theta_loss=env_theta_loss,
         )
         self.demo_beliefs_head = DemoBeliefsHead(
             d_model, num_arms, num_demonstrators,
@@ -667,6 +674,7 @@ class SBIPosteriorTransformer(nn.Module):
         # Run predictions for each QUERY
         alpha_theta_all = []
         beta_theta_all = []
+        theta_logits_all = []
         alpha_demo_all = []
         beta_demo_all = []
         query_embs_all = []  # Store for experience head
@@ -697,10 +705,14 @@ class SBIPosteriorTransformer(nn.Module):
             
             query_embs_all.append(query_emb)
             
-            # Bandit payoffs
-            alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb, profiles_q)
-            alpha_theta_all.append(alpha_theta)
-            beta_theta_all.append(beta_theta)
+            # Bandit payoffs: BCE head returns logits, beta_nll head returns (alpha, beta)
+            if self.env_theta_loss == "bce":
+                theta_logits = self.bandit_payoffs_head(query_emb, profiles_q)
+                theta_logits_all.append(theta_logits)
+            else:
+                alpha_theta, beta_theta = self.bandit_payoffs_head(query_emb, profiles_q)
+                alpha_theta_all.append(alpha_theta)
+                beta_theta_all.append(beta_theta)
             
             # Demonstrator beliefs
             alpha_demo, beta_demo = self.demo_beliefs_head(query_emb, profiles_q)
@@ -709,11 +721,15 @@ class SBIPosteriorTransformer(nn.Module):
         
         # Stack predictions
         out = {
-            "alpha_theta": torch.stack(alpha_theta_all, dim=1),     # [B, num_queries, K]
-            "beta_theta": torch.stack(beta_theta_all, dim=1),       # [B, num_queries, K]
             "alpha_demo": torch.stack(alpha_demo_all, dim=1),       # [B, num_queries, D, K]
             "beta_demo": torch.stack(beta_demo_all, dim=1),         # [B, num_queries, D, K]
         }
+        # Environment theta head: emit logits (bce) or Beta params (beta_nll)
+        if self.env_theta_loss == "bce":
+            out["theta_logits"] = torch.stack(theta_logits_all, dim=1)  # [B, num_queries, K]
+        else:
+            out["alpha_theta"] = torch.stack(alpha_theta_all, dim=1)    # [B, num_queries, K]
+            out["beta_theta"] = torch.stack(beta_theta_all, dim=1)      # [B, num_queries, K]
         
         # Experience head
         # Use last QUERY's context (most informed)

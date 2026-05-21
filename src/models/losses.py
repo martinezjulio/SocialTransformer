@@ -26,6 +26,8 @@ def beta_nll_of_true_theta(alpha_pred: torch.Tensor, beta_pred: torch.Tensor, th
     nll = -((alpha_pred - 1) * torch.log(theta_true) + (beta_pred - 1) * torch.log(1 - theta_true) - logB)
     return nll.mean()
 
+def environment_BCE_loss(theta_logits: torch.Tensor, theta_true: torch.Tensor) -> torch.Tensor:
+    return F.binary_cross_entropy_with_logits(input=theta_logits, target=theta_true, reduction='mean')
 
 def log_mse_loss(pred_alpha: torch.Tensor, pred_beta: torch.Tensor, 
                  target_alpha: torch.Tensor, target_beta: torch.Tensor) -> torch.Tensor:
@@ -204,6 +206,31 @@ def experience_loss_log(pred_alpha: torch.Tensor, pred_beta: torch.Tensor,
     return F.mse_loss(torch.log(pred_N_tot + eps), 
                       torch.log(target_N_tot + eps))
 
+def get_env_theta_loss(loss_type: str):
+    """
+    Get the appropriate loss function for the environment payoff predictions 
+
+    Args:
+        loss_type: One of ["bce", "beta_nll"]
+
+    Returns:
+        one of the loss functions that takes theta_logits and theta_true or alphas and betas and theta_true repspectively
+
+    Raises:
+        ValueError: If loss_type is not recognized
+    """
+
+    losses = {
+        "bce": environment_BCE_loss,
+        "beta_nll": beta_nll_of_true_theta,
+    }
+
+    if loss_type not in losses:
+        raise ValueError(
+            f"Uknown loss type: {loss_type}. "
+            f"Must be one of {list(losses.keys())}"
+        )
+    return losses[loss_type]
 
 def get_demo_belief_loss(loss_type: str):
     """
