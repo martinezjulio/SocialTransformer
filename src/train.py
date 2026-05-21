@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import random
+import re
 from pathlib import Path
 
 import torch
@@ -304,6 +305,60 @@ def save_checkpoint(
             print(f"Checkpoint still saved locally at: {checkpoint_path}")
     
     return checkpoint_path
+
+
+def log_dataset_artifact(wandb_run, dataset_path: str, dataset_meta: dict) -> None:
+    """Log the training dataset's metadata files as a wandb artifact (type='dataset').
+
+    Attaches dataset_metadata.json and the per-split manifest.json files
+    (small JSON only — never the large .pt shards). Re-runs on the same
+    dataset reuse the same artifact name; wandb content-hash dedup avoids
+    spurious new versions when the files are unchanged.
+    """
+    if wandb_run is None:
+        return
+    try:
+        params = dataset_meta.get("parameters", {})
+        ds_basename = os.path.basename(os.path.normpath(dataset_path))
+        # wandb artifact names allow [A-Za-z0-9._-]; sanitize defensively
+        artifact_name = "dataset-" + re.sub(r"[^A-Za-z0-9._-]", "_", ds_basename)
+
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="dataset",
+            description=f"Training dataset '{ds_basename}' metadata + split manifests",
+            metadata={
+                "dataset_path": dataset_path,
+                "dataset_name": dataset_meta.get("dataset_name", ds_basename),
+                "generated_at": dataset_meta.get("generated_at"),
+                "K": params.get("K"),
+                "num_demonstrators": params.get("num_demonstrators"),
+                "num_rounds": params.get("num_rounds"),
+                "num_train_runs": params.get("num_train_runs"),
+                "num_valid_runs": params.get("num_valid_runs"),
+                "num_test_runs": params.get("num_test_runs"),
+                "expert_N_max": params.get("expert_N_max", params.get("N_max")),
+            },
+        )
+
+        # Top-level dataset metadata file
+        meta_file = os.path.join(dataset_path, "dataset_metadata.json")
+        if os.path.isfile(meta_file):
+            artifact.add_file(meta_file, name="dataset_metadata.json")
+
+        # Per-split manifests (small JSON; the .pt shards are NOT added)
+        for split in ("train", "val", "test"):
+            manifest_file = os.path.join(dataset_path, split, "manifest.json")
+            if os.path.isfile(manifest_file):
+                artifact.add_file(manifest_file, name=f"{split}/manifest.json")
+
+        # Track the dataset directory path itself without copying its contents
+        artifact.add_reference(f"file://{dataset_path}", name="dataset_dir", checksum=False)
+
+        wandb_run.log_artifact(artifact)
+        print(f"Logged dataset artifact '{artifact_name}' to wandb")
+    except Exception as e:
+        print(f"Warning: Failed to log dataset artifact to wandb: {e}")
 
 
 def train_one_epoch(
@@ -739,6 +794,9 @@ def main():
         wandb.define_metric("train/*", step_metric="epoch")
         wandb.define_metric("val/*", step_metric="epoch")
         wandb.define_metric("learning_rate", step_metric="epoch")
+
+        # Log the dataset (metadata files + path) as a wandb artifact
+        log_dataset_artifact(run, args.dataset_name, dataset_meta)
     else:
         run = None
 
