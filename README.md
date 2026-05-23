@@ -178,7 +178,7 @@ Run Bayesian optimization over hyperparameters:
 
 ```bash
 # Initialize sweep
-wandb sweep src/Sweeps/BetaModelSweep.yaml
+wandb sweep src/Sweeps/Sweep_Version_C.yaml
 
 # Start agent(s) - returns sweep ID like: entity/project/abc123
 wandb agent entity/project/abc123
@@ -387,9 +387,10 @@ src/
   ├── dataloader.py              # Dataset and batching with auto-config
   ├── train.py                   # Training loop with segment masking
   ├── complete_sweep.py          # Resume incomplete sweep runs
-  ├── models/BetaModel.py        # Transformer model
-  ├── inference.py               # Thompson Sampling inference
-  └── Sweeps/BetaModelSweep.yaml # Hyperparameter sweep config
+  ├── models/                    # SocialTransformer + ProfileSocialTransformer + factory
+  ├── inference/                 # Thompson Sampling and other inference utilities
+  ├── run_inference.py           # Thompson Sampling inference entry point
+  └── Sweeps/Sweep_Version_*.yaml # Hyperparameter sweep configs
 
 scripts/
   ├── generate_simulation.sh     # Data generation script
@@ -416,7 +417,7 @@ bash scripts/generate_simulation.sh
 bash scripts/run_training.sh
 
 # 3. Or run hyperparameter sweep
-wandb sweep src/Sweeps/BetaModelSweep.yaml
+wandb sweep src/Sweeps/Sweep_Version_C.yaml
 wandb agent <sweep-id>
 ```
 

@@ -23,8 +23,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from models.BetaModel import SBIPosteriorTransformer
-from models.load_checkpoint import load_checkpoint_from_local, load_checkpoint_from_wandb_artifact, load_checkpoint_from_wandb_sweep
+from models import BaseSocialTransformer
 from data.transforms import BeliefNormalizer
 from data.dataloader import BanditSequenceDataset
 from utils import get_special_characters, setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml
@@ -770,18 +769,13 @@ def main():
     parser.add_argument("--masking_strategy_override", type=str, default=None,
         choices=["all_bandits", "current_bandit_only"],
         help="Override masking strategy from checkpoint (optional)")
-    parser.add_argument("--profile_method_override", type=str, default=None,
-        choices=["no_profile", "learned_profile", "agent_pooling", "cross_attention"],
-        help="Override profile method from checkpoint (optional)")
-    
+
     # Checkpoint loading options (mutually exclusive)
     checkpoint_group = parser.add_mutually_exclusive_group(required=True)
     checkpoint_group.add_argument("--checkpoint_path", type=str,
         help="Path to local checkpoint file")
     checkpoint_group.add_argument("--wandb_artifact", type=str,
         help="Load from wandb artifact: 'entity/project/artifact:alias'")
-    checkpoint_group.add_argument("--wandb_sweep", type=str,
-        help="Load best model from sweep: 'entity/project/sweep_id'")
     
     args = parser.parse_args()
     
@@ -816,25 +810,16 @@ def main():
         print("Loading Model Checkpoint")
         print("="*60)
     
-        if args.checkpoint_path:
-            checkpoint_path, checkpoint = load_checkpoint_from_local(args.checkpoint_path)
-        elif args.wandb_artifact:
-            checkpoint_path, checkpoint = load_checkpoint_from_wandb_artifact(
-                args.wandb_artifact, str(get_training_runs_dir())
-            )
-        elif args.wandb_sweep:
-            checkpoint_path, checkpoint = load_checkpoint_from_wandb_sweep(
-                args.wandb_sweep, str(get_training_runs_dir())
-            )
-        else:
-            raise ValueError("No checkpoint source specified")
-    
-        # Extract model configuration
-        if 'model_config' not in checkpoint:
-            raise ValueError("Checkpoint missing 'model_config'")
-    
+        model, checkpoint = BaseSocialTransformer.load_checkpoint(
+            local_path=args.checkpoint_path,
+            wandb_artifact=args.wandb_artifact,
+            cache_dir=str(get_training_runs_dir()),
+        )
+
+        model = model.to(device)
+        model.eval()
         model_config = checkpoint['model_config']
-    
+
         print(f"\nModel configuration:")
         print(f"  num_arms: {model_config['num_arms']}")
         print(f"  num_agents: {model_config['num_agents']}")
@@ -843,39 +828,8 @@ def main():
         print(f"  d_model: {model_config['d_model']}")
         print(f"  nhead: {model_config['nhead']}")
         print(f"  num_layers: {model_config['num_layers']}")
-    
-        # Get profile method (from checkpoint or override)
-        if args.profile_method_override:
-            profile_method = args.profile_method_override
-            print(f"✓ Using overridden profile method: {profile_method}")
-        else:
-            profile_method = checkpoint['model_config'].get('profile_method', 'no_profile')
-            print(f"✓ Using profile method from checkpoint: {profile_method}")
-
-        experience_head_loss_type = checkpoint['model_config'].get('experience_head_loss_type', 'mse')
-        print(f"✓ Experience head loss type: {experience_head_loss_type}")
-
-        # Create model
-        model = SBIPosteriorTransformer(
-            num_arms=model_config['num_arms'],
-            num_agents=model_config['num_agents'],
-            num_bandits=model_config['num_bandits'],
-            num_demonstrators=model_config['num_demonstrators'],
-            d_model=model_config['d_model'],
-            nhead=model_config['nhead'],
-            num_layers=model_config['num_layers'],
-            dim_feedforward=model_config['dim_feedforward'],
-            dropout=model_config['dropout'],
-            profile_method=profile_method,
-            env_theta_loss=model_config.get('env_theta_loss', 'bce'),
-            experience_head_loss_type=experience_head_loss_type,
-            theta_head_input=model_config.get('theta_head_input', 'query_only'),
-            demo_beliefs_head_input=model_config.get('demo_beliefs_head_input', 'query_and_profiles'),
-            experience_head_input=model_config.get('experience_head_input', 'profiles_only'),
-        ).to(device)
-    
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
+        print(f"  profile_method: {model_config.get('profile_method', 'no_profile')}")
+        print(f"  experience_head_loss_type: {model_config.get('experience_head_loss_type', 'mse')}")
         print("✓ Model loaded successfully!")
     
         # Get normalization parameters

@@ -15,7 +15,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from data.dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
-from models.BetaModel import SBIPosteriorTransformer
+from models import build_model, BaseSocialTransformer
 from data.transforms import BeliefNormalizer
 from models.losses import get_env_theta_loss, get_demo_belief_loss, requires_normalization, experience_loss_log, get_experience_head_loss
 from utils import get_run_id, setup_training_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_training_runs_dir
@@ -45,77 +45,6 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
         return max(min_lr_ratio, 0.5 * (1.0 + math.cos(math.pi * progress)))
     
     return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
-
-def load_checkpoint_for_resume(checkpoint_ref, source, entity=None, project=None):
-    """
-    Load checkpoint from local path or wandb artifact.
-
-    Args:
-        checkpoint_ref: Local file path or wandb run ID
-        source: 'local' or 'wandb'
-        entity: Wandb entity (required if source='wandb')
-        project: Wandb project (required if source='wandb')
-
-    Returns:
-        checkpoint dict
-    """
-    if source == "local":
-        if not os.path.exists(checkpoint_ref):
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_ref}")
-        print(f"Loading checkpoint from local file: {checkpoint_ref}")
-        checkpoint = torch.load(checkpoint_ref, map_location='cpu')
-        return checkpoint
-
-    elif source == "wandb":
-        if not entity or not project:
-            raise ValueError("entity and project required for wandb source")
-
-        print(f"Loading checkpoint from wandb run: {checkpoint_ref}")
-        api = wandb.Api()
-        run = api.run(f"{entity}/{project}/{checkpoint_ref}")
-
-        # Get model artifacts
-        artifacts = [a for a in run.logged_artifacts() if a.type == 'model']
-        if not artifacts:
-            raise ValueError(f"No model artifacts found for run {checkpoint_ref}")
-
-        # Download latest artifact (or 'best' if available)
-        best_artifact = None
-        for artifact in artifacts:
-            if 'best' in artifact.aliases:
-                best_artifact = artifact
-                break
-
-        artifact_to_use = best_artifact if best_artifact else artifacts[-1]
-        print(f"Downloading artifact: {artifact_to_use.name}")
-
-        # Cache under training_runs/wandb_<run_id>/checkpoints/
-        local_dir = str(get_training_runs_dir() / f"wandb_{checkpoint_ref}" / "checkpoints")
-
-        # Check cache
-        if os.path.exists(local_dir):
-            cached_files = [f for f in os.listdir(local_dir) if f.endswith('.pt')]
-            if cached_files:
-                checkpoint_path = os.path.join(local_dir, cached_files[0])
-                print(f"Using cached checkpoint: {checkpoint_path}")
-                checkpoint = torch.load(checkpoint_path, map_location='cpu')
-                print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
-                return checkpoint
-
-        os.makedirs(local_dir, exist_ok=True)
-        artifact_dir = artifact_to_use.download(root=local_dir)
-
-        # Find checkpoint file
-        checkpoint_files = [f for f in os.listdir(artifact_dir) if f.endswith('.pt')]
-        if not checkpoint_files:
-            raise FileNotFoundError(f"No .pt file in artifact directory")
-
-        checkpoint_path = os.path.join(artifact_dir, checkpoint_files[0])
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-
-        print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
-        return checkpoint
 
 
 def create_segment_mask(
@@ -240,10 +169,9 @@ def save_checkpoint(
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
     checkpoint_path = os.path.join(checkpoint_dir, checkpoint_name)
     
-    # Save checkpoint with all relevant information
-    checkpoint = {
+    # Extras are merged with model_state_dict inside model.save_checkpoint.
+    extras = {
         'epoch': epoch,
-        'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
         'train_stats': train_stats,
@@ -263,11 +191,9 @@ def save_checkpoint(
             'experience_head_loss_weight': model_config.get('experience_head_loss_weight') if model_config else None,
         }
     }
-    
-    # Add model config if provided
     if model_config is not None:
-        checkpoint['model_config'] = model_config
-    torch.save(checkpoint, checkpoint_path)
+        extras['model_config'] = model_config
+    model.save_checkpoint(checkpoint_path, **extras)
     print(f"Saved checkpoint to {checkpoint_path}")
     
     # Log to wandb artifacts if run is provided and logging is enabled
@@ -362,7 +288,7 @@ def log_dataset_artifact(wandb_run, dataset_path: str, dataset_meta: dict) -> No
 
 
 def train_one_epoch(
-    model: SBIPosteriorTransformer,
+    model: BaseSocialTransformer,
     loader: DataLoader,
     optimizer: optim.Optimizer,
     device: torch.device,
@@ -601,10 +527,10 @@ def main():
                         help="Input mode for theta head")
     parser.add_argument("--demo_beliefs_head_input", type=str, default="query_and_profiles",
                         choices=["query_only", "profiles_only", "query_and_profiles"],
-                        help="Input mode for demo beliefs head (forced to query_only if profile_method='no_profile')")
+                        help="Input mode for demo beliefs head (ignored when profile_method='no_profile')")
     parser.add_argument("--experience_head_input", type=str, default="profiles_only",
                         choices=["query_only", "profiles_only", "query_and_profiles"],
-                        help="Input mode for experience head (forced to query_only if profile_method='no_profile')")
+                        help="Input mode for experience head (ignored when profile_method='no_profile')")
     
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
@@ -735,7 +661,10 @@ def main():
             "learning_rate": args.lr,
             "optimizer": args.optimizer,
             "weight_decay": args.weight_decay,
-            "architecture": "SBIPosteriorTransformer",
+            "architecture": {
+                "no_profile": "SocialTransformer",
+                "learned_profile": "LearnedProfileTransformer",
+            }.get(args.profile_method, "ProfileSocialTransformer"),
             "dataset_name": args.dataset_name,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -842,22 +771,24 @@ def main():
     )
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
-    model = SBIPosteriorTransformer(
-        num_arms=num_arms,
-        num_agents=num_agents,
-        num_bandits=num_bandits,
-        num_demonstrators=num_demonstrators,
-        d_model=args.d_model,
-        nhead=args.nhead,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout,
-        profile_method=args.profile_method,
-        env_theta_loss=args.env_theta_loss,
-        experience_head_loss_type=args.experience_head_loss_type,
-        theta_head_input=args.theta_head_input,
-        demo_beliefs_head_input=args.demo_beliefs_head_input,
-        experience_head_input=args.experience_head_input,
+    model = build_model(
+        args.profile_method,
+        dict(
+            num_arms=num_arms,
+            num_agents=num_agents,
+            num_bandits=num_bandits,
+            num_demonstrators=num_demonstrators,
+            d_model=args.d_model,
+            nhead=args.nhead,
+            num_layers=args.num_layers,
+            dim_feedforward=args.dim_feedforward,
+            dropout=args.dropout,
+            env_theta_loss=args.env_theta_loss,
+            experience_head_loss_type=args.experience_head_loss_type,
+            theta_head_input=args.theta_head_input,
+            demo_beliefs_head_input=args.demo_beliefs_head_input,
+            experience_head_input=args.experience_head_input,
+        ),
     ).to(device)
     
     # Store model configuration for saving in checkpoint
@@ -883,6 +814,43 @@ def main():
         'demo_beliefs_head_input': args.demo_beliefs_head_input,
         'experience_head_input': args.experience_head_input,
     }
+
+    # If resuming, replace the fresh model with the one loaded from the
+    # checkpoint *before* the optimizer is built, so the optimizer references
+    # the right parameters. The checkpoint dict is stashed for the optimizer/
+    # scheduler state restore below.
+    resume_checkpoint = None
+    if args.resume_from_checkpoint:
+        print(f"\n{'='*50}")
+        print("Loading checkpoint for resume...")
+        print(f"{'='*50}")
+        if args.checkpoint_source not in ("local", "wandb"):
+            raise ValueError(f"Unknown checkpoint_source: {args.checkpoint_source}")
+        model, resume_checkpoint = BaseSocialTransformer.load_checkpoint(
+            local_path=args.resume_from_checkpoint if args.checkpoint_source == "local" else None,
+            wandb_artifact=args.resume_from_checkpoint if args.checkpoint_source == "wandb" else None,
+            cache_dir=str(get_training_runs_dir()),
+        )
+        model = model.to(device)
+
+        # Trust the checkpoint's stored config for the saved architecture so
+        # subsequent saves stay consistent with the loaded weights.
+        if 'model_config' in resume_checkpoint:
+            model_config = resume_checkpoint['model_config']
+
+        # Early exit if training is already complete.
+        checkpoint_epoch = resume_checkpoint['epoch']
+        if checkpoint_epoch >= args.epochs:
+            print(f"\n{'='*50}")
+            print("Training already complete!")
+            print(f"{'='*50}")
+            print(f"Checkpoint at epoch {checkpoint_epoch}")
+            print(f"Target epochs: {args.epochs}")
+            print(f"\nTo continue training, specify more epochs:")
+            print(f"  --epochs {checkpoint_epoch + 50}")
+            print(f"{'='*50}\n")
+            exit(0)
+        print("✓ Loaded model weights")
 
     # Configure optimizer based on type
     if args.optimizer == "adam":
@@ -923,54 +891,24 @@ def main():
             print(f"  Patience: {args.patience}, Factor: {args.factor}")
             print(f"  Min LR: {args.min_lr:.2e}")
 
-    # Initialize training state
+    # Initialize training state (overridden below if resuming).
     start_epoch = 1
     best_val_loss = float('inf')
-    
-    # Load checkpoint if resuming
-    if args.resume_from_checkpoint:
-        print(f"\n{'='*50}")
-        print("Loading checkpoint for resume...")
-        print(f"{'='*50}")
-        
-        checkpoint = load_checkpoint_for_resume(
-            args.resume_from_checkpoint,
-            args.checkpoint_source,
-            entity=args.wandb_entity if args.use_wandb else None,
-            project=args.wandb_project if args.use_wandb else None
-        )
-        
-        # Check if training already complete
-        checkpoint_epoch = checkpoint['epoch']
-        if checkpoint_epoch >= args.epochs:
-            print(f"\n{'='*50}")
-            print("Training already complete!")
-            print(f"{'='*50}")
-            print(f"Checkpoint at epoch {checkpoint_epoch}")
-            print(f"Target epochs: {args.epochs}")
-            print(f"\nTo continue training, specify more epochs:")
-            print(f"  --epochs {checkpoint_epoch + 50}")
-            print(f"{'='*50}\n")
-            exit(0)
-        
-        # Load model state
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print("✓ Loaded model weights")
-        
-        # Load optimizer state
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    # Restore optimizer / scheduler state from the resume checkpoint we
+    # already loaded above (the model weights themselves were applied there).
+    if resume_checkpoint is not None:
+        optimizer.load_state_dict(resume_checkpoint['optimizer_state_dict'])
         print("✓ Loaded optimizer state")
-        
-        # Load scheduler if exists and we're using one
-        if scheduler and checkpoint.get('scheduler_state_dict'):
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        if scheduler and resume_checkpoint.get('scheduler_state_dict'):
+            scheduler.load_state_dict(resume_checkpoint['scheduler_state_dict'])
             print("✓ Loaded scheduler state")
-        
-        # Set starting epoch and best val loss
-        start_epoch = checkpoint['epoch'] + 1
-        best_val_loss = checkpoint['val_stats']['loss']
-        
-        print(f"\nResuming from epoch {checkpoint['epoch']}")
+
+        start_epoch = resume_checkpoint['epoch'] + 1
+        best_val_loss = resume_checkpoint['val_stats']['loss']
+
+        print(f"\nResuming from epoch {resume_checkpoint['epoch']}")
         print(f"Will train from epoch {start_epoch} to {args.epochs}")
         print(f"Best val loss so far: {best_val_loss:.4f}")
         print(f"{'='*50}\n")

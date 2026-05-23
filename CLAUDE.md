@@ -69,11 +69,15 @@ test sets.
 
 2. **`src/data/dataloader.py`** — Loads shards via `ShardedExamplesDataset`, tokenizes events into 5 channels (`bandit_ids`, `agent_ids`, `action_ids`, `reward_ids`, `special_ids`) via `BanditSequenceDataset`. Agent IDs are remapped: 0=learner, 1+=demonstrators. A QUERY token is appended for prediction readout. **`src/data/transforms.py`** provides `BeliefNormalizer` for target normalization.
 
-3. **`src/models/BetaModel.py`** — `SBIPosteriorTransformer` with three stages:
-   - `EventEmbedder`: sums per-field embeddings + positional encoding
-   - `CausalTransformer`: standard causal attention with optional custom masks
-   - Prediction heads outputting Beta distribution parameters for: bandit payoffs (θ), per-demonstrator beliefs (α,β), and optionally demonstrator experience counts
-   - **`src/models/losses.py`** — Loss functions (Beta NLL, belief losses, experience loss). **`src/models/load_checkpoint.py`** — Checkpoint loading from local/wandb sources.
+3. **`src/models/`** — Model package built around an ABC contract + self-contained concrete models:
+   - **`base.py`** — `BaseSocialTransformer(nn.Module, ABC)`. The contract every model adheres to: `@abstractmethod forward`, plus concrete `save_checkpoint`, `load_checkpoint_from_local`, and `load_checkpoint_from_wandb_artifact` methods inherited by every model.
+   - **`components.py`** — Shared building blocks (`EventEmbedder`, `CausalTransformerEncoder`, `BanditPayoffsHead`, `DemoBeliefsHead`, `DemoExperienceHead`). Pure library.
+   - **`social_model.py`** — The default `SocialTransformer` (no_profile). Fully self-contained: owns its `__init__` and an inline flat `forward` — no hooks.
+   - **`profile_social_model.py`** — Profile-aware variants. `ProfileSocialTransformer` (cross_attention + agent_pooling) and `LearnedProfileTransformer` are each fully self-contained (own `__init__` and inline `forward`); both inherit directly from `BaseSocialTransformer`. Also contains the `ProfileExtractor` base class and its three subclasses.
+   - **`__init__.py`** — `build_model(profile_method, config)` factory used by `train.py`, `eval.py`, and `run_inference.py`.
+   - **`losses.py`** — Loss functions (Beta NLL, belief losses, experience loss).
+
+   Inference-time utilities (Thompson sampling) live separately in **`src/inference/`** (`thompson_sample_action` in `inference.py`). Checkpoint I/O is owned by `BaseSocialTransformer` itself — there is no separate `load_checkpoint` module.
 
 4. **`src/train.py`** — Training loop with **segment-level masking**: each example randomly selects 1..N visible segments, masks future segments in attention, and predicts for the bandit corresponding to the last visible segment's round. This teaches the model to predict from variable context lengths.
 
@@ -85,8 +89,8 @@ test sets.
 
 - **Beta distribution outputs**: The model predicts Beta(α,β) parameters, not point estimates. Theta loss uses Beta NLL; belief loss uses log-MSE, KL, or cross-entropy against true pre-episode counts.
 - **Per-demonstrator predictions**: Beliefs are predicted separately per demonstrator (not averaged), capturing individual expertise differences.
-- **Profile methods**: `no_profile`, `learned_profile`, `agent_pooling`, `cross_attention` — different ways to incorporate demonstrator identity into predictions.
-- **Head input configurations**: Each prediction head (`theta`, `demo_beliefs`, `experience`) can use `query_only`, `profiles_only`, or `query_and_profiles`.
+- **Profile methods**: `no_profile` (default, `SocialTransformer`), `cross_attention` and `agent_pooling` (`ProfileSocialTransformer`), `learned_profile` (`LearnedProfileTransformer`) — different ways to incorporate demonstrator identity into predictions. The `build_model` factory dispatches on this value.
+- **Head input configurations** (profile variants only): Each prediction head (`theta`, `demo_beliefs`, `experience`) can use `query_only`, `profiles_only`, or `query_and_profiles`. The no-profile model hardcodes `query_only`.
 - **Masking strategies**: `all_bandits` vs `current_bandit_only` — whether to predict for all bandits or only the current round's bandit.
 
 ### Run Management
