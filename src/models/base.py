@@ -143,6 +143,10 @@ class BaseSocialTransformer(nn.Module, ABC):
         """Construct the right model from ``checkpoint['model_config']`` and
         load its ``model_state_dict`` (strict). Lazy import of ``build_model``
         avoids a circular dependency with ``models/__init__.py``.
+
+        Accepts both the new ``model_type`` key and the legacy
+        ``profile_method`` key for back-compat with pre-rename checkpoints.
+        Legacy values are translated to current ones inside ``build_model``.
         """
         from models import build_model  # lazy
         if "model_config" not in checkpoint:
@@ -150,7 +154,7 @@ class BaseSocialTransformer(nn.Module, ABC):
                 "Checkpoint is missing 'model_config' — cannot reconstruct the model."
             )
         model_config = checkpoint["model_config"]
-        profile_method = model_config.get("profile_method", "no_profile")
-        model = build_model(profile_method, model_config)
+        model_type = model_config.get("model_type") or model_config.get("profile_method", "social")
+        model = build_model(model_type, model_config)
         model.load_state_dict(checkpoint["model_state_dict"])
         return model

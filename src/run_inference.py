@@ -1043,7 +1043,7 @@ def main():
 
         # Pull masking strategy + profile method from the checkpoint.
         masking_strategy = model_config.get('masking_strategy', 'all_bandits')
-        profile_method = model_config.get('profile_method', 'no_profile')
+        model_type = model_config.get('model_type') or model_config.get('profile_method', 'social')
 
         if args.masking_strategy_override:
             masking_strategy = args.masking_strategy_override
@@ -1051,7 +1051,7 @@ def main():
         else:
             print(f"  masking_strategy: {masking_strategy}")
 
-        print(f"  profile_method: {profile_method}")
+        print(f"  model_type: {model_type}")
         print(f"  experience_head_loss_type: {model_config.get('experience_head_loss_type', 'mse')}")
         print("Model loaded successfully!")
         

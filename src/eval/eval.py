@@ -828,7 +828,7 @@ def main():
         print(f"  d_model: {model_config['d_model']}")
         print(f"  nhead: {model_config['nhead']}")
         print(f"  num_layers: {model_config['num_layers']}")
-        print(f"  profile_method: {model_config.get('profile_method', 'no_profile')}")
+        print(f"  model_type: {model_config.get('model_type') or model_config.get('profile_method', 'social')}")
         print(f"  experience_head_loss_type: {model_config.get('experience_head_loss_type', 'mse')}")
         print("✓ Model loaded successfully!")
     

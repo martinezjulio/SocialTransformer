@@ -89,7 +89,7 @@ test sets.
 
 - **Beta distribution outputs**: The model predicts Beta(α,β) parameters, not point estimates. Theta loss uses Beta NLL; belief loss uses log-MSE, KL, or cross-entropy against true pre-episode counts.
 - **Per-demonstrator predictions**: Beliefs are predicted separately per demonstrator (not averaged), capturing individual expertise differences.
-- **Profile methods**: `no_profile` (default, `SocialTransformer`), `cross_attention` and `agent_pooling` (`ProfileSocialTransformer`), `learned_profile` (`LearnedProfileTransformer`) — different ways to incorporate demonstrator identity into predictions. The `build_model` factory dispatches on this value.
+- **Model types** (CLI flag `--model_type`): `social` (default, `SocialTransformer`), `social_profile_cross_attention` and `social_profile_agent_pooling` (`ProfileSocialTransformer`), `social_profile_learned` (`LearnedProfileTransformer`) — different ways to incorporate demonstrator identity into predictions. The `build_model` factory dispatches on this value and also accepts the pre-rename strings (`no_profile`, `cross_attention`, `agent_pooling`, `learned_profile`) as aliases so old checkpoints/configs still load.
 - **Head input configurations** (profile variants only): Each prediction head (`theta`, `demo_beliefs`, `experience`) can use `query_only`, `profiles_only`, or `query_and_profiles`. The no-profile model hardcodes `query_only`.
 - **Masking strategies**: `all_bandits` vs `current_bandit_only` — whether to predict for all bandits or only the current round's bandit.
 

@@ -11,7 +11,7 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_04"
+DATASET_NAME="demonstrations_data_00"
 
 # Model hyperparameters
 BATCH_SIZE=128
@@ -32,9 +32,10 @@ DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_va
 EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
 MASKING_STRATEGY="current_bandit_only"  # Options: all_bandits, current_bandit_only
 
-# Profile and Experience Head Configuration
-PROFILE_METHOD="learned_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
-EXPERIENCE_HEAD_LOSS_WEIGHT=1.0  # Weight for direct experience head loss (only used for profile methods)
+# Model variant + Experience Head Configuration.
+# Override from the shell, e.g. `MODEL_TYPE=social bash scripts/run_training.sh`.
+MODEL_TYPE="${MODEL_TYPE:-social_profile_learned}"  # Options: social, social_profile_learned, social_profile_agent_pooling, social_profile_cross_attention
+EXPERIENCE_HEAD_LOSS_WEIGHT=1.0  # Weight for direct experience head loss (only used for profile model_types)
 EXPERIENCE_HEAD_LOSS_TYPE="mse"  # Options: mse, bce
 EXPERT_THRESHOLD=30.0  # Threshold for expert classification (only used for BCE loss)
 
@@ -96,7 +97,7 @@ echo "  Experience loss weight: $EXPERIENCE_LOSS_WEIGHT"
 echo "  Masking strategy: $MASKING_STRATEGY"
 echo ""
 echo "Profile Method & Experience Head:"
-echo "  Profile method: $PROFILE_METHOD"
+echo "  Model type: $MODEL_TYPE"
 echo "  Experience head loss weight: $EXPERIENCE_HEAD_LOSS_WEIGHT"
 echo "  Experience head loss type: $EXPERIENCE_HEAD_LOSS_TYPE"
 echo "  Expert threshold (for BCE): $EXPERT_THRESHOLD"
@@ -185,7 +186,7 @@ python src/train.py \
     --demo_belief_loss $DEMO_BELIEF_LOSS \
     --experience_loss_weight $EXPERIENCE_LOSS_WEIGHT \
     --masking_strategy $MASKING_STRATEGY \
-    --profile_method $PROFILE_METHOD \
+    --model_type $MODEL_TYPE \
     --experience_head_loss_weight $EXPERIENCE_HEAD_LOSS_WEIGHT \
     --experience_head_loss_type $EXPERIENCE_HEAD_LOSS_TYPE \
     --expert_threshold $EXPERT_THRESHOLD \

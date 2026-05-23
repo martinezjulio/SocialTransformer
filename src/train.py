@@ -304,7 +304,7 @@ def train_one_epoch(
     scheduler_type: str = "cosine",
     experience_loss_weight: float = 0.0,
     masking_strategy: str = "all_bandits",
-    profile_method: str = "no_profile",
+    model_type: str = "social",
     experience_head_loss_weight: float = 1.0,
     experience_head_loss_fn=None,
     num_arms: int = 12,
@@ -510,11 +510,16 @@ def main():
     parser.add_argument("--masking_strategy", type=str, default="all_bandits",
                         choices=["all_bandits", "current_bandit_only"],
                         help="Attention masking strategy: 'all_bandits' (see all prior context) or 'current_bandit_only' (see only current bandit's context)")
-    parser.add_argument("--profile_method", type=str, default="no_profile",
-                        choices=["no_profile", "learned_profile", "agent_pooling", "cross_attention"],
-                        help="Demonstrator profile extraction method")
+    parser.add_argument("--model_type", type=str, default="social",
+                        choices=[
+                            "social",
+                            "social_profile_learned",
+                            "social_profile_agent_pooling",
+                            "social_profile_cross_attention",
+                        ],
+                        help="SocialTransformer variant to instantiate")
     parser.add_argument("--experience_head_loss_weight", type=float, default=1.0,
-                        help="Weight for direct experience head loss (only used for profile methods)")
+                        help="Weight for direct experience head loss (only used for profile model_types)")
     parser.add_argument("--experience_head_loss_type", type=str, default="mse",
                         choices=["mse", "bce"],
                         help="Loss type for experience head: 'mse' (continuous N_tot) or 'bce' (expert vs novice)")
@@ -527,10 +532,10 @@ def main():
                         help="Input mode for theta head")
     parser.add_argument("--demo_beliefs_head_input", type=str, default="query_and_profiles",
                         choices=["query_only", "profiles_only", "query_and_profiles"],
-                        help="Input mode for demo beliefs head (ignored when profile_method='no_profile')")
+                        help="Input mode for demo beliefs head (ignored when model_type='social')")
     parser.add_argument("--experience_head_input", type=str, default="profiles_only",
                         choices=["query_only", "profiles_only", "query_and_profiles"],
-                        help="Input mode for experience head (ignored when profile_method='no_profile')")
+                        help="Input mode for experience head (ignored when model_type='social')")
     
     # Learning rate scheduler
     parser.add_argument("--use_scheduler", action="store_true", help="Use cosine annealing LR schedule with warmup")
@@ -662,9 +667,9 @@ def main():
             "optimizer": args.optimizer,
             "weight_decay": args.weight_decay,
             "architecture": {
-                "no_profile": "SocialTransformer",
-                "learned_profile": "LearnedProfileTransformer",
-            }.get(args.profile_method, "ProfileSocialTransformer"),
+                "social": "SocialTransformer",
+                "social_profile_learned": "LearnedProfileTransformer",
+            }.get(args.model_type, "ProfileSocialTransformer"),
             "dataset_name": args.dataset_name,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -683,7 +688,7 @@ def main():
             "demo_belief_loss": args.demo_belief_loss,
             "experience_loss_weight": args.experience_loss_weight,
             "masking_strategy": args.masking_strategy,
-            "profile_method": args.profile_method,
+            "model_type": args.model_type,
             "experience_head_loss_weight": args.experience_head_loss_weight,
             "experience_head_loss_type": args.experience_head_loss_type,
             "expert_threshold": args.expert_threshold,
@@ -772,7 +777,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
     model = build_model(
-        args.profile_method,
+        args.model_type,
         dict(
             num_arms=num_arms,
             num_agents=num_agents,
@@ -807,7 +812,7 @@ def main():
         'SPECIAL': SPECIAL,
         'LEARNER_RAW_ID': LEARNER_RAW_ID,
         'masking_strategy': args.masking_strategy,
-        'profile_method': args.profile_method,
+        'model_type': args.model_type,
         'env_theta_loss': args.env_theta_loss,
         'experience_head_loss_type': args.experience_head_loss_type,
         'theta_head_input': args.theta_head_input,
@@ -932,7 +937,7 @@ def main():
 
     
     # Get the experience head loss function (only for profile methods)
-    if args.profile_method != "no_profile":
+    if args.model_type != "social":
         experience_head_loss_fn = get_experience_head_loss(args.experience_head_loss_type)
         print(f"Using {args.experience_head_loss_type} loss for experience head")
         print(f"Experience head loss weight: {args.experience_head_loss_weight}")
@@ -967,7 +972,7 @@ def main():
             scheduler_type=args.scheduler if args.use_scheduler else "cosine",
             experience_loss_weight=args.experience_loss_weight,
             masking_strategy=args.masking_strategy,
-            profile_method=args.profile_method,
+            model_type=args.model_type,
             experience_head_loss_weight=args.experience_head_loss_weight,
             experience_head_loss_fn=experience_head_loss_fn,
             num_arms=num_arms

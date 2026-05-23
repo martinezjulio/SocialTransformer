@@ -1,6 +1,6 @@
 """SocialTransformer model package.
 
-Dispatch via ``build_model(profile_method, config)``; import concrete classes
+Dispatch via ``build_model(model_type, config)``; import concrete classes
 directly when you need them.
 """
 
@@ -24,20 +24,36 @@ __all__ = [
 ]
 
 
-def build_model(profile_method: str, config: Dict) -> nn.Module:
-    """Construct the right model class for the requested profile method.
+# Legacy → current value translation. Keeps pre-rename checkpoints and any
+# leftover sweep configs loadable; safe to remove once nothing in the wild
+# still uses the old names.
+_LEGACY_ALIASES = {
+    "no_profile":      "social",
+    "learned_profile": "social_profile_learned",
+    "agent_pooling":   "social_profile_agent_pooling",
+    "cross_attention": "social_profile_cross_attention",
+}
+
+
+def build_model(model_type: str, config: Dict) -> nn.Module:
+    """Construct the right model class for the requested model_type.
 
     Args:
-        profile_method: One of "no_profile", "cross_attention",
-            "agent_pooling", "learned_profile".
+        model_type: One of "social", "social_profile_learned",
+            "social_profile_agent_pooling", "social_profile_cross_attention".
+            The four pre-rename strings ("no_profile", "learned_profile",
+            "agent_pooling", "cross_attention") are also accepted via an
+            alias map and resolve to the corresponding new value.
         config: Dict with model hyperparameters. Required keys: num_arms,
             num_agents, num_bandits, num_demonstrators, d_model, nhead,
             num_layers, dim_feedforward, dropout. Optional keys (with sensible
             defaults): env_theta_loss, experience_head_loss_type,
             theta_head_input, demo_beliefs_head_input, experience_head_input.
             Extra keys are ignored; head-input keys are ignored when
-            profile_method='no_profile'.
+            model_type='social'.
     """
+    model_type = _LEGACY_ALIASES.get(model_type, model_type)
+
     common = dict(
         num_arms=config['num_arms'],
         num_agents=config['num_agents'],
@@ -51,7 +67,7 @@ def build_model(profile_method: str, config: Dict) -> nn.Module:
         env_theta_loss=config.get('env_theta_loss', 'bce'),
     )
 
-    if profile_method == "no_profile":
+    if model_type == "social":
         return SocialTransformer(**common)
 
     profiled_extras = dict(
@@ -61,15 +77,16 @@ def build_model(profile_method: str, config: Dict) -> nn.Module:
         experience_head_input=config.get('experience_head_input', 'profiles_only'),
     )
 
-    if profile_method == "learned_profile":
+    if model_type == "social_profile_learned":
         return LearnedProfileTransformer(**common, **profiled_extras)
 
-    if profile_method in ("cross_attention", "agent_pooling"):
+    if model_type in ("social_profile_cross_attention", "social_profile_agent_pooling"):
         return ProfileSocialTransformer(
-            profile_method=profile_method, **common, **profiled_extras
+            model_type=model_type, **common, **profiled_extras
         )
 
     raise ValueError(
-        f"Unknown profile_method '{profile_method}'. Must be one of "
-        "'no_profile', 'cross_attention', 'agent_pooling', 'learned_profile'."
+        f"Unknown model_type {model_type!r}. Must be one of "
+        "'social', 'social_profile_learned', 'social_profile_agent_pooling', "
+        "'social_profile_cross_attention'."
     )

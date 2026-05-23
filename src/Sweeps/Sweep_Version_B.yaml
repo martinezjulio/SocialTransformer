@@ -47,8 +47,8 @@ parameters:
     value: 1.0
   masking_strategy:
     value: "current_bandit_only" # ["all_bandits", "current_bandit_only"]
-  profile_method:
-    value: "no_profile" # ["no_profile", "learned_profile", "agent_pooling", "cross_attention"]
+  model_type:
+    value: "social" # ["social", "social_profile_learned", "social_profile_agent_pooling", "social_profile_cross_attention"]
   experience_head_loss_weight:
     value: 0.0
   experience_head_loss_type:

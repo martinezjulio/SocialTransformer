@@ -1,9 +1,9 @@
 """
 Profile-aware SocialTransformer variants.
 
-``ProfileSocialTransformer`` covers ``cross_attention`` and ``agent_pooling``.
-``LearnedProfileTransformer`` inserts learnable profile tokens into the input
-sequence pre-backbone.
+``ProfileSocialTransformer`` covers ``social_profile_cross_attention`` and
+``social_profile_agent_pooling``. ``LearnedProfileTransformer`` inserts
+learnable profile tokens into the input sequence pre-backbone.
 
 Both classes are self-contained: each owns its full ``__init__`` and ``forward``
 top-to-bottom, with no inheritance between them and no hooks on
@@ -94,15 +94,16 @@ class ProfileSocialTransformer(BaseSocialTransformer):
     """SocialTransformer with a post-backbone profile extractor and experience head.
 
     Self-contained: own ``__init__``, own ``forward``. Supports
-    ``profile_method='cross_attention'`` or ``'agent_pooling'``. For
-    ``'learned_profile'`` use ``LearnedProfileTransformer`` (different forward
-    because the sequence is mutated pre-backbone).
+    ``model_type='social_profile_cross_attention'`` or
+    ``'social_profile_agent_pooling'``. For ``'social_profile_learned'``
+    use ``LearnedProfileTransformer`` (different forward because the
+    sequence is mutated pre-backbone).
     """
 
     def __init__(
         self,
         *,
-        profile_method: str,
+        model_type: str,
         num_arms: int,
         num_agents: int,
         num_bandits: int,
@@ -119,7 +120,7 @@ class ProfileSocialTransformer(BaseSocialTransformer):
         experience_head_input: str = "profiles_only",
     ) -> None:
         super().__init__()
-        self.profile_method = profile_method
+        self.model_type = model_type
         self.num_arms = num_arms
         self.num_demonstrators = num_demonstrators
         self.env_theta_loss = env_theta_loss
@@ -128,14 +129,15 @@ class ProfileSocialTransformer(BaseSocialTransformer):
         self.embed = EventEmbedder(d_model, num_bandits, num_agents, num_arms, dropout)
         self.backbone = CausalTransformerEncoder(d_model, nhead, num_layers, dim_feedforward, dropout)
 
-        if profile_method == "agent_pooling":
+        if model_type == "social_profile_agent_pooling":
             self.profile_extractor: ProfileExtractor = AgentPoolingExtractor(num_demonstrators)
-        elif profile_method == "cross_attention":
+        elif model_type == "social_profile_cross_attention":
             self.profile_extractor = CrossAttentionExtractor(d_model, num_demonstrators, nhead)
         else:
             raise ValueError(
-                f"ProfileSocialTransformer supports 'cross_attention' or 'agent_pooling'; "
-                f"got '{profile_method}'. Use LearnedProfileTransformer for 'learned_profile'."
+                f"ProfileSocialTransformer supports 'social_profile_cross_attention' "
+                f"or 'social_profile_agent_pooling'; got {model_type!r}. "
+                "Use LearnedProfileTransformer for 'social_profile_learned'."
             )
 
         self.bandit_payoffs_head = BanditPayoffsHead(
@@ -260,7 +262,7 @@ class LearnedProfileTransformer(BaseSocialTransformer):
         experience_head_input: str = "profiles_only",
     ) -> None:
         super().__init__()
-        self.profile_method = "learned_profile"
+        self.model_type = "social_profile_learned"
         self.num_arms = num_arms
         self.num_demonstrators = num_demonstrators
         self.env_theta_loss = env_theta_loss
