@@ -27,7 +27,7 @@ export NUM_ROLLOUTS
 
 # Set parameters
 DATASET_NAME="demonstrations_data_00"
-TEST_MANIFEST="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}/test/manifest.json"
+TEST_DATA_DIR="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}"
 # Note: Output paths managed automatically by eval.py ($OUTPUT_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
 MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
@@ -60,7 +60,7 @@ CHECKPOINT_SOURCE="wandb_artifact"
 echo "=================================="
 echo "Evaluation Configuration"
 echo "=================================="
-echo "Test manifest: $TEST_MANIFEST"
+echo "Test data dir: $TEST_DATA_DIR (Arrow split at $TEST_DATA_DIR/test/)"
 echo "Output path: \$OUTPUT_DATA_DIR/eval/{data,figures,metadata}/"
 echo "Device: $DEVICE"
 echo "Rollouts (N): $NUM_ROLLOUTS"
@@ -81,9 +81,10 @@ fi
 echo "=================================="
 echo ""
 
-# Check if test manifest exists
-if [ ! -f "$TEST_MANIFEST" ]; then
-    echo "ERROR: Test manifest not found at $TEST_MANIFEST"
+# Check that the Arrow test split exists
+if [ ! -d "$TEST_DATA_DIR/test" ]; then
+    echo "ERROR: Test Arrow dataset not found at $TEST_DATA_DIR/test"
+    echo "(Re-generate the dataset with scripts/generate_simulation.sh)"
     exit 1
 fi
 
@@ -132,7 +133,7 @@ fi
 
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     python src/eval/eval.py \
-        --test_manifest "$TEST_MANIFEST" \
+        --test_data_dir "$TEST_DATA_DIR" \
         --checkpoint_path "$CHECKPOINT_PATH" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
@@ -140,7 +141,7 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/eval/eval.py \
-        --test_manifest "$TEST_MANIFEST" \
+        --test_data_dir "$TEST_DATA_DIR" \
         --wandb_artifact "$WANDB_ARTIFACT" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
@@ -148,7 +149,7 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         $PROFILE_METHOD_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
     python src/eval/eval.py \
-        --test_manifest "$TEST_MANIFEST" \
+        --test_data_dir "$TEST_DATA_DIR" \
         --wandb_sweep "$WANDB_SWEEP" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \

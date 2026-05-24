@@ -23,9 +23,11 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from datasets import load_from_disk
+
 from models import BaseSocialTransformer
 from data.transforms import BeliefNormalizer
-from data.dataloader import BanditSequenceDataset
+from data.dataloader import SEGMENT_TYPE_TO_ID, ID_TO_SEGMENT_TYPE
 from utils import get_special_characters, setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml
 
 # Set style for plots
@@ -37,131 +39,81 @@ SPECIAL = get_special_characters()
 
 
 def create_segment_mask_single(
-    segment_boundaries: List[int], 
-    cutoff: int, 
-    seq_len: int, 
+    segment_boundaries: List[int],
+    cutoff: int,
+    seq_len: int,
     device: torch.device,
     masking_strategy: str = "all_bandits",
-    segment_info: List[Dict] = None,
-    round_bandit_map: List[int] = None
+    segment_round: List[int] = None,
+    round_bandit_map: List[int] = None,
 ) -> torch.Tensor:
     """
-    Create attention mask for single example with segment cutoff.
-    
+    Create attention mask for a single example with a segment cutoff.
+
     Args:
-        segment_boundaries: List of segment start positions
-        cutoff: Number of segments to make visible (1-indexed)
-        seq_len: Total sequence length
-        device: torch device
-        masking_strategy: "all_bandits" or "current_bandit_only"
-        segment_info: List of segment metadata dicts
-        round_bandit_map: List mapping round index to bandit ID
-        
+        segment_boundaries: list of segment start positions
+        cutoff:             number of segments to make visible (1-indexed)
+        seq_len:            total sequence length
+        device:             torch device
+        masking_strategy:   "all_bandits" or "current_bandit_only"
+        segment_round:      list of round indices, one per segment (replaces
+                            the old segment_info list-of-dicts; only the
+                            "round" field is needed here)
+        round_bandit_map:   list mapping round index → bandit id
+
     Returns:
-        mask: [seq_len, seq_len] - True = masked (not attended to), False = visible
+        mask: [seq_len, seq_len] — True = masked, False = visible.
     """
-    # Start with causal mask
     mask = torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
-    
-    # Get cutoff position
-    if cutoff < len(segment_boundaries):
-        cutoff_pos = segment_boundaries[cutoff]
-    else:
-        cutoff_pos = seq_len  # All visible
-    
-    # Mask out everything from cutoff_pos onward
+
+    cutoff_pos = segment_boundaries[cutoff] if cutoff < len(segment_boundaries) else seq_len
     if cutoff_pos < seq_len:
         mask[:, cutoff_pos:] = True
-    
-    # Additional masking for "current_bandit_only" strategy
-    if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
-        # Determine the target bandit from the cutoff segment
-        seg_info_target = segment_info[cutoff - 1]
-        target_round = seg_info_target["round"]
+
+    if masking_strategy == "current_bandit_only" and segment_round is not None and round_bandit_map is not None:
+        target_round = int(segment_round[cutoff - 1])
         target_bandit = int(round_bandit_map[target_round])
-        
-        # Mask out all segments that belong to different bandits
+
         for seg_idx in range(cutoff):
-            seg_info_i = segment_info[seg_idx]
-            round_i = seg_info_i["round"]
+            round_i = int(segment_round[seg_idx])
             bandit_i = int(round_bandit_map[round_i])
-            
             if bandit_i != target_bandit:
-                # Mask this entire segment
                 start_pos = segment_boundaries[seg_idx]
                 if seg_idx + 1 < len(segment_boundaries):
                     end_pos = segment_boundaries[seg_idx + 1]
                 else:
                     end_pos = cutoff_pos
-                
-                # Mask all positions from attending to this segment
                 mask[:, start_pos:end_pos] = True
-    
+
     return mask
 
 
-def prepare_single_example_batch(
-    example: Dict,
-    num_arms: int,
-    num_agents: int,
-    num_bandits: int,
-    SPECIAL: Dict[str, int]
-) -> Dict[str, torch.Tensor]:
+def prepare_single_example_batch(example: Dict) -> Dict[str, torch.Tensor]:
+    """Wrap a pre-encoded Arrow row as a batch of one for model inference.
+
+    The row already carries the 5 token channels in their final encoded form
+    (build_arrow_row did the work at dataset-generation time), so this is just
+    add-a-batch-dimension + emit a trivial pad_mask.
     """
-    Prepare a single example as a batch for model inference.
-    Reuses logic from BanditSequenceDataset.__getitem__.
-    """
-    from data.dataloader import _remap_agent_ids_local
-    
-    # Remap agent ids
-    events = example["events"]
-    remapped_events, _ = _remap_agent_ids_local(events, num_agents=num_agents)
-    
-    # Encode events (includes QUERY tokens from raw data)
-    bandit_ids = []
-    agent_ids = []
-    action_ids = []
-    reward_ids = []
-    special_ids = []
-    
-    for (b, ag, a, r) in remapped_events:
-        assert 0 <= b < num_bandits, f"Invalid bandit_id {b}, must be in [0, {num_bandits})"
-        # Check if this is structural token (agent_id was set to num_agents in remapping)
-        if ag == num_agents:
-            # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)
-            if a == -2:
-                # QUERY token
-                bandit_ids.append(b)
-                agent_ids.append(num_agents)  # padding
-                action_ids.append(num_arms)   # padding
-                reward_ids.append(2)          # padding
-                special_ids.append(SPECIAL["QUERY"])
-            else:
-                # BANDIT_SEP token
-                bandit_ids.append(b)
-                agent_ids.append(num_agents)  # padding
-                action_ids.append(num_arms)   # padding
-                reward_ids.append(2)          # padding
-                special_ids.append(SPECIAL["BANDIT_SEP"])
-        else:
-            # Regular event
-            bandit_ids.append(b)
-            agent_ids.append(ag)
-            action_ids.append(a if (0 <= a < num_arms) else num_arms)
-            reward_ids.append(r if r in (0, 1) else 2)
-            special_ids.append(SPECIAL["NONE"])
-    
-    # Convert to tensors with batch dimension
-    batch = {
-        "bandit_ids": torch.tensor(bandit_ids, dtype=torch.long).unsqueeze(0),  # [1, T]
-        "agent_ids": torch.tensor(agent_ids, dtype=torch.long).unsqueeze(0),
-        "action_ids": torch.tensor(action_ids, dtype=torch.long).unsqueeze(0),
-        "reward_ids": torch.tensor(reward_ids, dtype=torch.long).unsqueeze(0),
-        "special_ids": torch.tensor(special_ids, dtype=torch.long).unsqueeze(0),
-        "pad_mask": torch.zeros(1, len(bandit_ids), dtype=torch.bool),
-    }
-    
+    batch: Dict[str, torch.Tensor] = {}
+    for k in ("bandit_ids", "agent_ids", "action_ids", "reward_ids", "special_ids"):
+        batch[k] = torch.as_tensor(example[k], dtype=torch.long).unsqueeze(0)  # [1, T]
+    batch["pad_mask"] = torch.zeros(1, batch["bandit_ids"].shape[1], dtype=torch.bool)
     return batch
+
+
+def _ensure_tensor(x, dtype=torch.float32) -> torch.Tensor:
+    """HF returns torch tensors for set_format columns and Python lists/numpy for
+    the rest; this normalizes either input to a tensor of the requested dtype."""
+    return x if isinstance(x, torch.Tensor) else torch.as_tensor(x, dtype=dtype)
+
+
+def _derive_N_tot(alpha: torch.Tensor, beta: torch.Tensor, alpha0: float, beta0: float, K: int) -> float:
+    """Recover demonstrator pre-episode experience count from the stored
+    (alpha, beta) shapes. Mirrors the formula already used elsewhere in this
+    file (line 345-349 of the pre-Arrow version) so we don't need to carry
+    N_tot as a separate column in the Arrow schema."""
+    return float((alpha.sum() + beta.sum() - alpha0 * K - beta0 * K).item())
 
 
 def evaluate_single_example(
@@ -177,123 +129,143 @@ def evaluate_single_example(
     beta0: float = 1.0,
     masking_strategy: str = "all_bandits"
 ) -> List[Dict]:
-    """
-    Evaluate model on single example at multiple segment cutoffs.
-    Returns list of metric dicts, one per cutoff position.
-    """
-    # Get ground truth
-    labels = example["labels"]
-    bandits = labels["bandits"]
-    num_segments = len(example["segment_info"])  # segment_info, not segment_boundaries!
+    """Evaluate model on a single Arrow row at multiple segment cutoffs.
 
-    # Determine game_sequence (condition) from first demo segment ordering
-    first_demo_id = None
-    for seg in example["segment_info"]:
-        if seg["type"] == "demo":
-            first_demo_id = seg["agent"] - 1  # convert agent_id (1,2) to demo_id (0,1)
+    Each row arrives pre-encoded (bandit_ids/agent_ids/action_ids/reward_ids/
+    special_ids are already the tokenized streams). Labels arrive as
+    fixed-shape tensors (y_thetas, y_alpha_demo, y_beta_demo). Segment metadata
+    arrives as three parallel lists (segment_round/segment_type_id/segment_agent)
+    instead of the old segment_info list-of-dicts.
+    """
+    # Pull labels straight from the Arrow row — no `labels["bandits"]` lookup.
+    y_thetas     = _ensure_tensor(example["y_thetas"])      # [num_bandits, K]
+    y_alpha_demo = _ensure_tensor(example["y_alpha_demo"])  # [num_bandits, D, K]
+    y_beta_demo  = _ensure_tensor(example["y_beta_demo"])   # [num_bandits, D, K]
+
+    segment_round    = list(example["segment_round"])
+    segment_type_id  = list(example["segment_type_id"])
+    segment_agent    = list(example["segment_agent"])
+    segment_boundaries = list(example["segment_boundaries"])
+    round_bandit_map   = list(example["round_bandit_map"])
+
+    # Encoded token streams (used both for the model forward and for
+    # reconstructing per-segment reward/payoff sums).
+    bandit_ids_list = list(example["bandit_ids"])
+    action_ids_list = list(example["action_ids"])
+    reward_ids_list = list(example["reward_ids"])
+    special_ids_list = list(example["special_ids"])
+
+    num_segments = len(segment_round)
+    K = num_arms
+
+    # Determine game_sequence (expert-first vs novice-first) from the first
+    # demo segment, exactly as the pre-Arrow code did — segment_agent maps
+    # 1-indexed agent ids back to 0-indexed demo ids.
+    first_demo_agent = None
+    for i in range(num_segments):
+        if segment_type_id[i] == SEGMENT_TYPE_TO_ID["demo"]:
+            first_demo_agent = int(segment_agent[i]) - 1
             break
 
-    # Identify expert by N_tot from first bandit (consistent across bandits)
-    demo0_N = bandits[0]["demonstrators"][0]["N_tot"]
-    demo1_N = bandits[0]["demonstrators"][1]["N_tot"]
-    example_expert_id = 0 if demo0_N > demo1_N else 1
+    # Identify expert by N_tot from the first bandit (consistent across bandits).
+    demo0_N_all = _derive_N_tot(y_alpha_demo[0, 0], y_beta_demo[0, 0], alpha0, beta0, K)
+    demo1_N_all = _derive_N_tot(y_alpha_demo[0, 1], y_beta_demo[0, 1], alpha0, beta0, K)
+    example_expert_id = 0 if demo0_N_all > demo1_N_all else 1
 
-    if first_demo_id == example_expert_id:
-        game_sequence = "expert-play-novice-play-choice"
-    else:
-        game_sequence = "novice-play-expert-play-choice"
+    game_sequence = (
+        "expert-play-novice-play-choice"
+        if first_demo_agent == example_expert_id
+        else "novice-play-expert-play-choice"
+    )
 
-    # Determine segment_order: watch-first (demo before learner) vs play-first (learner before demo)
+    # Determine segment_order: watch-first (demo before learner) vs play-first.
     first_non_structural = None
-    for seg in example["segment_info"]:
-        if seg["type"] in ("demo", "learner"):
-            first_non_structural = seg["type"]
+    demo_id_v   = SEGMENT_TYPE_TO_ID["demo"]
+    learner_id_v = SEGMENT_TYPE_TO_ID["learner"]
+    for i in range(num_segments):
+        if segment_type_id[i] in (demo_id_v, learner_id_v):
+            first_non_structural = segment_type_id[i]
             break
-    segment_order = "watch-first" if first_non_structural == "demo" else "play-first"
+    segment_order = "watch-first" if first_non_structural == demo_id_v else "play-first"
 
     results = []
-    
-    # Prepare batch once
-    batch = prepare_single_example_batch(
-        example, num_arms, num_agents, num_bandits, SPECIAL
-    )
-    
-    # Move to device
+
+    batch = prepare_single_example_batch(example)
     for k in batch:
         batch[k] = batch[k].to(device)
-    
     seq_len = batch["bandit_ids"].shape[1]
-    
+
     # Evaluate at each possible cutoff
     for cutoff in range(1, num_segments + 1):
-        seg_info = example["segment_info"][cutoff - 1]
-        round_idx = seg_info["round"]
-        bandit_id = int(example["round_bandit_map"][round_idx])
+        seg_type_id = int(segment_type_id[cutoff - 1])
+        seg_type_str = ID_TO_SEGMENT_TYPE[seg_type_id]
+        seg_agent = int(segment_agent[cutoff - 1])
+        round_idx = int(segment_round[cutoff - 1])
+        bandit_id = int(round_bandit_map[round_idx])
 
-        # Mean reward over the 6 trials of the game ending at this cutoff
         # Per-segment rewards (demo / learner only; bandit_sep and query are
         # structural-only and have no reward):
-        #   * segment_total_reward    — observed 0/1 sum over the trials,
-        #     in {0..n_trials_per_game}
-        #   * segment_expected_reward — sum over the trials of the TRUE payoff
-        #     of the arm chosen on each trial, in [0, n_trials_per_game].
-        #     This strips outcome noise: two participants who both reliably
-        #     pick the same arm get identical expected reward even if their
-        #     observed 0/1 trajectories diverge.
-        # Slice the example's raw events for this segment using the same
-        # boundary convention used for tokenization.
-        if seg_info["type"] in ("demo", "learner"):
-            start_pos = example["segment_boundaries"][cutoff - 1]
-            end_pos = example["segment_boundaries"][cutoff]
-            seg_events = example["events"][start_pos:end_pos]
-            if seg_events:
-                segment_total_reward = float(
-                    sum(int(ev[3]) for ev in seg_events)
-                )
-                segment_expected_reward = float(
-                    sum(float(bandits[ev[0]]["theta"][ev[2]]) for ev in seg_events)
-                )
+        #   * segment_total_reward    — observed 0/1 sum over real-event trials
+        #   * segment_expected_reward — sum of TRUE payoffs of the chosen arms,
+        #     which strips outcome noise across participants picking the same arm
+        # We derive these from the encoded token streams (real events are at
+        # positions where special_ids == SPECIAL["NONE"]), avoiding the need to
+        # carry raw `events` tuples in the Arrow schema.
+        if seg_type_id in (demo_id_v, learner_id_v):
+            start_pos = segment_boundaries[cutoff - 1]
+            end_pos   = segment_boundaries[cutoff] if cutoff < len(segment_boundaries) else seq_len
+            tot_r = 0.0
+            exp_r = 0.0
+            n_real = 0
+            for t in range(start_pos, end_pos):
+                if special_ids_list[t] == SPECIAL["NONE"]:
+                    b_t = int(bandit_ids_list[t])
+                    a_t = int(action_ids_list[t])
+                    r_t = int(reward_ids_list[t])
+                    tot_r += float(r_t)
+                    exp_r += float(y_thetas[b_t, a_t].item())
+                    n_real += 1
+            if n_real > 0:
+                segment_total_reward = tot_r
+                segment_expected_reward = exp_r
             else:
-                segment_total_reward = float('nan')
-                segment_expected_reward = float('nan')
+                segment_total_reward = float("nan")
+                segment_expected_reward = float("nan")
         else:
-            segment_total_reward = float('nan')
-            segment_expected_reward = float('nan')
-        
-        # Create attention mask for this cutoff
+            segment_total_reward = float("nan")
+            segment_expected_reward = float("nan")
+
+        # Attention mask for this cutoff
         attn_mask = create_segment_mask_single(
-            example["segment_boundaries"],
+            segment_boundaries,
             cutoff,
             seq_len,
             device,
             masking_strategy=masking_strategy,
-            segment_info=example["segment_info"],
-            round_bandit_map=example["round_bandit_map"]
+            segment_round=segment_round,
+            round_bandit_map=round_bandit_map,
         )
-        
+
         # Run model
         model.eval()
         with torch.no_grad():
             outputs = model(batch, custom_attn_mask=attn_mask)
-        
-        # Get ground truth for this bandit (bandits is a list indexed by bandit_id)
-        bandit_info = bandits[bandit_id]
-        true_theta = torch.tensor(bandit_info["theta"], dtype=torch.float32)
-        
-        # Identify which demo_id is expert vs novice by checking N_tot
-        # Expert has high N_tot, novice has low N_tot
-        demo0_N = bandit_info["demonstrators"][0]["N_tot"]
-        demo1_N = bandit_info["demonstrators"][1]["N_tot"]
-        
+
+        # Ground truth for this bandit
+        true_theta = y_thetas[bandit_id]
+
+        # Identify expert/novice by N_tot for THIS bandit.
+        demo0_N = _derive_N_tot(y_alpha_demo[bandit_id, 0], y_beta_demo[bandit_id, 0], alpha0, beta0, K)
+        demo1_N = _derive_N_tot(y_alpha_demo[bandit_id, 1], y_beta_demo[bandit_id, 1], alpha0, beta0, K)
         if demo0_N > demo1_N:
             expert_id, novice_id = 0, 1
         else:
             expert_id, novice_id = 1, 0
-        
-        true_alpha_expert = torch.tensor(bandit_info["demonstrators"][expert_id]["alpha0"], dtype=torch.float32)
-        true_beta_expert = torch.tensor(bandit_info["demonstrators"][expert_id]["beta0"], dtype=torch.float32)
-        true_alpha_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["alpha0"], dtype=torch.float32)
-        true_beta_novice = torch.tensor(bandit_info["demonstrators"][novice_id]["beta0"], dtype=torch.float32)
+
+        true_alpha_expert = y_alpha_demo[bandit_id, expert_id]
+        true_beta_expert  = y_beta_demo[bandit_id, expert_id]
+        true_alpha_novice = y_alpha_demo[bandit_id, novice_id]
+        true_beta_novice  = y_beta_demo[bandit_id, novice_id]
         
         # Get demo predictions for this bandit
         # outputs are [B, num_queries, K] or [B, num_queries, D, K]
@@ -353,8 +325,8 @@ def evaluate_single_example(
             "cutoff": cutoff,
             "game_sequence": game_sequence,
             "segment_order": segment_order,
-            "segment_type": seg_info["type"],
-            "agent": seg_info.get("agent", -1),
+            "segment_type": seg_type_str,
+            "agent": seg_agent,
             "round_index": round_idx,
             "bandit_id": int(bandit_id),
             "expert_demo_id": expert_id,
@@ -425,7 +397,7 @@ def evaluate_single_example(
     return results
 
 
-def build_trial_rows_for_example(example: Dict, ex_idx: int) -> List[Dict]:
+def build_trial_rows_for_example(example: Dict, ex_idx: int, alpha0: float = 1.0, beta0: float = 1.0) -> List[Dict]:
     """
     Emit one row per simulator trial for a single synthetic example, matching
     the schema of experiment_trial_predictions.csv (from run_inference.py).
@@ -433,22 +405,38 @@ def build_trial_rows_for_example(example: Dict, ex_idx: int) -> List[Dict]:
     trained model running Thompson sampling, so prior-source distinctions
     don't apply: every row is tagged with learner_segment_input='model' and
     beta_method='simulator', and the per-trial posterior columns are empty.
-    Consumers that need per-prior groupings should use the human-data pipeline.
-    """
-    events = example["events"]
-    segment_info = example["segment_info"]
-    boundaries = example["segment_boundaries"]
-    round_bandit_map = example["round_bandit_map"]
-    bandits = example["labels"]["bandits"]
 
-    # game_sequence + expert/novice mapping (reuses eval logic)
+    Operates on the new Arrow row schema: flattened segment_* columns,
+    fixed-shape y_thetas / y_alpha_demo / y_beta_demo, and the encoded token
+    streams in place of raw `events` tuples.
+    """
+    segment_round    = list(example["segment_round"])
+    segment_type_id  = list(example["segment_type_id"])
+    segment_agent    = list(example["segment_agent"])
+    boundaries       = list(example["segment_boundaries"])
+    round_bandit_map = list(example["round_bandit_map"])
+
+    bandit_ids_list  = list(example["bandit_ids"])
+    action_ids_list  = list(example["action_ids"])
+    reward_ids_list  = list(example["reward_ids"])
+    special_ids_list = list(example["special_ids"])
+
+    y_thetas     = _ensure_tensor(example["y_thetas"])
+    y_alpha_demo = _ensure_tensor(example["y_alpha_demo"])
+    y_beta_demo  = _ensure_tensor(example["y_beta_demo"])
+
+    demo_id_v   = SEGMENT_TYPE_TO_ID["demo"]
+    learner_id_v = SEGMENT_TYPE_TO_ID["learner"]
+    K = y_thetas.shape[1]
+
+    # game_sequence + expert/novice mapping
     first_demo_agent = None
-    for seg in segment_info:
-        if seg["type"] == "demo":
-            first_demo_agent = seg["agent"] - 1  # agent 1/2 -> demo_id 0/1
+    for i, t in enumerate(segment_type_id):
+        if t == demo_id_v:
+            first_demo_agent = int(segment_agent[i]) - 1
             break
-    demo0_N = bandits[0]["demonstrators"][0]["N_tot"]
-    demo1_N = bandits[0]["demonstrators"][1]["N_tot"]
+    demo0_N = _derive_N_tot(y_alpha_demo[0, 0], y_beta_demo[0, 0], alpha0, beta0, K)
+    demo1_N = _derive_N_tot(y_alpha_demo[0, 1], y_beta_demo[0, 1], alpha0, beta0, K)
     expert_demo_id = 0 if demo0_N > demo1_N else 1
     game_sequence = (
         "expert-play-novice-play-choice"
@@ -464,37 +452,47 @@ def build_trial_rows_for_example(example: Dict, ex_idx: int) -> List[Dict]:
     # in-round index so we can assign a contiguous game_index = 4*round + idx.
     round_game_counter: Dict[int, int] = {}
     rows: List[Dict] = []
-    for seg_idx, seg in enumerate(segment_info):
-        if seg["type"] not in ("demo", "learner"):
+    n_segments = len(segment_type_id)
+    seq_len = len(bandit_ids_list)
+    for seg_idx in range(n_segments):
+        seg_type_id = int(segment_type_id[seg_idx])
+        if seg_type_id not in (demo_id_v, learner_id_v):
             continue
-        round_idx = seg["round"]
+
+        round_idx = int(segment_round[seg_idx])
         in_round = round_game_counter.get(round_idx, 0)
         game_index = 4 * round_idx + in_round
         round_game_counter[round_idx] = in_round + 1
 
         start = boundaries[seg_idx]
-        end = boundaries[seg_idx + 1] if (seg_idx + 1) < len(boundaries) else len(events)
-        seg_events = events[start:end]
-        if not seg_events:
+        end   = boundaries[seg_idx + 1] if (seg_idx + 1) < len(boundaries) else seq_len
+
+        # Filter the encoded slice down to real events (special_ids == NONE).
+        seg_real = [
+            (int(bandit_ids_list[t]), int(action_ids_list[t]), int(reward_ids_list[t]))
+            for t in range(start, end)
+            if special_ids_list[t] == SPECIAL["NONE"]
+        ]
+        if not seg_real:
             continue
 
-        if seg["type"] == "demo":
+        if seg_type_id == demo_id_v:
             game = "watch"
-            demo_id = seg["agent"] - 1
+            demo_id = int(segment_agent[seg_idx]) - 1
             demonstrator_type = "expert" if demo_id == expert_demo_id else "novice"
         else:
             game = "play"
             demonstrator_type = float("nan")
 
-        bandit_id = int(seg_events[0][0])
-        zone_bandit = ",".join(f"{p:.6g}" for p in bandits[bandit_id]["theta"])
+        bandit_id = seg_real[0][0]
+        zone_bandit = ",".join(f"{p:.6g}" for p in y_thetas[bandit_id].tolist())
 
-        for ev in seg_events:
+        for (_b, a, r) in seg_real:
             rows.append({
                 "session_id": session_id,
                 "session_index": session_index,
                 "anonymous_id": anonymous_id,
-                "position": int(ev[2]),
+                "position": a,
                 "action": "shoot",
                 "game": game,
                 "game_sequence": game_sequence,
@@ -503,7 +501,7 @@ def build_trial_rows_for_example(example: Dict, ex_idx: int) -> List[Dict]:
                 "demonstrator_type": demonstrator_type,
                 "zone_bandit": zone_bandit,
                 "zone_global_index": int(round_bandit_map[round_idx]),
-                "reward_generated": bool(ev[3]),
+                "reward_generated": bool(r),
                 "rollout_id": 0,
                 "learner_segment_input": "model",
                 "beta_method": "simulator",
@@ -751,8 +749,9 @@ def plot_evaluation_results(df: pd.DataFrame, output_dir: str = "figures/evaluat
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate model on test set")
-    parser.add_argument("--test_manifest", type=str, required=True,
-        help="Path to test manifest.json")
+    parser.add_argument("--test_data_dir", type=str, required=True,
+        help="Path to the dataset root (parent of train/val/test/); the test "
+             "split is loaded from <test_data_dir>/test/ as a HF Arrow dataset.")
     parser.add_argument("--output_path", type=str,
         default="data/evaluation/test_cutoff_model_predictions.csv",
         help="Path to save per-cutoff evaluation results")
@@ -787,7 +786,7 @@ def main():
     metadata = {
         'script': 'eval.py',
         'command': ' '.join(sys.argv),
-        'test_manifest': args.test_manifest,
+        'test_data_dir': args.test_data_dir,
     }
     write_run_yaml(eval_dir, metadata, subdir='metadata')
     write_config_yaml(eval_dir, vars(args), subdir='metadata')
@@ -862,36 +861,27 @@ def main():
             masking_strategy = checkpoint.get('config', {}).get('masking_strategy', 'all_bandits')
             print(f"\n✓ Using masking strategy from checkpoint: {masking_strategy}")
     
-        # Load test data
+        # Load test data (mmap-backed Arrow — random row access is cheap, no
+        # full-dataset materialization).
         print("\n" + "="*60)
         print("Loading Test Data")
         print("="*60)
-    
-        manifest_path = args.test_manifest
-        print(f"Reading manifest: {manifest_path}")
-    
-        with open(manifest_path, 'r') as f:
-            manifest = json.load(f)
-    
-        test_dir = os.path.dirname(manifest_path)
-        shards = manifest['shards']
-    
-        print(f"Found {len(shards)} shards")
-        print(f"Total examples: {sum(s['num_examples'] for s in shards)}")
-    
-        # Load examples from shards
-        all_examples = []
-        for shard_info in shards:
-            shard_path = os.path.join(test_dir, shard_info['path'])
-            print(f"  Loading {shard_path}...")
-            examples = torch.load(shard_path, map_location='cpu')
-            all_examples.extend(examples)
-    
+
+        test_split_dir = os.path.join(args.test_data_dir, "test")
+        print(f"Loading Arrow dataset from {test_split_dir}")
+        all_examples = load_from_disk(test_split_dir)
+        # Standard torch format on the fixed-shape label columns; variable-length
+        # sequence columns stay as Python lists.
+        all_examples.set_format(
+            type="torch",
+            columns=["y_thetas", "y_alpha_demo", "y_beta_demo"],
+            output_all_columns=True,
+        )
         print(f"✓ Loaded {len(all_examples)} examples")
-    
+
         # Limit examples if requested
         if args.max_examples:
-            all_examples = all_examples[:args.max_examples]
+            all_examples = all_examples.select(range(args.max_examples))
             print(f"  Evaluating on {len(all_examples)} examples (limited)")
     
         # Run evaluation
@@ -946,7 +936,7 @@ def main():
         trial_rows: List[Dict] = []
         for ex_idx, example in enumerate(all_examples):
             try:
-                trial_rows.extend(build_trial_rows_for_example(example, ex_idx))
+                trial_rows.extend(build_trial_rows_for_example(example, ex_idx, alpha0=alpha0, beta0=beta0))
             except Exception as e:
                 print(f"  Warning: Failed to build trial rows for example {ex_idx}: {e}")
                 continue

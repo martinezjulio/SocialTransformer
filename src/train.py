@@ -16,7 +16,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-from data.dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
+from data.dataloader import (
+    load_arrow_split,
+    make_arrow_loader,
+    SPECIAL,
+    LEARNER_RAW_ID,
+    SEGMENT_TYPE_TO_ID,
+)
 from models import build_model, BaseSocialTransformer
 from data.transforms import BeliefNormalizer
 from models.losses import get_env_theta_loss, get_demo_belief_loss, requires_normalization, experience_loss_log, get_experience_head_loss
@@ -82,21 +88,23 @@ def create_segment_mask(
     seq_len: int,
     device: torch.device,
     masking_strategy: str = "all_bandits",
-    segment_info: list = None,
+    segment_round: list = None,
     round_bandit_map: torch.Tensor = None
 ) -> torch.Tensor:
     """
     Create attention mask that makes only visible segments accessible.
-    
+
     Args:
         segment_boundaries: [B, max_segments] - position of each segment start
         cutoffs: List[int] - how many segments visible per example (1-indexed)
         seq_len: int - total sequence length
         device: torch device
         masking_strategy: "all_bandits" or "current_bandit_only"
-        segment_info: List[List[Dict]] - segment metadata (one list per batch item)
+        segment_round: List[List[int]] - per-example list of round indices,
+            one entry per segment (replaces the old segment_info list-of-dicts;
+            only the "round" field was ever read here)
         round_bandit_map: [B, num_rounds] - which bandit for each round
-    
+
     Returns:
         mask: [seq_len, seq_len] or [B, seq_len, seq_len] - causal mask with segment cutoffs
             True = masked (not attended to), False = visible
@@ -122,16 +130,14 @@ def create_segment_mask(
             batch_mask[b, :, cutoff_pos:] = True  # Can't attend to future
         
         # Additional masking for "current_bandit_only" strategy
-        if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
+        if masking_strategy == "current_bandit_only" and segment_round is not None and round_bandit_map is not None:
             # Determine the target bandit from the cutoff segment
-            seg_info_target = segment_info[b][visible_segs - 1]
-            target_round = seg_info_target["round"]
+            target_round = segment_round[b][visible_segs - 1]
             target_bandit = int(round_bandit_map[b, target_round].item())
-            
+
             # Mask out all segments that belong to different bandits
             for seg_idx in range(visible_segs):
-                seg_info_i = segment_info[b][seg_idx]
-                round_i = seg_info_i["round"]
+                round_i = segment_round[b][seg_idx]
                 bandit_i = int(round_bandit_map[b, round_i].item())
                 
                 if bandit_i != target_bandit:
@@ -263,12 +269,12 @@ def save_checkpoint(
 
 
 def log_dataset_artifact(wandb_run, dataset_path: str, dataset_meta: dict) -> None:
-    """Log the training dataset's metadata files as a wandb artifact (type='dataset').
+    """Log the training dataset's metadata as a wandb artifact (type='dataset').
 
-    Attaches dataset_metadata.json and the per-split manifest.json files
-    (small JSON only — never the large .pt shards). Re-runs on the same
-    dataset reuse the same artifact name; wandb content-hash dedup avoids
-    spurious new versions when the files are unchanged.
+    Attaches the root metadata.json only — never the Arrow data files themselves
+    (they live on the workstation's TRAINING_DATA_ROOT_DIR; the artifact tracks
+    *which* dataset was used, not the rows). wandb content-hash dedup avoids
+    spurious new versions when metadata.json is unchanged across re-runs.
     """
     if wandb_run is None:
         return
@@ -281,31 +287,27 @@ def log_dataset_artifact(wandb_run, dataset_path: str, dataset_meta: dict) -> No
         artifact = wandb.Artifact(
             name=artifact_name,
             type="dataset",
-            description=f"Training dataset '{ds_basename}' metadata + split manifests",
+            description=f"Training dataset '{ds_basename}' (mmap-backed Arrow)",
             metadata={
                 "dataset_path": dataset_path,
                 "dataset_name": dataset_meta.get("dataset_name", ds_basename),
                 "generated_at": dataset_meta.get("generated_at"),
+                "format": dataset_meta.get("format", "huggingface_arrow"),
                 "K": params.get("K"),
                 "num_demonstrators": params.get("num_demonstrators"),
                 "num_rounds": params.get("num_rounds"),
                 "num_train_runs": params.get("num_train_runs"),
                 "num_valid_runs": params.get("num_valid_runs"),
                 "num_test_runs": params.get("num_test_runs"),
-                "expert_N_max": params.get("expert_N_max", params.get("N_max")),
+                "expert_N_max": params.get("expert_N_max"),
             },
         )
 
-        # Top-level dataset metadata file
-        meta_file = os.path.join(dataset_path, "dataset_metadata.json")
+        # Root metadata.json (the only on-disk file we attach; Arrow data
+        # is large and machine-local, tracked by path reference below).
+        meta_file = os.path.join(dataset_path, "metadata.json")
         if os.path.isfile(meta_file):
-            artifact.add_file(meta_file, name="dataset_metadata.json")
-
-        # Per-split manifests (small JSON; the .pt shards are NOT added)
-        for split in ("train", "val", "test"):
-            manifest_file = os.path.join(dataset_path, split, "manifest.json")
-            if os.path.isfile(manifest_file):
-                artifact.add_file(manifest_file, name=f"{split}/manifest.json")
+            artifact.add_file(meta_file, name="metadata.json")
 
         # Track the dataset directory path itself without copying its contents
         artifact.add_reference(f"file://{dataset_path}", name="dataset_dir", checksum=False)
@@ -366,26 +368,25 @@ def train_one_epoch(
         
         if use_segment_masking:
             for b in range(B):
-                num_segments = len(batch["segment_info"][b])
+                num_segments = len(batch["segment_round"][b])
                 # Randomly choose how many segments visible (at least 1)
                 visible_segs = random.randint(1, num_segments)
                 segment_cutoffs.append(visible_segs)
-                
+
                 # Find which round this segment belongs to
-                seg_info = batch["segment_info"][b][visible_segs - 1]
-                target_round = seg_info["round"]
+                target_round = batch["segment_round"][b][visible_segs - 1]
                 target_bandit = batch["round_bandit_map"][b, target_round]
                 target_bandits.append(int(target_bandit.item()))
-            
+
             # Create custom attention mask based on segment cutoffs
             attn_mask = create_segment_mask(
-                batch["segment_boundaries"], 
-                segment_cutoffs, 
+                batch["segment_boundaries"],
+                segment_cutoffs,
                 seq_len,
                 device,
                 masking_strategy=masking_strategy,
-                segment_info=batch["segment_info"],
-                round_bandit_map=batch["round_bandit_map"]
+                segment_round=batch["segment_round"],
+                round_bandit_map=batch["round_bandit_map"],
             )
         else:
             # Use full context (last bandit)
@@ -622,23 +623,17 @@ def main():
     if is_rank_0 and is_distributed:
         print(f"[DDP] world_size={world_size}, backend={dist.get_backend()}, device={device}")
 
-    # Load dataset metadata
-    metadata_path = os.path.join(args.dataset_name, "dataset_metadata.json")
+    # Load dataset metadata. The new Arrow-direct generator writes a single
+    # metadata.json at the dataset root (replaces the .pt-era dataset_metadata.json
+    # + per-split manifest.json pair).
+    metadata_path = os.path.join(args.dataset_name, "metadata.json")
     if is_rank_0:
         print(f"Loading dataset metadata from {metadata_path}")
     with open(metadata_path, "r") as f:
         dataset_meta = json.load(f)
-    
-    # Extract normalization parameters
-    # expert_N_max is the single source of truth; fall back to N_max for old datasets
+
     params = dataset_meta["parameters"]
-    if "expert_N_max" in params:
-        max_experience = params["expert_N_max"]
-    elif "N_max" in params:
-        print("WARNING: dataset uses deprecated 'N_max' key. Consider regenerating with updated scripts.")
-        max_experience = params["N_max"]
-    else:
-        raise ValueError("Dataset metadata missing both 'expert_N_max' and 'N_max'")
+    max_experience = params["expert_N_max"]
     alpha0 = params.get("alpha0", 1.0)
     beta0 = params.get("beta0", 1.0)
 
@@ -657,25 +652,19 @@ def main():
         if is_rank_0:
             print(f"No normalization needed for loss={args.demo_belief_loss}")
     
-    # Build paths to train and val manifests
-    train_path = os.path.join(args.dataset_name, "train", "manifest.json")
-    val_path = os.path.join(args.dataset_name, "val", "manifest.json")
-    
-    # Load training data first to get metadata
-    raw_train = ShardedExamplesDataset(train_path, cache_shards=2)
-    
-    # Automatically infer dataset parameters from manifest
-    num_arms = raw_train.meta.get("K", 12)
-    num_demonstrators = raw_train.meta.get("num_demonstrators", 2)
+    # Dataset shape parameters come straight from the root metadata.json
+    # (the per-shard manifest.json is gone — there are no shards).
+    num_arms = params["K"]
+    num_demonstrators = params["num_demonstrators"]
     num_agents = num_demonstrators + 1  # +1 for learner
-    num_rounds = raw_train.meta.get("num_rounds", 3)
-    change_bandits = raw_train.meta.get("change_bandits_with_rounds", True)
+    num_rounds = params["num_rounds"]
+    change_bandits = params.get("change_bandits_with_rounds", True)
     num_bandits = num_rounds if change_bandits else 1
-    T_demo = raw_train.meta.get("T_demo", 6)
-    T_learner = raw_train.meta.get("T_learner", 6)
-    
+    T_demo = params.get("T_demo", 6)
+    T_learner = params.get("T_learner", 6)
+
     if is_rank_0:
-        print(f"Auto-detected from manifest:")
+        print(f"Dataset shape (from metadata.json):")
         print(f"  num_arms (K): {num_arms}")
         print(f"  num_demonstrators: {num_demonstrators}")
         print(f"  num_agents (learner + demos): {num_agents}")
@@ -806,42 +795,33 @@ def main():
         args.checkpoint_dir = str(run_dir / 'checkpoints')
         print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
 
-    # Build datasets with normalization
-    train_ds = BanditSequenceDataset(
-        raw_train,
-        num_arms=num_arms,
-        num_agents=num_agents,
-        num_bandits=num_bandits,
-        normalize_beliefs=normalize_beliefs,
-        normalizer=normalizer
-    )
+    # Build the train DataLoader from the mmap-backed Arrow dataset.
     # Under DDP, DistributedSampler shards examples across ranks and provides
-    # epoch-level shuffling via set_epoch(). drop_last=True keeps per-rank step
-    # counts identical so the cosine scheduler stays in sync across the world.
-    if is_distributed:
-        train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
-    else:
-        train_sampler = None
-    train_loader = DataLoader(
+    # i.i.d. epoch-level shuffling via set_epoch(). drop_last=True keeps per-rank
+    # step counts identical so the cosine scheduler stays in sync across the world.
+    # Single-process: DataLoader(shuffle=True) gives full i.i.d. shuffling — mmap
+    # makes the random access cheap (no shard cache to thrash).
+    train_ds = load_arrow_split(args.dataset_name, "train")
+    train_sampler = (
+        DistributedSampler(train_ds, shuffle=True, drop_last=True) if is_distributed else None
+    )
+    train_loader = make_arrow_loader(
         train_ds,
         batch_size=args.batch_size,
+        shuffle=True,
         sampler=train_sampler,
-        shuffle=(train_sampler is None and False),  # shuffle handled by sampler when distributed; otherwise rely on per-epoch shard shuffling + pre-randomized data
-        collate_fn=collate_batch,
+        normalizer=normalizer if normalize_beliefs else None,
     )
 
-    # Load validation data. Validation runs on rank 0 only (see epoch loop),
-    # so no distributed sampler is needed here.
-    raw_val = ShardedExamplesDataset(val_path, cache_shards=2)
-    val_ds = BanditSequenceDataset(
-        raw_val,
-        num_arms=num_arms,
-        num_agents=num_agents,
-        num_bandits=num_bandits,
-        normalize_beliefs=normalize_beliefs,
-        normalizer=normalizer
+    # Validation runs on rank 0 only (see epoch loop), so no distributed sampler.
+    val_ds = load_arrow_split(args.dataset_name, "val")
+    val_loader = make_arrow_loader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        sampler=None,
+        normalizer=normalizer if normalize_beliefs else None,
     )
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)
 
     model = build_model(
         args.model_type,
@@ -1044,18 +1024,12 @@ def main():
                 print(f"Starting Epoch {epoch}/{args.epochs}")
                 print(f"{'='*50}")
 
-            # Per-epoch shuffling.
-            # - Under DDP: DistributedSampler.set_epoch shuffles indices across
-            #   ranks deterministically; shuffling the shard list separately on
-            #   each rank would desync the (shard, local_idx) mapping and silently
-            #   corrupt training.
-            # - Single-process: keep the existing shard reshuffling for
-            #   epoch-level randomization.
-            if is_distributed:
-                if train_sampler is not None:
-                    train_sampler.set_epoch(epoch)
-            elif hasattr(raw_train, 'shuffle_shards'):
-                raw_train.shuffle_shards()
+            # Per-epoch shuffling. Under DDP we call sampler.set_epoch() so the
+            # global shuffle permutation differs each epoch and stays consistent
+            # across ranks. Single-process gets its shuffling for free from
+            # DataLoader(shuffle=True), which reshuffles every iteration.
+            if is_distributed and train_sampler is not None:
+                train_sampler.set_epoch(epoch)
 
             stats = train_one_epoch(
                 model, train_loader, optimizer, device,

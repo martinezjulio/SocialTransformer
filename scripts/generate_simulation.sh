@@ -49,13 +49,11 @@ NUM_DEMONSTRATORS=2
 NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
 ORDER=2
-NUM_TRAIN_RUNS=120000  
-NUM_VALID_RUNS=6000  
-NUM_TEST_RUNS=6000   
+NUM_TRAIN_RUNS=120000
+NUM_VALID_RUNS=6000
+NUM_TEST_RUNS=6000
 T_DEMO=6
 T_LEARNER=6
-SHARD_SIZE=2000
-MAX_CONTEXT=144
 DEMO_STRATEGY="expert_novice_thompson"  # expert_novice_thompson, uniform_thompson, expert_thompson_novice_random
 EXPERT_N_MIN=128  # Fixed expert experience
 EXPERT_N_MAX=128  # Fixed expert experience
@@ -82,8 +80,7 @@ echo "Expert N_min: $EXPERT_N_MIN"
 echo "Expert N_max: $EXPERT_N_MAX"
 echo "Bandit strategy: $BANDIT_STRATEGY"
 echo "Bandit payoffs: $BANDIT_PAYOFFS"
-echo "Shard size: $SHARD_SIZE"
-echo "Max context length: $MAX_CONTEXT"
+echo "Storage: mmap-backed HuggingFace Arrow (one dataset per split)"
 echo "=================================="
 echo ""
 
@@ -107,60 +104,25 @@ python src/generate_simulations.py \
     --num_test_runs $NUM_TEST_RUNS \
     --T_demo $T_DEMO \
     --T_learner $T_LEARNER \
-    --shard_size $SHARD_SIZE \
     --demo_strategy $DEMO_STRATEGY \
     --expert_N_min $EXPERT_N_MIN \
     --expert_N_max $EXPERT_N_MAX \
     --bandit_strategy $BANDIT_STRATEGY \
     --bandit_payoffs "$BANDIT_PAYOFFS"
 
-# Check if generation was successful
+# Check if generation was successful (the Python generator writes metadata.json
+# at the dataset root — no shell-side metadata writing needed anymore).
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================="
     echo "Data generation completed successfully!"
     echo "=================================="
     echo "Generated data in: $OUT_DIR/"
-    echo "  - $OUT_DIR/train/"
-    echo "  - $OUT_DIR/val/"
-    echo "  - $OUT_DIR/test/"
-    ls -lh "$OUT_DIR"/train/*.pt 2>/dev/null | head -3
-    echo ""
-    
-    # Create metadata file with generation parameters
-    METADATA_FILE="${OUT_DIR}/dataset_metadata.json"
-    echo "Creating metadata file: $METADATA_FILE"
-    cat > "$METADATA_FILE" << EOF
-{
-  "dataset_name": "$DATASET_NAME",
-  "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "parameters": {
-    "K": $K,
-    "num_demonstrators": $NUM_DEMONSTRATORS,
-    "num_rounds": $NUM_ROUNDS,
-    "change_bandits_with_rounds": $CHANGE_BANDITS_WITH_ROUNDS,
-    "order": $ORDER,
-    "num_train_runs": $NUM_TRAIN_RUNS,
-    "num_valid_runs": $NUM_VALID_RUNS,
-    "num_test_runs": $NUM_TEST_RUNS,
-    "T_demo": $T_DEMO,
-    "T_learner": $T_LEARNER,
-    "shard_size": $SHARD_SIZE,
-    "max_context": $MAX_CONTEXT,
-    "demo_strategy": "$DEMO_STRATEGY",
-    "expert_N_min": $EXPERT_N_MIN,
-    "expert_N_max": $EXPERT_N_MAX,
-    "bandit_strategy": "$BANDIT_STRATEGY",
-    "bandit_payoffs": "$BANDIT_PAYOFFS"
-  },
-  "splits": {
-    "train": "$OUT_DIR/train/",
-    "val": "$OUT_DIR/val/",
-    "test": "$OUT_DIR/test/"
-  }
-}
-EOF
-    echo "✓ Metadata saved to $METADATA_FILE"
+    echo "  - $OUT_DIR/train/  (Arrow dataset)"
+    echo "  - $OUT_DIR/val/    (Arrow dataset)"
+    echo "  - $OUT_DIR/test/   (Arrow dataset)"
+    echo "  - $OUT_DIR/metadata.json"
+    ls -lh "$OUT_DIR"/train/*.arrow 2>/dev/null | head -3
     echo ""
 else
     echo ""

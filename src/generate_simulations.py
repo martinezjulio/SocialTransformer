@@ -1,7 +1,16 @@
-#%% 
-import math, random, os, json
-from typing import Dict, List, Tuple
+#%%
+import json
+import math
+import os
+import random
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import torch
+from datasets import Dataset
+
+from data.encoding import SEGMENT_TYPE_TO_ID, build_arrow_row, build_features
 
 # ----------- Utilities -----------
 
@@ -416,6 +425,9 @@ def build_training_example(run: Dict) -> Dict:
             }
         }
     """
+    # The per-row `meta` field (full config snapshot) is no longer carried —
+    # it's identical across all rows in a generation run and now lives in the
+    # single root-level metadata.json that `generate_dataset` writes.
     return {
         "events": run["events"],
         "round_boundaries": run["round_boundaries"],
@@ -427,63 +439,124 @@ def build_training_example(run: Dict) -> Dict:
             "K": run["meta"]["K"],
             "num_demonstrators": run["meta"]["num_demonstrators"],
         },
-        "meta": run["meta"],
     }
 
 
 # ------------ Dataset Generation ------------
 
-def generate_dataset_streaming(
-    out_dir: str,
+def generate_split(
+    out_root: Path,
+    split: str,
     num_runs: int,
     *,
-    # fixed knobs
-    K: int = 12,
-    num_demonstrators: int = 2,
-    num_rounds: int = 3,
-    change_bandits_with_rounds: bool = True,
-    order: int = 2,  # 0=demo-first, 1=learner-first, 2=both
-    T_demo: int = 6,
-    T_learner: int = 6,
-    alpha0: float = 1.0,
-    beta0: float = 1.0,
-    demo_strategy: str = "uniform_thompson",
-    expert_N_min: int = 60,
-    expert_N_max: int = 72,
-    bandit_strategy: str = "sample",
-    bandit_payoffs: List[float] = None,
-    # sharding
-    split: str = "train",
-    shard_size: int = 10000,
-    manifest_name: str = "manifest.json",
-) -> str:
+    K: int,
+    num_demonstrators: int,
+    num_rounds: int,
+    change_bandits_with_rounds: bool,
+    order: int,
+    T_demo: int,
+    T_learner: int,
+    alpha0: float,
+    beta0: float,
+    demo_strategy: str,
+    expert_N_min: int,
+    expert_N_max: int,
+    bandit_strategy: str,
+    bandit_payoffs: Optional[List[float]],
+) -> int:
+    """Generate one split and save it as a single mmap-backed Arrow dataset at
+    ``out_root/split/``. Returns the number of examples written.
+
+    The per-example encoding (5 token channels, label tensor construction,
+    segment_info flattening) happens here via ``build_arrow_row`` so rows hit
+    disk pre-encoded and the training inner loop does almost no Python work.
     """
-    Stream-generate examples and save shards:
-      out_dir/{split}-{00001..}.pt
-    Also writes a manifest JSON listing shard paths and sizes.
-    Returns manifest path.
-    """
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # Determine which orders to use
-    if order == 2:
-        orders = [0, 1]  # Generate both orders
-    else:
-        orders = [order]
-    
-    # Create pool of configurations
-    pool = []
+    num_bandits = num_rounds if change_bandits_with_rounds else 1
+    num_agents = num_demonstrators + 1
+    features = build_features(K, num_demonstrators, num_bandits)
+
+    # Same order pool as the pre-Arrow generator: shuffled mix of order=0/1
+    # rows when --order=2, otherwise all rows use the single specified order.
+    orders = [0, 1] if order == 2 else [order]
+    pool: List[int] = []
     runs_per_order = math.ceil(num_runs / len(orders))
     for ord_val in orders:
         pool.extend([ord_val] * runs_per_order)
     pool = pool[:num_runs]
     random.shuffle(pool)
-    
-    shard_idx = 0
-    buf: List[Dict] = []
-    manifest = {
-        "split": split,
-        "meta": {
+
+    def gen():
+        for ord_val in pool:
+            run = simulate_rounds_run(
+                K=K,
+                num_demonstrators=num_demonstrators,
+                num_rounds=num_rounds,
+                change_bandits_with_rounds=change_bandits_with_rounds,
+                order=ord_val,
+                T_demo=T_demo,
+                T_learner=T_learner,
+                alpha0=alpha0,
+                beta0=beta0,
+                demo_strategy=demo_strategy,
+                expert_N_min=expert_N_min,
+                expert_N_max=expert_N_max,
+                bandit_strategy=bandit_strategy,
+                bandit_payoffs=bandit_payoffs,
+            )
+            example = build_training_example(run)
+            yield build_arrow_row(
+                example,
+                K=K,
+                num_demonstrators=num_demonstrators,
+                num_bandits=num_bandits,
+                num_agents=num_agents,
+            )
+
+    split_dir = out_root / split
+    if split_dir.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite existing dataset at {split_dir}. "
+            "Pick a fresh output directory or delete the old one explicitly."
+        )
+
+    ds = Dataset.from_generator(gen, features=features)
+    ds.save_to_disk(str(split_dir))
+    print(f"Wrote {len(ds)} examples to {split_dir}")
+    return len(ds)
+
+
+def write_root_metadata(
+    out_root: Path,
+    *,
+    K: int,
+    num_demonstrators: int,
+    num_rounds: int,
+    change_bandits_with_rounds: bool,
+    order: int,
+    T_demo: int,
+    T_learner: int,
+    alpha0: float,
+    beta0: float,
+    demo_strategy: str,
+    expert_N_min: int,
+    expert_N_max: int,
+    bandit_strategy: str,
+    bandit_payoffs: Optional[List[float]],
+    num_train_runs: int,
+    num_valid_runs: int,
+    num_test_runs: int,
+    seed: int,
+) -> Path:
+    """Write the single root metadata.json (replaces dataset_metadata.json +
+    per-split manifest.json from the .pt-shard era). Train.py / eval.py read
+    constants like K, num_demonstrators, expert_N_max, alpha0, beta0 from here.
+    """
+    metadata = {
+        "dataset_name": out_root.name,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "format": "huggingface_arrow",
+        "seed": seed,
+        "parameters": {
             "K": K,
             "num_demonstrators": num_demonstrators,
             "num_rounds": num_rounds,
@@ -498,52 +571,19 @@ def generate_dataset_streaming(
             "expert_N_max": expert_N_max,
             "bandit_strategy": bandit_strategy,
             "bandit_payoffs": bandit_payoffs if bandit_strategy == "permute" else None,
-            "shard_size": shard_size,
+            "num_train_runs": num_train_runs,
+            "num_valid_runs": num_valid_runs,
+            "num_test_runs": num_test_runs,
         },
-        "shards": []
+        # Encoding tables — useful for reproducibility and for any external
+        # consumer that wants to inspect rows without importing the codebase.
+        "segment_type_to_id": SEGMENT_TYPE_TO_ID,
     }
-    
-    def _flush():
-        nonlocal shard_idx, buf
-        if not buf:
-            return
-        shard_idx += 1
-        fname = f"{split}-{shard_idx:05d}.pt"
-        fpath = os.path.join(out_dir, fname)
-        torch.save(buf, fpath)
-        manifest["shards"].append({"path": fname, "num_examples": len(buf)})
-        buf = []
-    
-    for ord_val in pool:
-        run = simulate_rounds_run(
-            K=K,
-            num_demonstrators=num_demonstrators,
-            num_rounds=num_rounds,
-            change_bandits_with_rounds=change_bandits_with_rounds,
-            order=ord_val,
-            T_demo=T_demo,
-            T_learner=T_learner,
-            alpha0=alpha0,
-            beta0=beta0,
-            demo_strategy=demo_strategy,
-            expert_N_min=expert_N_min,
-            expert_N_max=expert_N_max,
-            bandit_strategy=bandit_strategy,
-            bandit_payoffs=bandit_payoffs,
-        )
-        example = build_training_example(run)
-        buf.append(example)
-        
-        if len(buf) >= shard_size:
-            _flush()
-    
-    _flush()  # write last partial shard
-    
-    manifest_path = os.path.join(out_dir, manifest_name)
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-    print(f"Wrote {len(manifest['shards'])} shards to {out_dir} (manifest: {manifest_path})")
-    return manifest_path
+    metadata_path = out_root / "metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Wrote dataset metadata to {metadata_path}")
+    return metadata_path
 
 
 if __name__ == "__main__":
@@ -560,36 +600,42 @@ if __name__ == "__main__":
     parser.add_argument("--num_test_runs", type=int, default=400)
     parser.add_argument("--T_demo", type=int, default=6)
     parser.add_argument("--T_learner", type=int, default=6)
-    parser.add_argument("--shard_size", type=int, default=12000)
-    parser.add_argument("--demo_strategy", type=str, default="uniform_thompson", 
+    parser.add_argument("--alpha0", type=float, default=1.0,
+                        help="Beta prior alpha (also stored in metadata.json for the loader)")
+    parser.add_argument("--beta0", type=float, default=1.0,
+                        help="Beta prior beta (also stored in metadata.json for the loader)")
+    parser.add_argument("--demo_strategy", type=str, default="uniform_thompson",
                         choices=["uniform_thompson", "expert_novice_thompson", "expert_thompson_novice_random"],
                         help="Demonstrator experience strategy")
     parser.add_argument("--expert_N_min", type=int, default=60,
                         help="Minimum N_tot for experts")
     parser.add_argument("--expert_N_max", type=int, default=72,
                         help="Maximum N_tot for experts")
-    parser.add_argument("--bandit_strategy", type=str, default="sample", 
+    parser.add_argument("--bandit_strategy", type=str, default="sample",
                         choices=["sample", "permute"],
                         help="Bandit generation strategy: 'sample' (random Beta) or 'permute' (fixed payoffs permuted)")
     parser.add_argument("--bandit_payoffs", type=str, default="0.0,0.1,0.2,0.3,0.35,0.4,0.45,0.5,0.55,0.6,0.75,0.8",
                         help="Comma-separated payoff values for permute strategy (must have exactly K values)")
-    
+    parser.add_argument("--seed", type=int, default=42, help="Global RNG seed")
+
     args = parser.parse_args()
-    
-    # Parse bandit payoffs if provided
+
+    # Parse bandit payoffs if needed
     bandit_payoffs = None
     if args.bandit_strategy == "permute":
         bandit_payoffs = [float(x.strip()) for x in args.bandit_payoffs.split(",")]
         if len(bandit_payoffs) != args.K:
-            raise ValueError(f"bandit_payoffs must have exactly K={args.K} values, got {len(bandit_payoffs)}")
-    
-    random.seed(42)
-    torch.manual_seed(42)
-    
-    train_manifest = generate_dataset_streaming(
-        os.path.join(args.out, "train"),
-        num_runs=args.num_train_runs,
-        split="train",
+            raise ValueError(
+                f"bandit_payoffs must have exactly K={args.K} values, got {len(bandit_payoffs)}"
+            )
+
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    out_root = Path(args.out)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    common_kwargs = dict(
         K=args.K,
         num_demonstrators=args.num_demonstrators,
         num_rounds=args.num_rounds,
@@ -597,48 +643,26 @@ if __name__ == "__main__":
         order=args.order,
         T_demo=args.T_demo,
         T_learner=args.T_learner,
+        alpha0=args.alpha0,
+        beta0=args.beta0,
         demo_strategy=args.demo_strategy,
         expert_N_min=args.expert_N_min,
         expert_N_max=args.expert_N_max,
         bandit_strategy=args.bandit_strategy,
         bandit_payoffs=bandit_payoffs,
-        shard_size=args.shard_size
     )
-    
-    val_manifest = generate_dataset_streaming(
-        os.path.join(args.out, "val"),
-        num_runs=args.num_valid_runs,
-        split="val",
-        K=args.K,
-        num_demonstrators=args.num_demonstrators,
-        num_rounds=args.num_rounds,
-        change_bandits_with_rounds=args.change_bandits_with_rounds,
-        order=args.order,
-        T_demo=args.T_demo,
-        T_learner=args.T_learner,
-        demo_strategy=args.demo_strategy,
-        expert_N_min=args.expert_N_min,
-        expert_N_max=args.expert_N_max,
-        bandit_strategy=args.bandit_strategy,
-        bandit_payoffs=bandit_payoffs,
-        shard_size=args.shard_size
+
+    for split, n in [("train", args.num_train_runs),
+                     ("val",   args.num_valid_runs),
+                     ("test",  args.num_test_runs)]:
+        generate_split(out_root, split, n, **common_kwargs)
+
+    write_root_metadata(
+        out_root,
+        num_train_runs=args.num_train_runs,
+        num_valid_runs=args.num_valid_runs,
+        num_test_runs=args.num_test_runs,
+        seed=args.seed,
+        **common_kwargs,
     )
-    
-    test_manifest = generate_dataset_streaming(
-        os.path.join(args.out, "test"),
-        num_runs=args.num_test_runs,
-        split="test",
-        K=args.K,
-        num_demonstrators=args.num_demonstrators,
-        num_rounds=args.num_rounds,
-        change_bandits_with_rounds=args.change_bandits_with_rounds,
-        order=args.order,
-        T_demo=args.T_demo,
-        T_learner=args.T_learner,
-        demo_strategy=args.demo_strategy,
-        expert_N_min=args.expert_N_min,
-        expert_N_max=args.expert_N_max,
-        bandit_strategy=args.bandit_strategy,
-        bandit_payoffs=bandit_payoffs,
-        shard_size=args.shard_size
-    )
+    print(f"\nDone. Dataset at {out_root}")
