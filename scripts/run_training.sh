@@ -27,6 +27,7 @@ NHEAD=8
 NUM_LAYERS=4
 DIM_FEEDFORWARD=1024
 D_MODEL=512
+ENV_THETA_LOSS="bce" # Options: bce, beta_nll
 DEMO_LOSS_WEIGHT=1.0
 DEMO_BELIEF_LOSS="cross_entropy"  # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 EXPERIENCE_LOSS_WEIGHT=1.0  # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
@@ -34,7 +35,7 @@ MASKING_STRATEGY="current_bandit_only"  # Options: all_bandits, current_bandit_o
 
 # Model variant + Experience Head Configuration.
 # Override from the shell, e.g. `MODEL_TYPE=social bash scripts/run_training.sh`.
-MODEL_TYPE="${MODEL_TYPE:-social_profile_learned}"  # Options: social, social_profile_learned, social_profile_agent_pooling, social_profile_cross_attention
+MODEL_TYPE="${MODEL_TYPE:-social}"  # Options: social, social_profile_learned, social_profile_agent_pooling, social_profile_cross_attention
 EXPERIENCE_HEAD_LOSS_WEIGHT=1.0  # Weight for direct experience head loss (only used for profile model_types)
 EXPERIENCE_HEAD_LOSS_TYPE="mse"  # Options: mse, bce
 EXPERT_THRESHOLD=30.0  # Threshold for expert classification (only used for BCE loss)
@@ -46,7 +47,7 @@ EXPERIENCE_HEAD_INPUT="profiles_only"  # Options: query_only, profiles_only, que
 
 # Checkpoint configuration
 # Note: Checkpoint directory is now managed automatically by train.py
-ARTIFACT_NAME="sbi-transformer"
+ARTIFACT_NAME="social-transformer"
 SAVE_EVERY=1  # Save only best and final (set to N to save every N epochs)
 
 # Learning rate scheduler
@@ -91,6 +92,7 @@ echo "  Attention heads: $NHEAD"
 echo "  Num layers: $NUM_LAYERS"
 echo "  FFN dimension: $DIM_FEEDFORWARD"
 echo "  Model dimension: $D_MODEL"
+echo "  Env theta loss: $ENV_THETA_LOSS"
 echo "  Demo loss weight: $DEMO_LOSS_WEIGHT"
 echo "  Demo belief loss: $DEMO_BELIEF_LOSS"
 echo "  Experience loss weight: $EXPERIENCE_LOSS_WEIGHT"
@@ -182,6 +184,7 @@ python src/train.py \
     --num_layers $NUM_LAYERS \
     --dim_feedforward $DIM_FEEDFORWARD \
     --d_model $D_MODEL \
+    --env_theta_loss $ENV_THETA_LOSS \
     --demo_loss_weight $DEMO_LOSS_WEIGHT \
     --demo_belief_loss $DEMO_BELIEF_LOSS \
     --experience_loss_weight $EXPERIENCE_LOSS_WEIGHT \
