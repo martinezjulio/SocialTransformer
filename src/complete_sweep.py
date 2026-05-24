@@ -93,11 +93,15 @@ def resume_run(run_info, entity, project):
         project: Wandb project
     """
     config = run_info['config']
-    
+
     # Map config keys to train.py argument names
     # wandb config uses 'learning_rate', train.py uses '--lr'
+    # Resumed runs go through torchrun so they match the DDP world size used by
+    # the original sweep launch (see Sweep_Version_*.yaml `command:` block).
+    # Override per-invocation with `NUM_GPUS=N python src/complete_sweep.py …`.
+    num_gpus = os.environ.get('NUM_GPUS', '2')
     cmd = [
-        'python', 'src/train.py',
+        'torchrun', '--standalone', f'--nproc_per_node={num_gpus}', 'src/train.py',
         '--resume_from_checkpoint', run_info['id'],
         '--checkpoint_source', 'wandb',
         '--resume_run',

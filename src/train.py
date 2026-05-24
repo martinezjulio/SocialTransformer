@@ -10,9 +10,11 @@ import re
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from data.dataloader import ShardedExamplesDataset, BanditSequenceDataset, collate_batch, SPECIAL, LEARNER_RAW_ID
 from models import build_model, BaseSocialTransformer
@@ -21,6 +23,33 @@ from models.losses import get_env_theta_loss, get_demo_belief_loss, requires_nor
 from utils import get_run_id, setup_training_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_training_runs_dir
 
 import wandb
+
+
+def setup_distributed(fallback_device: str):
+    """Detect torchrun env vars and initialize the DDP process group.
+
+    Returns a tuple ``(is_distributed, rank, world_size, local_rank, device, is_rank_0)``.
+    When the script is launched without torchrun (no RANK/WORLD_SIZE in env), this
+    is a no-op that returns single-process defaults.
+    """
+    is_distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
+    if is_distributed:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        # Device-agnostic backend selection (CUDA -> nccl, ROCm -> rccl,
+        # XPU -> xccl, etc.). Requires PyTorch >= 2.6.
+        acc = torch.accelerator.current_accelerator()
+        backend = torch.distributed.get_default_backend_for_device(acc)
+        torch.accelerator.set_device_index(local_rank)
+        dist.init_process_group(backend=backend)
+        device = torch.device(f"{acc.type}:{local_rank}")
+    else:
+        rank, world_size, local_rank = 0, 1, 0
+        device = torch.device(fallback_device)
+    is_rank_0 = (rank == 0)
+    return is_distributed, rank, world_size, local_rank, device, is_rank_0
 
 
 def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, min_lr_ratio=0.0):
@@ -308,13 +337,15 @@ def train_one_epoch(
     experience_head_loss_weight: float = 1.0,
     experience_head_loss_fn=None,
     num_arms: int = 12,
+    is_rank_0: bool = True,
 ) -> Dict[str, float]:
     model.train()
     total_loss, total_theta, total_demo, total_experience, total_experience_head = 0.0, 0.0, 0.0, 0.0, 0.0
-    print(f"  Loading first batch from dataloader...")
+    if is_rank_0:
+        print(f"  Loading first batch from dataloader...")
 
     for batch_idx, batch in enumerate(loader):
-        if batch_idx == 0:
+        if batch_idx == 0 and is_rank_0:
             print(f"  ✓ First batch loaded! Processing...")
             print(f"  Debug: bandit_ids range = [{batch['bandit_ids'].min().item()}, {batch['bandit_ids'].max().item()}]")
             print(f"  Debug: agent_ids range = [{batch['agent_ids'].min().item()}, {batch['agent_ids'].max().item()}]")
@@ -363,7 +394,7 @@ def train_one_epoch(
         
         optimizer.zero_grad()
         out = model(batch, custom_attn_mask=attn_mask)
-        if batch_idx == 0:
+        if batch_idx == 0 and is_rank_0:
             print(f"  ✓ First forward pass complete! Computing loss...")
         
         # Gather targets for each example's target bandit
@@ -460,9 +491,9 @@ def train_one_epoch(
         else:
             total_experience_head += loss_experience_head
         
-        if batch_idx == 0:
+        if batch_idx == 0 and is_rank_0:
             print(f"  ✓ First batch complete! loss={loss.item():.4f}")
-        if (batch_idx + 1) % 50 == 0:
+        if (batch_idx + 1) % 50 == 0 and is_rank_0:
             print(f"    Progress: {batch_idx + 1}/{len(loader)} batches")
 
     n = len(loader)
@@ -576,11 +607,25 @@ def main():
         if root:
             args.dataset_name = os.path.join(root, args.dataset_name)
 
-    device = torch.device(args.device)
+    # DDP setup: detects torchrun and initializes the process group.
+    # When launched without torchrun, all of these collapse to single-process defaults.
+    is_distributed, rank, world_size, local_rank, device, is_rank_0 = setup_distributed(args.device)
+
+    def unwrap(m):
+        """Return the underlying model, stripping the DDP wrapper if present.
+
+        Why: keeps checkpoint state_dict keys free of the `module.` prefix so
+        BaseSocialTransformer._build_and_load can strict-load them later.
+        """
+        return m.module if is_distributed else m
+
+    if is_rank_0 and is_distributed:
+        print(f"[DDP] world_size={world_size}, backend={dist.get_backend()}, device={device}")
 
     # Load dataset metadata
     metadata_path = os.path.join(args.dataset_name, "dataset_metadata.json")
-    print(f"Loading dataset metadata from {metadata_path}")
+    if is_rank_0:
+        print(f"Loading dataset metadata from {metadata_path}")
     with open(metadata_path, "r") as f:
         dataset_meta = json.load(f)
     
@@ -597,17 +642,20 @@ def main():
     alpha0 = params.get("alpha0", 1.0)
     beta0 = params.get("beta0", 1.0)
 
-    print(f"Dataset parameters: max_experience(expert_N_max)={max_experience}, alpha0={alpha0}, beta0={beta0}")
-    
+    if is_rank_0:
+        print(f"Dataset parameters: max_experience(expert_N_max)={max_experience}, alpha0={alpha0}, beta0={beta0}")
+
     # Create normalizer if needed for the chosen loss
     if requires_normalization(args.demo_belief_loss):
         normalizer = BeliefNormalizer(max_experience, alpha0, beta0)
         normalize_beliefs = True
-        print(f"Using normalization with factor={normalizer.norm_factor} for loss={args.demo_belief_loss}")
+        if is_rank_0:
+            print(f"Using normalization with factor={normalizer.norm_factor} for loss={args.demo_belief_loss}")
     else:
         normalizer = None
         normalize_beliefs = False
-        print(f"No normalization needed for loss={args.demo_belief_loss}")
+        if is_rank_0:
+            print(f"No normalization needed for loss={args.demo_belief_loss}")
     
     # Build paths to train and val manifests
     train_path = os.path.join(args.dataset_name, "train", "manifest.json")
@@ -626,17 +674,22 @@ def main():
     T_demo = raw_train.meta.get("T_demo", 6)
     T_learner = raw_train.meta.get("T_learner", 6)
     
-    print(f"Auto-detected from manifest:")
-    print(f"  num_arms (K): {num_arms}")
-    print(f"  num_demonstrators: {num_demonstrators}")
-    print(f"  num_agents (learner + demos): {num_agents}")
-    print(f"  num_bandits: {num_bandits}")
-    print(f"  num_rounds: {num_rounds}")
-    print(f"  T_demo: {T_demo}")
-    print(f"  T_learner: {T_learner}")
+    if is_rank_0:
+        print(f"Auto-detected from manifest:")
+        print(f"  num_arms (K): {num_arms}")
+        print(f"  num_demonstrators: {num_demonstrators}")
+        print(f"  num_agents (learner + demos): {num_agents}")
+        print(f"  num_bandits: {num_bandits}")
+        print(f"  num_rounds: {num_rounds}")
+        print(f"  T_demo: {T_demo}")
+        print(f"  T_learner: {T_learner}")
     
-    # Initialize wandb if requested
-    if args.use_wandb:
+    # Initialize wandb if requested.
+    # Only rank 0 manages run directories, wandb init, artifact uploads, and YAML metadata.
+    # Other ranks leave `run = None` and never touch the filesystem for run state.
+    run = None
+    run_dir = None
+    if is_rank_0 and args.use_wandb:
         # Pre-determine wandb run ID so we can create run_dir before wandb.init()
         in_sweep = wandb.run is not None
         resume_mode = "never"
@@ -731,9 +784,7 @@ def main():
 
         # Log the dataset (metadata files + path) as a wandb artifact
         log_dataset_artifact(run, args.dataset_name, dataset_meta)
-    else:
-        run = None
-
+    elif is_rank_0:
         # Non-wandb: full directory structure with metadata files
         run_id = get_run_id(use_wandb=False)
         run_dir = setup_training_run_directory(run_id)
@@ -749,27 +800,43 @@ def main():
         write_run_yaml(run_dir, metadata)
         write_config_yaml(run_dir, vars(args))
 
-    # Update checkpoint directory to use run directory
-    args.checkpoint_dir = str(run_dir / 'checkpoints')
-    print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
+    # Update checkpoint directory to use run directory (rank 0 only — non-rank-0
+    # never writes checkpoints, so the path doesn't need to exist there).
+    if is_rank_0:
+        args.checkpoint_dir = str(run_dir / 'checkpoints')
+        print(f"Checkpoints will be saved to: {args.checkpoint_dir}")
 
     # Build datasets with normalization
     train_ds = BanditSequenceDataset(
-        raw_train, 
-        num_arms=num_arms, 
-        num_agents=num_agents, 
+        raw_train,
+        num_arms=num_arms,
+        num_agents=num_agents,
         num_bandits=num_bandits,
         normalize_beliefs=normalize_beliefs,
         normalizer=normalizer
     )
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_batch)  # shuffle=False: rely on epoch shard shuffling + pre-randomized data
+    # Under DDP, DistributedSampler shards examples across ranks and provides
+    # epoch-level shuffling via set_epoch(). drop_last=True keeps per-rank step
+    # counts identical so the cosine scheduler stays in sync across the world.
+    if is_distributed:
+        train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
+    else:
+        train_sampler = None
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        shuffle=(train_sampler is None and False),  # shuffle handled by sampler when distributed; otherwise rely on per-epoch shard shuffling + pre-randomized data
+        collate_fn=collate_batch,
+    )
 
-    # Load validation data
+    # Load validation data. Validation runs on rank 0 only (see epoch loop),
+    # so no distributed sampler is needed here.
     raw_val = ShardedExamplesDataset(val_path, cache_shards=2)
     val_ds = BanditSequenceDataset(
-        raw_val, 
-        num_arms=num_arms, 
-        num_agents=num_agents, 
+        raw_val,
+        num_arms=num_arms,
+        num_agents=num_agents,
         num_bandits=num_bandits,
         normalize_beliefs=normalize_beliefs,
         normalizer=normalizer
@@ -826,9 +893,10 @@ def main():
     # scheduler state restore below.
     resume_checkpoint = None
     if args.resume_from_checkpoint:
-        print(f"\n{'='*50}")
-        print("Loading checkpoint for resume...")
-        print(f"{'='*50}")
+        if is_rank_0:
+            print(f"\n{'='*50}")
+            print("Loading checkpoint for resume...")
+            print(f"{'='*50}")
         if args.checkpoint_source not in ("local", "wandb"):
             raise ValueError(f"Unknown checkpoint_source: {args.checkpoint_source}")
         model, resume_checkpoint = BaseSocialTransformer.load_checkpoint(
@@ -846,16 +914,26 @@ def main():
         # Early exit if training is already complete.
         checkpoint_epoch = resume_checkpoint['epoch']
         if checkpoint_epoch >= args.epochs:
-            print(f"\n{'='*50}")
-            print("Training already complete!")
-            print(f"{'='*50}")
-            print(f"Checkpoint at epoch {checkpoint_epoch}")
-            print(f"Target epochs: {args.epochs}")
-            print(f"\nTo continue training, specify more epochs:")
-            print(f"  --epochs {checkpoint_epoch + 50}")
-            print(f"{'='*50}\n")
+            if is_rank_0:
+                print(f"\n{'='*50}")
+                print("Training already complete!")
+                print(f"{'='*50}")
+                print(f"Checkpoint at epoch {checkpoint_epoch}")
+                print(f"Target epochs: {args.epochs}")
+                print(f"\nTo continue training, specify more epochs:")
+                print(f"  --epochs {checkpoint_epoch + 50}")
+                print(f"{'='*50}\n")
+            if is_distributed:
+                dist.destroy_process_group()
             exit(0)
-        print("✓ Loaded model weights")
+        if is_rank_0:
+            print("✓ Loaded model weights")
+
+    # Wrap in DDP *after* the model is on-device and (if applicable) restored
+    # from checkpoint, but *before* the optimizer is built so optimizer
+    # param_groups reference the wrapped parameters.
+    if is_distributed:
+        model = nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
     # Configure optimizer based on type
     if args.optimizer == "adam":
@@ -875,15 +953,19 @@ def main():
             num_warmup_steps = len(train_loader) * args.warmup_epochs
             min_lr_ratio = args.min_lr / args.lr
             scheduler = get_cosine_schedule_with_warmup(
-                optimizer, 
+                optimizer,
                 num_warmup_steps=num_warmup_steps,
                 num_training_steps=num_training_steps,
                 min_lr_ratio=min_lr_ratio
             )
-            print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
-            print(f"  Total training steps: {num_training_steps}")
-            print(f"  Warmup steps: {num_warmup_steps}")
-            print(f"  Min LR: {args.min_lr:.2e}")
+            if is_rank_0:
+                # Under DDP, len(train_loader) is the per-rank step count; that
+                # matches the optimizer's per-rank step rate so the cosine
+                # envelope is correct without further adjustment.
+                print(f"Using cosine LR schedule with {args.warmup_epochs} epoch warmup")
+                print(f"  Total training steps (per-rank): {num_training_steps}")
+                print(f"  Warmup steps (per-rank): {num_warmup_steps}")
+                print(f"  Min LR: {args.min_lr:.2e}")
         elif args.scheduler == "plateau":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
@@ -892,9 +974,10 @@ def main():
                 patience=args.patience,
                 min_lr=args.min_lr
             )
-            print(f"Using ReduceLROnPlateau scheduler")
-            print(f"  Patience: {args.patience}, Factor: {args.factor}")
-            print(f"  Min LR: {args.min_lr:.2e}")
+            if is_rank_0:
+                print(f"Using ReduceLROnPlateau scheduler")
+                print(f"  Patience: {args.patience}, Factor: {args.factor}")
+                print(f"  Min LR: {args.min_lr:.2e}")
 
     # Initialize training state (overridden below if resuming).
     start_epoch = 1
@@ -904,19 +987,22 @@ def main():
     # already loaded above (the model weights themselves were applied there).
     if resume_checkpoint is not None:
         optimizer.load_state_dict(resume_checkpoint['optimizer_state_dict'])
-        print("✓ Loaded optimizer state")
+        if is_rank_0:
+            print("✓ Loaded optimizer state")
 
         if scheduler and resume_checkpoint.get('scheduler_state_dict'):
             scheduler.load_state_dict(resume_checkpoint['scheduler_state_dict'])
-            print("✓ Loaded scheduler state")
+            if is_rank_0:
+                print("✓ Loaded scheduler state")
 
         start_epoch = resume_checkpoint['epoch'] + 1
         best_val_loss = resume_checkpoint['val_stats']['loss']
 
-        print(f"\nResuming from epoch {resume_checkpoint['epoch']}")
-        print(f"Will train from epoch {start_epoch} to {args.epochs}")
-        print(f"Best val loss so far: {best_val_loss:.4f}")
-        print(f"{'='*50}\n")
+        if is_rank_0:
+            print(f"\nResuming from epoch {resume_checkpoint['epoch']}")
+            print(f"Will train from epoch {start_epoch} to {args.epochs}")
+            print(f"Best val loss so far: {best_val_loss:.4f}")
+            print(f"{'='*50}\n")
     
     # Overfitting detection tracking
     overfitting_counter = 0
@@ -928,270 +1014,303 @@ def main():
 
     # Get the environment theta loss function
     env_loss_fn = get_env_theta_loss(args.env_theta_loss)
-    print(f"Using {args.env_theta_loss} loss for environment theta payoffs")
+    if is_rank_0:
+        print(f"Using {args.env_theta_loss} loss for environment theta payoffs")
 
     # Get the demo belief loss function
     demo_loss_fn = get_demo_belief_loss(args.demo_belief_loss)
-    print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
+    if is_rank_0:
+        print(f"Using {args.demo_belief_loss} loss for demonstrator beliefs")
 
-
-    
     # Get the experience head loss function (only for profile methods)
     if args.model_type != "social":
         experience_head_loss_fn = get_experience_head_loss(args.experience_head_loss_type)
-        print(f"Using {args.experience_head_loss_type} loss for experience head")
-        print(f"Experience head loss weight: {args.experience_head_loss_weight}")
+        if is_rank_0:
+            print(f"Using {args.experience_head_loss_type} loss for experience head")
+            print(f"Experience head loss weight: {args.experience_head_loss_weight}")
     else:
         experience_head_loss_fn = None
-    
-    print(f"\nStarting training loop for {args.epochs} epochs...")
-    print(f"Training batches per epoch: {len(train_loader)}")
-    print(f"Validation batches: {len(val_loader)}")
-    print(f"\nNote: First batch load may take 2-3 seconds (loading shard from disk)...")
+
+    if is_rank_0:
+        print(f"\nStarting training loop for {args.epochs} epochs...")
+        print(f"Training batches per epoch (per-rank): {len(train_loader)}")
+        print(f"Validation batches: {len(val_loader)}")
+        print(f"\nNote: First batch load may take 2-3 seconds (loading shard from disk)...")
     
     try:
         for epoch in range(start_epoch, args.epochs + 1):
-            print(f"\n{'='*50}")
-            print(f"Starting Epoch {epoch}/{args.epochs}")
-            print(f"{'='*50}")
-            
-            # Shuffle shard order for better randomization
-            if hasattr(raw_train, 'shuffle_shards'):
+            if is_rank_0:
+                print(f"\n{'='*50}")
+                print(f"Starting Epoch {epoch}/{args.epochs}")
+                print(f"{'='*50}")
+
+            # Per-epoch shuffling.
+            # - Under DDP: DistributedSampler.set_epoch shuffles indices across
+            #   ranks deterministically; shuffling the shard list separately on
+            #   each rank would desync the (shard, local_idx) mapping and silently
+            #   corrupt training.
+            # - Single-process: keep the existing shard reshuffling for
+            #   epoch-level randomization.
+            if is_distributed:
+                if train_sampler is not None:
+                    train_sampler.set_epoch(epoch)
+            elif hasattr(raw_train, 'shuffle_shards'):
                 raw_train.shuffle_shards()
-            
+
             stats = train_one_epoch(
-                model, train_loader, optimizer, device, 
-            alpha0=alpha0,
-            beta0=beta0,
-            env_loss_fn=env_loss_fn, 
-            env_theta_loss=args.env_theta_loss,
-            demo_loss_weight=args.demo_loss_weight,
-            demo_loss_fn=demo_loss_fn,
-            normalizer=normalizer,
-            scheduler=scheduler,
-            scheduler_type=args.scheduler if args.use_scheduler else "cosine",
-            experience_loss_weight=args.experience_loss_weight,
-            masking_strategy=args.masking_strategy,
-            model_type=args.model_type,
-            experience_head_loss_weight=args.experience_head_loss_weight,
-            experience_head_loss_fn=experience_head_loss_fn,
-            num_arms=num_arms
+                model, train_loader, optimizer, device,
+                alpha0=alpha0,
+                beta0=beta0,
+                env_loss_fn=env_loss_fn,
+                env_theta_loss=args.env_theta_loss,
+                demo_loss_weight=args.demo_loss_weight,
+                demo_loss_fn=demo_loss_fn,
+                normalizer=normalizer,
+                scheduler=scheduler,
+                scheduler_type=args.scheduler if args.use_scheduler else "cosine",
+                experience_loss_weight=args.experience_loss_weight,
+                masking_strategy=args.masking_strategy,
+                model_type=args.model_type,
+                experience_head_loss_weight=args.experience_head_loss_weight,
+                experience_head_loss_fn=experience_head_loss_fn,
+                num_arms=num_arms,
+                is_rank_0=is_rank_0,
             )
-            
+
             # Log current learning rate if scheduler is used
             current_lr = optimizer.param_groups[0]['lr']
-            log_str = f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  exp={stats['loss_experience']:.4f}"
-            if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
-                log_str += f"  exp_head={stats['loss_experience_head']:.4f}"
-            log_str += f"  lr={current_lr:.2e}"
-            print(log_str)
+            if is_rank_0:
+                log_str = f"Epoch {epoch:02d} | loss={stats['loss']:.4f}  theta={stats['loss_theta']:.4f}  demo={stats['loss_demo']:.4f}  exp={stats['loss_experience']:.4f}"
+                if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
+                    log_str += f"  exp_head={stats['loss_experience_head']:.4f}"
+                log_str += f"  lr={current_lr:.2e}"
+                print(log_str)
 
-            # Simple eval (same losses on val set) - use full context
-            model.eval()
-            with torch.no_grad():
-                val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0,"experience_head":0.0}
-                for batch in val_loader:
-                    for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
-                              "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
-                        batch[k] = batch[k].to(device)
-                    
-                    # Use full context for validation (no masking)
-                    out = model(batch, custom_attn_mask=None)
-                    
-                    # Get the last bandit (final round)
-                    B = batch["bandit_ids"].shape[0]
-                    last_bandit_idx = batch["round_bandit_map"][:, -1]
-                    batch_indices = torch.arange(B, device=device)
-                    y_theta_last = batch["y_thetas"][batch_indices, last_bandit_idx]
-                    y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
-                    y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
-                    
-                    # Extract demo predictions for last bandit
-                    pred_alpha_demo_val = out["alpha_demo"][batch_indices, last_bandit_idx]    # [B, D, K]
-                    pred_beta_demo_val = out["beta_demo"][batch_indices, last_bandit_idx]      # [B, D, K]
+            # Validation runs on rank 0 only — see the broadcast below for how
+            # the other ranks pick up val_stats so scheduler/early-stop logic
+            # stays in sync across the world.
+            val_stats = None
+            if is_rank_0:
+                model.eval()
+                with torch.no_grad():
+                    val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0,"experience_head":0.0}
+                    for batch in val_loader:
+                        for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
+                                  "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
+                            batch[k] = batch[k].to(device)
 
-                    # Environment theta loss: branch on the configured loss function
-                    if args.env_theta_loss == "bce":
-                        pred_theta_logits_val = out["theta_logits"][batch_indices, last_bandit_idx]  # [B, K]
-                        lt = env_loss_fn(pred_theta_logits_val, y_theta_last)
-                    else:
-                        pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
-                        pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
-                        lt = env_loss_fn(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
-                    
-                    # Denormalize predictions if needed
-                    if normalizer is not None:
-                        pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_demo_val)
-                        pred_beta_val = normalizer.denormalize_beta(pred_beta_demo_val)
-                        target_alpha_val = normalizer.denormalize_alpha(y_alpha_demo_last)
-                        target_beta_val = normalizer.denormalize_beta(y_beta_demo_last)
-                    else:
-                        pred_alpha_val = pred_alpha_demo_val
-                        pred_beta_val = pred_beta_demo_val
-                        target_alpha_val = y_alpha_demo_last
-                        target_beta_val = y_beta_demo_last
-                    
-                    # Per-demonstrator belief loss
-                    num_demonstrators = y_alpha_demo_last.shape[1]
+                        # Use full context for validation (no masking)
+                        out = model(batch, custom_attn_mask=None)
 
-                    ld = 0.0
-                    for demo_id in range(num_demonstrators):
-                        ld += demo_loss_fn(
-                            pred_alpha_val[:, demo_id, :],
-                            pred_beta_val[:, demo_id, :],
-                            target_alpha_val[:, demo_id, :],
-                            target_beta_val[:, demo_id, :]
-                        )
-                    ld = ld / num_demonstrators
-                    
-                    # Per-demonstrator experience loss
-                    le = 0.0
-                    for demo_id in range(num_demonstrators):
-                        le += experience_loss_log(
-                            pred_alpha_val[:, demo_id, :],
-                            pred_beta_val[:, demo_id, :],
-                            target_alpha_val[:, demo_id, :],
-                            target_beta_val[:, demo_id, :],
-                            alpha0=alpha0,
-                            beta0=beta0
-                        )
-                    le = le / num_demonstrators
-                    
-                    # Compute experience head loss if present
-                    le_head = 0.0
-                    if 'N_tot_pred' in out and experience_head_loss_fn is not None:
-                        le_head = experience_head_loss_fn(
-                            out['N_tot_pred'],
-                            target_alpha_val,
-                            target_beta_val,
-                            alpha0=alpha0,
-                            beta0=beta0,
-                            K=num_arms
-                        )
-                    
-                    val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le + args.experience_head_loss_weight*le_head).item()
-                    val_tot["theta"]+= lt.item()
-                    val_tot["demo"] += ld.item()
-                    val_tot["experience"] += le.item()
-                    if isinstance(le_head, torch.Tensor):
-                        val_tot["experience_head"] += le_head.item()
-                    else:
-                        val_tot["experience_head"] += le_head
-                n = len(val_loader)
-                val_stats = {
-                    "loss": val_tot['loss']/n,
-                    "loss_theta": val_tot['theta']/n,
-                    "loss_demo": val_tot['demo']/n,
-                    "loss_experience": val_tot['experience']/n,
-                    "loss_experience_head": val_tot['experience_head']/n,
-                }
-                val_log_str = f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}  exp={val_stats['loss_experience']:.4f}"
-                if val_stats['loss_experience_head'] > 0:
-                    val_log_str += f"  exp_head={val_stats['loss_experience_head']:.4f}"
-                print(val_log_str)
-                
-                # Step plateau scheduler if using it
-                if scheduler is not None and args.scheduler == "plateau":
-                    scheduler.step(val_stats['loss'])
-                
-                # Log both train and val metrics together
-                if run is not None:
-                    log_dict = {
-                        "train/loss": stats['loss'],
-                        "train/loss_theta": stats['loss_theta'],
-                        "train/loss_demo": stats['loss_demo'],
-                        "train/loss_experience": stats['loss_experience'],
-                        "val/loss": val_stats['loss'],
-                        "val/loss_theta": val_stats['loss_theta'],
-                        "val/loss_demo": val_stats['loss_demo'],
-                        "val/loss_experience": val_stats['loss_experience'],
-                        "learning_rate": current_lr,
-                        "epoch": epoch
+                        # Get the last bandit (final round)
+                        B = batch["bandit_ids"].shape[0]
+                        last_bandit_idx = batch["round_bandit_map"][:, -1]
+                        batch_indices = torch.arange(B, device=device)
+                        y_theta_last = batch["y_thetas"][batch_indices, last_bandit_idx]
+                        y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
+                        y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
+
+                        # Extract demo predictions for last bandit
+                        pred_alpha_demo_val = out["alpha_demo"][batch_indices, last_bandit_idx]    # [B, D, K]
+                        pred_beta_demo_val = out["beta_demo"][batch_indices, last_bandit_idx]      # [B, D, K]
+
+                        # Environment theta loss: branch on the configured loss function
+                        if args.env_theta_loss == "bce":
+                            pred_theta_logits_val = out["theta_logits"][batch_indices, last_bandit_idx]  # [B, K]
+                            lt = env_loss_fn(pred_theta_logits_val, y_theta_last)
+                        else:
+                            pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
+                            pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
+                            lt = env_loss_fn(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
+
+                        # Denormalize predictions if needed
+                        if normalizer is not None:
+                            pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_demo_val)
+                            pred_beta_val = normalizer.denormalize_beta(pred_beta_demo_val)
+                            target_alpha_val = normalizer.denormalize_alpha(y_alpha_demo_last)
+                            target_beta_val = normalizer.denormalize_beta(y_beta_demo_last)
+                        else:
+                            pred_alpha_val = pred_alpha_demo_val
+                            pred_beta_val = pred_beta_demo_val
+                            target_alpha_val = y_alpha_demo_last
+                            target_beta_val = y_beta_demo_last
+
+                        # Per-demonstrator belief loss
+                        num_demonstrators = y_alpha_demo_last.shape[1]
+
+                        ld = 0.0
+                        for demo_id in range(num_demonstrators):
+                            ld += demo_loss_fn(
+                                pred_alpha_val[:, demo_id, :],
+                                pred_beta_val[:, demo_id, :],
+                                target_alpha_val[:, demo_id, :],
+                                target_beta_val[:, demo_id, :]
+                            )
+                        ld = ld / num_demonstrators
+
+                        # Per-demonstrator experience loss
+                        le = 0.0
+                        for demo_id in range(num_demonstrators):
+                            le += experience_loss_log(
+                                pred_alpha_val[:, demo_id, :],
+                                pred_beta_val[:, demo_id, :],
+                                target_alpha_val[:, demo_id, :],
+                                target_beta_val[:, demo_id, :],
+                                alpha0=alpha0,
+                                beta0=beta0
+                            )
+                        le = le / num_demonstrators
+
+                        # Compute experience head loss if present
+                        le_head = 0.0
+                        if 'N_tot_pred' in out and experience_head_loss_fn is not None:
+                            le_head = experience_head_loss_fn(
+                                out['N_tot_pred'],
+                                target_alpha_val,
+                                target_beta_val,
+                                alpha0=alpha0,
+                                beta0=beta0,
+                                K=num_arms
+                            )
+
+                        val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le + args.experience_head_loss_weight*le_head).item()
+                        val_tot["theta"]+= lt.item()
+                        val_tot["demo"] += ld.item()
+                        val_tot["experience"] += le.item()
+                        if isinstance(le_head, torch.Tensor):
+                            val_tot["experience_head"] += le_head.item()
+                        else:
+                            val_tot["experience_head"] += le_head
+                    n = len(val_loader)
+                    val_stats = {
+                        "loss": val_tot['loss']/n,
+                        "loss_theta": val_tot['theta']/n,
+                        "loss_demo": val_tot['demo']/n,
+                        "loss_experience": val_tot['experience']/n,
+                        "loss_experience_head": val_tot['experience_head']/n,
                     }
-                    # Add experience head loss if present
-                    if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
-                        log_dict["train/loss_experience_head"] = stats['loss_experience_head']
-                    if 'loss_experience_head' in val_stats and val_stats['loss_experience_head'] > 0:
-                        log_dict["val/loss_experience_head"] = val_stats['loss_experience_head']
-                    run.log(log_dict)
-            
-            # Check if this is the best model so far
+                    val_log_str = f"     val | loss={val_stats['loss']:.4f}  theta={val_stats['loss_theta']:.4f}  demo={val_stats['loss_demo']:.4f}  exp={val_stats['loss_experience']:.4f}"
+                    if val_stats['loss_experience_head'] > 0:
+                        val_log_str += f"  exp_head={val_stats['loss_experience_head']:.4f}"
+                    print(val_log_str)
+
+                    # Log both train and val metrics together (rank 0 only since run is None elsewhere)
+                    if run is not None:
+                        log_dict = {
+                            "train/loss": stats['loss'],
+                            "train/loss_theta": stats['loss_theta'],
+                            "train/loss_demo": stats['loss_demo'],
+                            "train/loss_experience": stats['loss_experience'],
+                            "val/loss": val_stats['loss'],
+                            "val/loss_theta": val_stats['loss_theta'],
+                            "val/loss_demo": val_stats['loss_demo'],
+                            "val/loss_experience": val_stats['loss_experience'],
+                            "learning_rate": current_lr,
+                            "epoch": epoch
+                        }
+                        # Add experience head loss if present
+                        if 'loss_experience_head' in stats and stats['loss_experience_head'] > 0:
+                            log_dict["train/loss_experience_head"] = stats['loss_experience_head']
+                        if 'loss_experience_head' in val_stats and val_stats['loss_experience_head'] > 0:
+                            log_dict["val/loss_experience_head"] = val_stats['loss_experience_head']
+                        run.log(log_dict)
+
+            # Broadcast val_stats so every rank can drive its scheduler and
+            # early-stop logic from the same numbers. Without this, ranks 1+
+            # would have val_stats=None and the plateau scheduler would desync.
+            if is_distributed:
+                payload = [val_stats]
+                dist.broadcast_object_list(payload, src=0)
+                val_stats = payload[0]
+
+            # Step plateau scheduler on every rank so per-rank optimizer LRs stay in sync.
+            if scheduler is not None and args.scheduler == "plateau":
+                scheduler.step(val_stats['loss'])
+
+            # Check if this is the best model so far. Computed on every rank so
+            # overfitting bookkeeping (val_loss_history, overfitting_counter)
+            # stays in lockstep — checkpoint I/O itself happens only on rank 0.
             is_best = val_stats['loss'] < best_val_loss
             if is_best:
                 best_val_loss = val_stats['loss']
                 early_stopping_counter = 0
-                print(f"     ✓ New best model! Val loss: {best_val_loss:.4f}")
-                
-                # Delete previous best checkpoint if it exists
-                if prev_best_checkpoint is not None and os.path.exists(prev_best_checkpoint):
-                    os.remove(prev_best_checkpoint)
-                    print(f"     Deleted previous best checkpoint: {prev_best_checkpoint}")
-                
-                # Delete previous latest checkpoint if it exists
-                if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
-                    os.remove(prev_latest_checkpoint)
-                    print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
-                
-                # Save best model checkpoint (logs to W&B with all aliases)
-                checkpoint_name = f"epoch_{epoch:03d}_best.pt"
-                checkpoint_path = save_checkpoint(
-                    model=model,
-                    optimizer=optimizer,
-                    epoch=epoch,
-                    train_stats=stats,
-                    val_stats=val_stats,
-                    checkpoint_dir=args.checkpoint_dir,
-                    checkpoint_name=checkpoint_name,
-                    wandb_run=run,
-                    artifact_name=args.artifact_name,
-                    is_best=True,
-                    normalizer=normalizer,
-                    max_experience=max_experience,
-                    alpha0=alpha0,
-                    beta0=beta0,
-                    env_theta_loss=args.env_theta_loss,
-                    demo_belief_loss=args.demo_belief_loss,
-                    scheduler=scheduler,
-                    model_config=model_config,
-                    experience_loss_weight=args.experience_loss_weight,
-                    log_to_wandb=True,
-                )
-                prev_best_checkpoint = checkpoint_path
-                
-                # Also save as latest checkpoint (local only, no W&B logging)
-                checkpoint_name_latest = f"epoch_{epoch:03d}_latest.pt"
-                checkpoint_path_latest = save_checkpoint(
-                    model=model,
-                    optimizer=optimizer,
-                    epoch=epoch,
-                    train_stats=stats,
-                    val_stats=val_stats,
-                    checkpoint_dir=args.checkpoint_dir,
-                    checkpoint_name=checkpoint_name_latest,
-                    wandb_run=run,
-                    artifact_name=args.artifact_name,
-                    is_best=False,
-                    normalizer=normalizer,
-                    max_experience=max_experience,
-                    alpha0=alpha0,
-                    beta0=beta0,
-                    env_theta_loss=args.env_theta_loss,
-                    demo_belief_loss=args.demo_belief_loss,
-                    scheduler=scheduler,
-                    model_config=model_config,
-                    experience_loss_weight=args.experience_loss_weight,
-                    log_to_wandb=False,
-                )
-                prev_latest_checkpoint = checkpoint_path_latest
+                if is_rank_0:
+                    print(f"     ✓ New best model! Val loss: {best_val_loss:.4f}")
+
+                    # Delete previous best checkpoint if it exists
+                    if prev_best_checkpoint is not None and os.path.exists(prev_best_checkpoint):
+                        os.remove(prev_best_checkpoint)
+                        print(f"     Deleted previous best checkpoint: {prev_best_checkpoint}")
+
+                    # Delete previous latest checkpoint if it exists
+                    if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+                        os.remove(prev_latest_checkpoint)
+                        print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+
+                    # Save best model checkpoint (logs to W&B with all aliases).
+                    # unwrap(model) strips the DDP wrapper so state_dict keys
+                    # stay free of the 'module.' prefix that would break
+                    # strict loading downstream.
+                    checkpoint_name = f"epoch_{epoch:03d}_best.pt"
+                    checkpoint_path = save_checkpoint(
+                        model=unwrap(model),
+                        optimizer=optimizer,
+                        epoch=epoch,
+                        train_stats=stats,
+                        val_stats=val_stats,
+                        checkpoint_dir=args.checkpoint_dir,
+                        checkpoint_name=checkpoint_name,
+                        wandb_run=run,
+                        artifact_name=args.artifact_name,
+                        is_best=True,
+                        normalizer=normalizer,
+                        max_experience=max_experience,
+                        alpha0=alpha0,
+                        beta0=beta0,
+                        env_theta_loss=args.env_theta_loss,
+                        demo_belief_loss=args.demo_belief_loss,
+                        scheduler=scheduler,
+                        model_config=model_config,
+                        experience_loss_weight=args.experience_loss_weight,
+                        log_to_wandb=True,
+                    )
+                    prev_best_checkpoint = checkpoint_path
+
+                    # Also save as latest checkpoint (local only, no W&B logging)
+                    checkpoint_name_latest = f"epoch_{epoch:03d}_latest.pt"
+                    checkpoint_path_latest = save_checkpoint(
+                        model=unwrap(model),
+                        optimizer=optimizer,
+                        epoch=epoch,
+                        train_stats=stats,
+                        val_stats=val_stats,
+                        checkpoint_dir=args.checkpoint_dir,
+                        checkpoint_name=checkpoint_name_latest,
+                        wandb_run=run,
+                        artifact_name=args.artifact_name,
+                        is_best=False,
+                        normalizer=normalizer,
+                        max_experience=max_experience,
+                        alpha0=alpha0,
+                        beta0=beta0,
+                        env_theta_loss=args.env_theta_loss,
+                        demo_belief_loss=args.demo_belief_loss,
+                        scheduler=scheduler,
+                        model_config=model_config,
+                        experience_loss_weight=args.experience_loss_weight,
+                        log_to_wandb=False,
+                    )
+                    prev_latest_checkpoint = checkpoint_path_latest
             else:
-                # No improvement - check for overfitting
+                # No improvement - check for overfitting (runs on every rank
+                # so the `break` decision is unanimous across the world).
                 val_loss_history.append(val_stats['loss'])
-                
+
                 # Only check if overfitting detection is enabled (threshold > 0)
                 if args.overfitting_threshold > 0:
                     # Condition A: Current loss exceeds threshold
                     threshold_exceeded = val_stats['loss'] > best_val_loss * (1 + args.overfitting_threshold / 100.0)
-                    
+
                     # Condition B: Moving average shows upward trend
                     upward_trend = False
                     if len(val_loss_history) >= args.overfitting_window:
@@ -1200,37 +1319,39 @@ def main():
                         first_half_avg = sum(recent_losses[:len(recent_losses)//2]) / (len(recent_losses)//2)
                         second_half_avg = sum(recent_losses[len(recent_losses)//2:]) / (len(recent_losses) - len(recent_losses)//2)
                         upward_trend = second_half_avg > first_half_avg
-                    
+
                     # Both conditions must be true
                     if threshold_exceeded and upward_trend:
                         overfitting_counter += 1
-                        print(f"     ⚠ Overfitting signal {overfitting_counter}/{args.overfitting_patience}: "
-                              f"val_loss={val_stats['loss']:.4f} vs best={best_val_loss:.4f} "
-                              f"(+{((val_stats['loss']/best_val_loss - 1)*100):.2f}%), trend=↑")
-                        
+                        if is_rank_0:
+                            print(f"     ⚠ Overfitting signal {overfitting_counter}/{args.overfitting_patience}: "
+                                  f"val_loss={val_stats['loss']:.4f} vs best={best_val_loss:.4f} "
+                                  f"(+{((val_stats['loss']/best_val_loss - 1)*100):.2f}%), trend=↑")
+
                         if overfitting_counter >= args.overfitting_patience:
-                            print(f"\n{'='*50}")
-                            print(f"Early stopping: Overfitting detected after {epoch} epochs")
-                            print(f"Val loss consistently above best by >{args.overfitting_threshold}% with upward trend")
-                            print(f"Best val loss: {best_val_loss:.4f}")
-                            print(f"Current val loss: {val_stats['loss']:.4f}")
-                            print(f"{'='*50}")
+                            if is_rank_0:
+                                print(f"\n{'='*50}")
+                                print(f"Early stopping: Overfitting detected after {epoch} epochs")
+                                print(f"Val loss consistently above best by >{args.overfitting_threshold}% with upward trend")
+                                print(f"Best val loss: {best_val_loss:.4f}")
+                                print(f"Current val loss: {val_stats['loss']:.4f}")
+                                print(f"{'='*50}")
                             break
                     else:
                         # Reset counter if conditions not met
                         overfitting_counter = 0
-            
+
             # Save periodic checkpoints if requested (but skip if already saved as best)
-            if args.save_every > 0 and epoch % args.save_every == 0 and not is_best:
+            if args.save_every > 0 and epoch % args.save_every == 0 and not is_best and is_rank_0:
                 # Delete previous latest checkpoint if it exists
                 if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
                     os.remove(prev_latest_checkpoint)
                     print(f"     Deleted previous latest checkpoint: {prev_latest_checkpoint}")
-                
+
                 # Save as latest checkpoint (logs to W&B since not already logged as best)
                 checkpoint_name = f"epoch_{epoch:03d}_latest.pt"
                 checkpoint_path = save_checkpoint(
-                    model=model,
+                    model=unwrap(model),
                     optimizer=optimizer,
                     epoch=epoch,
                     train_stats=stats,
@@ -1252,64 +1373,80 @@ def main():
                     log_to_wandb=True,
                 )
                 prev_latest_checkpoint = checkpoint_path
-        
-        # Save final model as latest checkpoint (only if not already saved)
-        final_checkpoint_name = f"epoch_{args.epochs:03d}_latest.pt"
-        final_checkpoint_exists = prev_latest_checkpoint is not None and \
-                                  final_checkpoint_name in prev_latest_checkpoint
-        
-        if not final_checkpoint_exists:
-            # Delete previous latest checkpoint if it exists and is for a different epoch
-            if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
-                os.remove(prev_latest_checkpoint)
-                print(f"Deleted previous latest checkpoint: {prev_latest_checkpoint}")
-            
-            final_checkpoint_path = save_checkpoint(
-                model=model,
-                optimizer=optimizer,
-                epoch=args.epochs,
-                train_stats=stats,
-                val_stats=val_stats,
-                checkpoint_dir=args.checkpoint_dir,
-                checkpoint_name=final_checkpoint_name,
-                wandb_run=run,
-                artifact_name=args.artifact_name,
-                is_best=False,
-                normalizer=normalizer,
-                max_experience=max_experience,
-                alpha0=alpha0,
-                beta0=beta0,
-                env_theta_loss=args.env_theta_loss, 
-                demo_belief_loss=args.demo_belief_loss,
-                scheduler=scheduler,
-                model_config=model_config,
-                experience_loss_weight=args.experience_loss_weight,
-                log_to_wandb=True,
-            )
-        else:
-            print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
-        
+
+            # Per-epoch barrier so ranks 1+ don't race ahead while rank 0 is
+            # still writing checkpoints / uploading artifacts.
+            if is_distributed:
+                dist.barrier()
+
+        # Save final model as latest checkpoint (only if not already saved).
+        # Rank-0-only; other ranks just skip past this block to the cleanup.
+        if is_rank_0:
+            final_checkpoint_name = f"epoch_{args.epochs:03d}_latest.pt"
+            final_checkpoint_exists = prev_latest_checkpoint is not None and \
+                                      final_checkpoint_name in prev_latest_checkpoint
+
+            if not final_checkpoint_exists:
+                # Delete previous latest checkpoint if it exists and is for a different epoch
+                if prev_latest_checkpoint is not None and os.path.exists(prev_latest_checkpoint):
+                    os.remove(prev_latest_checkpoint)
+                    print(f"Deleted previous latest checkpoint: {prev_latest_checkpoint}")
+
+                final_checkpoint_path = save_checkpoint(
+                    model=unwrap(model),
+                    optimizer=optimizer,
+                    epoch=args.epochs,
+                    train_stats=stats,
+                    val_stats=val_stats,
+                    checkpoint_dir=args.checkpoint_dir,
+                    checkpoint_name=final_checkpoint_name,
+                    wandb_run=run,
+                    artifact_name=args.artifact_name,
+                    is_best=False,
+                    normalizer=normalizer,
+                    max_experience=max_experience,
+                    alpha0=alpha0,
+                    beta0=beta0,
+                    env_theta_loss=args.env_theta_loss,
+                    demo_belief_loss=args.demo_belief_loss,
+                    scheduler=scheduler,
+                    model_config=model_config,
+                    experience_loss_weight=args.experience_loss_weight,
+                    log_to_wandb=True,
+                )
+            else:
+                print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
+
         # Training completed successfully
-        if not args.use_wandb:
-            finalize_run_yaml(run_dir, status='completed')
-        print(f"\n{'='*50}")
-        print("Training completed successfully!")
-        print(f"{'='*50}")
+        if is_rank_0:
+            if not args.use_wandb:
+                finalize_run_yaml(run_dir, status='completed')
+            print(f"\n{'='*50}")
+            print("Training completed successfully!")
+            print(f"{'='*50}")
 
     except KeyboardInterrupt:
-        print(f"\n{'='*50}")
-        print("Training interrupted by user")
-        print(f"{'='*50}")
-        if not args.use_wandb:
-            finalize_run_yaml(run_dir, status='interrupted')
+        if is_rank_0:
+            print(f"\n{'='*50}")
+            print("Training interrupted by user")
+            print(f"{'='*50}")
+            if not args.use_wandb:
+                finalize_run_yaml(run_dir, status='interrupted')
         raise
     except Exception as e:
-        print(f"\n{'='*50}")
-        print(f"Training failed with error: {e}")
-        print(f"{'='*50}")
-        if not args.use_wandb:
-            finalize_run_yaml(run_dir, status='failed', error=str(e))
+        if is_rank_0:
+            print(f"\n{'='*50}")
+            print(f"Training failed with error: {e}")
+            print(f"{'='*50}")
+            if not args.use_wandb:
+                finalize_run_yaml(run_dir, status='failed', error=str(e))
         raise
+    finally:
+        # Drain pending collectives, then tear down the process group cleanly.
+        if is_distributed:
+            if dist.is_initialized():
+                dist.barrier()
+                dist.destroy_process_group()
 
 
 if __name__ == "__main__":

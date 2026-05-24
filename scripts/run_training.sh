@@ -13,7 +13,13 @@ conda activate SocialTransformer
 # Set parameters
 DATASET_NAME="demonstrations_data_00"
 
+# DDP: number of GPUs on this node. Override per-invocation with
+# `NUM_GPUS=4 bash scripts/run_training.sh`. NUM_GPUS=1 is the
+# legacy single-GPU path (still goes through torchrun, but world_size=1).
+NUM_GPUS="${NUM_GPUS:-2}"
+
 # Model hyperparameters
+# NOTE: BATCH_SIZE is per-rank under DDP. Effective global batch = BATCH_SIZE * NUM_GPUS.
 BATCH_SIZE=128
 LEARNING_RATE=5e-5
 EPOCHS=500
@@ -77,8 +83,11 @@ echo "=================================="
 echo "Dataset: $DATASET_NAME"
 echo "Dataset root: $TRAINING_DATA_ROOT_DIR"
 echo ""
+echo "DDP:"
+echo "  NUM_GPUS: $NUM_GPUS (per-rank batch = $BATCH_SIZE, effective batch = $((BATCH_SIZE * NUM_GPUS)))"
+echo ""
 echo "Model Hyperparameters:"
-echo "  Batch size: $BATCH_SIZE"
+echo "  Batch size (per rank): $BATCH_SIZE"
 echo "  Learning rate: $LEARNING_RATE"
 echo "  Weight decay: $WEIGHT_DECAY"
 echo "  Epochs: $EPOCHS"
@@ -169,9 +178,9 @@ if [ "$USE_SCHEDULER" = "true" ]; then
     SCHEDULER_FLAG="--use_scheduler"
 fi
 
-# Run training
-echo "Starting training..."
-python src/train.py \
+# Run training (DDP via torchrun; --standalone picks a free rendezvous port).
+echo "Starting training with torchrun (nproc_per_node=$NUM_GPUS)..."
+torchrun --standalone --nproc_per_node=$NUM_GPUS src/train.py \
     --dataset_name "$DATASET_NAME" \
     --batch_size $BATCH_SIZE \
     --lr $LEARNING_RATE \

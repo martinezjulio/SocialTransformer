@@ -9,7 +9,7 @@ metric:
 parameters:
   # Fixed parameters
   dataset_name:
-    value: "demonstrations_data_02"
+    value: "demonstrations_data_00"
   epochs:
     value: 500
   device:
@@ -40,7 +40,7 @@ parameters:
   nhead:
     values: [4, 8]
   env_theta_loss:
-    values: ["bce", "beta_nll"]
+    values: ["bce"] # ["bce", "beta_nll"]
   demo_loss_weight:
     values: [1.0]
   demo_belief_loss:
@@ -79,10 +79,15 @@ parameters:
   overfitting_window:
     value: 15  # 15-epoch moving average
 
-# Custom command to properly pass flags
+# Custom command to properly pass flags.
+# Launch each sweep trial under torchrun so the training script runs as a DDP
+# group. nproc_per_node is hardcoded (can't be sweep-parameterized via
+# ${args}). Per-rank batch_size means effective batch = batch_size * nproc.
 command:
   - ${env}
-  - python
+  - torchrun
+  - --standalone
+  - --nproc_per_node=2
   - ${program}
   - ${args}
   - --use_wandb
