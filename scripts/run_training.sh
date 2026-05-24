@@ -16,7 +16,7 @@ DATASET_NAME="demonstrations_data_00"
 # DDP: number of GPUs on this node. Override per-invocation with
 # `NUM_GPUS=4 bash scripts/run_training.sh`. NUM_GPUS=1 is the
 # legacy single-GPU path (still goes through torchrun, but world_size=1).
-NUM_GPUS="${NUM_GPUS:-2}"
+NUM_GPUS="${NUM_GPUS:-1}"
 
 # Model hyperparameters
 # NOTE: BATCH_SIZE is per-rank under DDP. Effective global batch = BATCH_SIZE * NUM_GPUS.
