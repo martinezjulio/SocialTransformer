@@ -4,7 +4,8 @@
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../.env"
+ENV_FILE="${ENV_FILE:-${SCRIPT_DIR}/../.env}"
+source "$ENV_FILE"
 
 # Activate conda environment
 source "$CONDA_SETUP"

@@ -51,6 +51,7 @@ MANIFEST
 
 # Virtual environments
 .env
+.env.cluster
 .venv
 env/
 venv/
