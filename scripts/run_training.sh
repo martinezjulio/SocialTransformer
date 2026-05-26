@@ -11,7 +11,7 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_00"
+DATASET_NAME="demonstrations_data_01"
 
 # DDP: number of GPUs on this node. Override per-invocation with
 # `NUM_GPUS=4 bash scripts/run_training.sh`. NUM_GPUS=1 is the
@@ -148,11 +148,9 @@ fi
 echo "=================================="
 echo ""
 
-# Check if dataset exists
+# Check if dataset exists (Arrow layout: root metadata.json + train/val Arrow dirs)
 DATASET_PATH="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}"
-DATASET_METADATA="${DATASET_PATH}/dataset_metadata.json"
-TRAIN_MANIFEST="${DATASET_PATH}/train/manifest.json"
-VAL_MANIFEST="${DATASET_PATH}/val/manifest.json"
+DATASET_METADATA="${DATASET_PATH}/metadata.json"
 
 if [ ! -f "$DATASET_METADATA" ]; then
     echo "ERROR: Dataset metadata not found at $DATASET_METADATA"
@@ -160,14 +158,14 @@ if [ ! -f "$DATASET_METADATA" ]; then
     exit 1
 fi
 
-if [ ! -f "$TRAIN_MANIFEST" ]; then
-    echo "ERROR: Training manifest not found at $TRAIN_MANIFEST"
+if [ ! -d "$DATASET_PATH/train" ]; then
+    echo "ERROR: Training Arrow dataset not found at $DATASET_PATH/train"
     echo "Please generate data first using scripts/generate_simulation.sh"
     exit 1
 fi
 
-if [ ! -f "$VAL_MANIFEST" ]; then
-    echo "ERROR: Validation manifest not found at $VAL_MANIFEST"
+if [ ! -d "$DATASET_PATH/val" ]; then
+    echo "ERROR: Validation Arrow dataset not found at $DATASET_PATH/val"
     echo "Please generate data first using scripts/generate_simulation.sh"
     exit 1
 fi
