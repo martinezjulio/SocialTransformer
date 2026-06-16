@@ -597,6 +597,9 @@ def main():
                         help="Source of checkpoint: 'local' file or 'wandb' artifact")
     parser.add_argument("--resume_run", action="store_true",
                         help="Resume same wandb run ID (vs creating new run)")
+    parser.add_argument("--run_id", type=str, default=None,
+                        help="Stable run id for resume across SLURM requeues (e.g. episode-$SLURM_JOB_ID). "
+                             "Reuses the same wandb run + wandb_<id> dir and auto-resumes from its latest checkpoint.")
     parser.add_argument("--weight_decay", type=float, default=1e-2,
                         help="Weight decay for optimizer (default: 0.01)")
     
@@ -678,6 +681,10 @@ def main():
     # Other ranks leave `run = None` and never touch the filesystem for run state.
     run = None
     run_dir = None
+    # Offline (e.g. Marlowe compute nodes have no outbound internet): defer all artifact
+    # uploads to scripts/wandb_sync.sh on a login node. Logging them offline is unreliable
+    # because the rolling-checkpoint deletion removes the files the artifact versions point to.
+    offline = os.environ.get("WANDB_MODE", "online").lower() in ("offline", "dryrun")
     if is_rank_0 and args.use_wandb:
         # Pre-determine wandb run ID so we can create run_dir before wandb.init()
         in_sweep = wandb.run is not None
@@ -694,6 +701,12 @@ def main():
             else:
                 print("Warning: --resume_run with local checkpoint creates new run (cannot extract run ID from local file)")
                 wandb_run_id = wandb.util.generate_id()
+        elif args.run_id:
+            # Stable id (e.g. episode-$SLURM_JOB_ID): reuse the same wandb run across
+            # SLURM requeues so offline shards coalesce into one run on sync.
+            wandb_run_id = args.run_id
+            resume_mode = "allow"
+            print(f"Will resume/create stable wandb run: {wandb_run_id}")
         else:
             wandb_run_id = wandb.util.generate_id()
 
@@ -771,8 +784,10 @@ def main():
         wandb.define_metric("val/*", step_metric="epoch")
         wandb.define_metric("learning_rate", step_metric="epoch")
 
-        # Log the dataset (metadata files + path) as a wandb artifact
-        log_dataset_artifact(run, args.dataset_name, dataset_meta)
+        # Log the dataset (metadata files + path) as a wandb artifact.
+        # Deferred to wandb_sync.sh when offline (no outbound internet on compute nodes).
+        if not offline:
+            log_dataset_artifact(run, args.dataset_name, dataset_meta)
     elif is_rank_0:
         # Non-wandb: full directory structure with metadata files
         run_id = get_run_id(use_wandb=False)
@@ -866,6 +881,20 @@ def main():
         'demo_beliefs_head_input': args.demo_beliefs_head_input,
         'experience_head_input': args.experience_head_input,
     }
+
+    # Auto-resume from the latest rolling checkpoint when running under a stable
+    # --run_id (SLURM requeue). The run dir is derived deterministically from the
+    # id (no wandb dependency), so every rank resolves the same shared-FS path.
+    # First launch: no file -> trains fresh. Requeue: finds epoch_*_latest.pt -> resumes.
+    if args.run_id and not args.resume_from_checkpoint:
+        latest_ckpts = sorted(
+            (get_training_runs_dir() / f"wandb_{args.run_id}" / "checkpoints").glob("epoch_*_latest.pt")
+        )
+        if latest_ckpts:
+            args.resume_from_checkpoint = str(latest_ckpts[-1])
+            args.checkpoint_source = "local"
+            if is_rank_0:
+                print(f"Auto-resuming from latest checkpoint: {args.resume_from_checkpoint}")
 
     # If resuming, replace the fresh model with the one loaded from the
     # checkpoint *before* the optimizer is built, so the optimizer references
@@ -1246,7 +1275,7 @@ def main():
                         scheduler=scheduler,
                         model_config=model_config,
                         experience_loss_weight=args.experience_loss_weight,
-                        log_to_wandb=True,
+                        log_to_wandb=not offline,
                     )
                     prev_best_checkpoint = checkpoint_path
 
@@ -1344,7 +1373,7 @@ def main():
                     scheduler=scheduler,
                     model_config=model_config,
                     experience_loss_weight=args.experience_loss_weight,
-                    log_to_wandb=True,
+                    log_to_wandb=not offline,
                 )
                 prev_latest_checkpoint = checkpoint_path
 
@@ -1386,7 +1415,7 @@ def main():
                     scheduler=scheduler,
                     model_config=model_config,
                     experience_loss_weight=args.experience_loss_weight,
-                    log_to_wandb=True,
+                    log_to_wandb=not offline,
                 )
             else:
                 print(f"Final epoch checkpoint already saved as latest: {prev_latest_checkpoint}")
