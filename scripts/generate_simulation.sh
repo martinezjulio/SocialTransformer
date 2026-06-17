@@ -46,7 +46,7 @@ NUM_ROUNDS=2
 CHANGE_BANDITS_WITH_ROUNDS=true
 LEARNER_POLICY="mixed"  # "mixed" = balanced across all 9 learner policies; or a single policy name for ablation
 SIMILAR_EXPLORATION_FLOOR=0.1  # exploration floor λ for "similar" learner policies
-NUM_TRAIN_RUNS=200000
+NUM_TRAIN_RUNS=300000
 NUM_VALID_RUNS=10000
 NUM_TEST_RUNS=10000
 T_DEMO=6
