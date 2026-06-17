@@ -1,11 +1,6 @@
 #!/bin/bash
 # Script to generate training, validation, and test data
 # for the Social Bandit Guider project
-# 
-# This version uses:
-# - Permutation-based bandit generation (fixed payoffs permuted)
-# - Expert demonstrators with exactly N=72 experience
-# - Novice demonstrators with N=0 using random exclusion strategy
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,12 +42,13 @@ echo ""
 # Set parameters
 K=12
 NUM_DEMONSTRATORS=2
-NUM_ROUNDS=3
+NUM_ROUNDS=2
 CHANGE_BANDITS_WITH_ROUNDS=true
-ORDER=2
-NUM_TRAIN_RUNS=120000
-NUM_VALID_RUNS=6000
-NUM_TEST_RUNS=6000
+LEARNER_POLICY="mixed"  # "mixed" = balanced across all 9 learner policies; or a single policy name for ablation
+SIMILAR_EXPLORATION_FLOOR=0.1  # exploration floor λ for "similar" learner policies
+NUM_TRAIN_RUNS=200000
+NUM_VALID_RUNS=10000
+NUM_TEST_RUNS=10000
 T_DEMO=6
 T_LEARNER=6
 DEMO_STRATEGY="expert_novice_thompson"  # expert_novice_thompson, uniform_thompson, expert_thompson_novice_random
@@ -70,7 +66,8 @@ echo "Number of arms (K): $K"
 echo "Number of demonstrators: $NUM_DEMONSTRATORS"
 echo "Number of rounds: $NUM_ROUNDS"
 echo "Change bandits with rounds: $CHANGE_BANDITS_WITH_ROUNDS"
-echo "Order: $ORDER (0=demo-first, 1=learner-first, 2=both)"
+echo "Learner policy: $LEARNER_POLICY"
+echo "Similar exploration floor: $SIMILAR_EXPLORATION_FLOOR"
 echo "Training runs: $NUM_TRAIN_RUNS"
 echo "Validation runs: $NUM_VALID_RUNS"
 echo "Test runs: $NUM_TEST_RUNS"
@@ -99,7 +96,8 @@ python src/generate_simulations.py \
     --num_demonstrators $NUM_DEMONSTRATORS \
     --num_rounds $NUM_ROUNDS \
     $CHANGE_BANDITS_FLAG \
-    --order $ORDER \
+    --learner_policy "$LEARNER_POLICY" \
+    --similar_exploration_floor $SIMILAR_EXPLORATION_FLOOR \
     --num_train_runs $NUM_TRAIN_RUNS \
     --num_valid_runs $NUM_VALID_RUNS \
     --num_test_runs $NUM_TEST_RUNS \

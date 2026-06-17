@@ -76,6 +76,13 @@ def build_features(K: int, num_demonstrators: int, num_bandits: int) -> Features
         "y_thetas":     Array2D(shape=(num_bandits, K), dtype="float32"),
         "y_alpha_demo": Array3D(shape=(num_bandits, num_demonstrators, K), dtype="float32"),
         "y_beta_demo":  Array3D(shape=(num_bandits, num_demonstrators, K), dtype="float32"),
+
+        # Per-row provenance (the model never reads these). `learner_policy` names
+        # the learner-segment policy that generated the row; `expert_id` is the
+        # demonstrator slot (0/1) that was the expert. Used by eval to stratify
+        # accuracy by learner style.
+        "learner_policy": Value("string"),
+        "expert_id":      Value("int64"),
     })
 
 
@@ -202,4 +209,6 @@ def build_arrow_row(
         "y_thetas":           y_thetas,
         "y_alpha_demo":       y_alpha,
         "y_beta_demo":        y_beta,
+        "learner_policy":     raw_example["learner_policy"],
+        "expert_id":          raw_example["expert_id"],
     }
