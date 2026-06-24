@@ -111,6 +111,18 @@ Each event is encoded into five channels:
 
 A **QUERY** token is appended at the end for prediction readout.
 
+#### How each token type fills the five channels
+
+Real events and the two structural tokens (BANDIT_SEP, QUERY) share the same five channels. The structural tokens fill the non-applicable channels with reserved **PAD** indices so they never collide with a real value (`agent_id = num_agents`, `action_id = K`, `reward_id = 2`):
+
+| token       | bandit_ids | agent_ids                          | action_ids   | reward_ids | special_ids |
+|-------------|------------|------------------------------------|--------------|------------|-------------|
+| real event  | `b`        | `0`=learner / `1,2,…`=demonstrators | `arm` (0…K-1) | `0` or `1` | `0` (NONE)  |
+| BANDIT_SEP  | `b`        | `num_agents` (PAD)                 | `K` (PAD)    | `2` (PAD)  | `2`         |
+| QUERY       | `b`        | `num_agents` (PAD)                 | `K` (PAD)    | `2` (PAD)  | `1`         |
+
+BANDIT_SEP and QUERY differ **only** in `special_ids` (2 vs. 1); the PAD values in the other channels are identical for both.
+
 ### Batch Structure
 
 ```python
@@ -428,6 +440,20 @@ wandb agent <sweep-id>
 **EventEmbedder** → **CausalTransformer** → **Prediction Heads**
 
 - **Input**: Five-channel tokenized events
+
+The embedder is an **unconditional sum** of all five channel embeddings plus a positional embedding — every channel is looked up at every position (there is no "skip"), which is why structural tokens need reserved PAD indices for their non-applicable channels:
+
+```python
+x = (
+    self.bandit_emb(bandit_ids)
+    + self.agent_emb(agent_ids)
+    + self.action_emb(action_ids)
+    + self.reward_emb(reward_ids)
+    + self.special_emb(special_ids)
+    + self.pos_emb(pos)
+)
+```
+
 - **Transformer**: Causal attention (can't see future)
 - **Outputs**: 
   - Beta(α_theta, β_theta) for bandit payoffs [B, K]
