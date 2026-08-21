@@ -510,7 +510,7 @@ def train_one_epoch(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_name", type=str,
-                        default="demonstrations_data_04",
+                        default="demonstrations_data_02",
                         help="Dataset directory name (resolved against TRAINING_DATA_ROOT_DIR)")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=3e-4)

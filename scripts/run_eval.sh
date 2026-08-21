@@ -3,6 +3,7 @@
 #   Step 1: Evaluate model on synthetic test set
 #   Step 2: Run inference on human experiment data
 #   Step 3: Render eval report (2x2 N_total comparison figure)
+# Set EVAL_ONLY=1 to stop after step 1.
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -172,6 +173,14 @@ else
     echo "ERROR: Evaluation failed!"
     echo "=================================="
     exit 1
+fi
+
+# Stop after step 1 when EVAL_ONLY is set: synthetic test-set metrics only,
+# skipping human inference and both Quarto reports.
+#   EVAL_ONLY=1 bash scripts/run_eval.sh
+if [ -n "$EVAL_ONLY" ]; then
+    echo "EVAL_ONLY set - stopping after step 1 (no inference, no reports)."
+    exit 0
 fi
 
 # ==============================================================================

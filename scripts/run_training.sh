@@ -12,7 +12,8 @@ source "$CONDA_SETUP"
 conda activate SocialTransformer
 
 # Set parameters
-DATASET_NAME="demonstrations_data_01"
+# Override from the shell, e.g. `DATASET_NAME=demonstrations_data_03 bash scripts/run_training.sh`.
+DATASET_NAME="${DATASET_NAME:-demonstrations_data_02}"
 
 # DDP: number of GPUs on this node. Override per-invocation with
 # `NUM_GPUS=4 bash scripts/run_training.sh`. NUM_GPUS=1 is the
