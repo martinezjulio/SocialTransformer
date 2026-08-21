@@ -42,9 +42,10 @@ echo ""
 # Set parameters
 K=12
 NUM_DEMONSTRATORS=2
-NUM_ROUNDS=2
+NUM_ROUNDS=3
 CHANGE_BANDITS_WITH_ROUNDS=true
-LEARNER_POLICY="mixed"  # "mixed" = balanced across all 9 learner policies; or a single policy name for ablation
+# Override from the shell, e.g. `LEARNER_POLICY=naive-learner bash scripts/generate_simulation.sh`.
+LEARNER_POLICY="${LEARNER_POLICY:-mixed}"  # "mixed" = balanced across all 9 learner policies; or a single policy name for ablation
 SIMILAR_EXPLORATION_FLOOR=0.1  # exploration floor λ for "similar" learner policies
 NUM_TRAIN_RUNS=300000
 NUM_VALID_RUNS=10000
