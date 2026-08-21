@@ -23,6 +23,8 @@ NUM_GPUS="${NUM_GPUS:-1}"
 # Model hyperparameters
 # NOTE: BATCH_SIZE is per-rank under DDP. Effective global batch = BATCH_SIZE * NUM_GPUS.
 BATCH_SIZE=128
+# DataLoader worker processes. Override: `NUM_WORKERS=8 bash scripts/run_training.sh`.
+NUM_WORKERS="${NUM_WORKERS:-4}"
 LEARNING_RATE=0.00005
 EPOCHS=500
 DEVICE="cuda"
@@ -183,6 +185,7 @@ echo "Starting training with torchrun (nproc_per_node=$NUM_GPUS)..."
 torchrun --standalone --nproc_per_node=$NUM_GPUS src/train.py \
   --dataset_name "$DATASET_NAME" \
   --batch_size $BATCH_SIZE \
+  --num_workers $NUM_WORKERS \
   --lr $LEARNING_RATE \
   --epochs $EPOCHS \
   --device $DEVICE \

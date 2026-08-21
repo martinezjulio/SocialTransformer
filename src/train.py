@@ -28,6 +28,8 @@ from data.transforms import BeliefNormalizer
 from models.losses import get_env_theta_loss, get_demo_belief_loss, requires_normalization, experience_loss_log, get_experience_head_loss
 from utils import get_run_id, setup_training_run_directory, write_run_yaml, write_config_yaml, finalize_run_yaml, get_training_runs_dir
 
+from tqdm import tqdm
+
 import wandb
 
 
@@ -346,15 +348,16 @@ def train_one_epoch(
     if is_rank_0:
         print(f"  Loading first batch from dataloader...")
 
-    for batch_idx, batch in enumerate(loader):
+    pbar = tqdm(loader, desc="train", unit="b", disable=not is_rank_0, leave=False)
+    for batch_idx, batch in enumerate(pbar):
         if batch_idx == 0 and is_rank_0:
-            print(f"  ✓ First batch loaded! Processing...")
-            print(f"  Debug: bandit_ids range = [{batch['bandit_ids'].min().item()}, {batch['bandit_ids'].max().item()}]")
-            print(f"  Debug: agent_ids range = [{batch['agent_ids'].min().item()}, {batch['agent_ids'].max().item()}]")
-            print(f"  Debug: special_ids range = [{batch['special_ids'].min().item()}, {batch['special_ids'].max().item()}]")
-            print(f"  Debug: special_ids unique values = {batch['special_ids'].unique().tolist()}")
-            print(f"  Debug: num QUERY tokens (special_id=1) = {(batch['special_ids'] == 1).sum().item()}")
-            print(f"  Debug: round_bandit_map range = [{batch['round_bandit_map'].min().item()}, {batch['round_bandit_map'].max().item()}]")
+            tqdm.write(f"  ✓ First batch loaded! Processing...")
+            tqdm.write(f"  Debug: bandit_ids range = [{batch['bandit_ids'].min().item()}, {batch['bandit_ids'].max().item()}]")
+            tqdm.write(f"  Debug: agent_ids range = [{batch['agent_ids'].min().item()}, {batch['agent_ids'].max().item()}]")
+            tqdm.write(f"  Debug: special_ids range = [{batch['special_ids'].min().item()}, {batch['special_ids'].max().item()}]")
+            tqdm.write(f"  Debug: special_ids unique values = {batch['special_ids'].unique().tolist()}")
+            tqdm.write(f"  Debug: num QUERY tokens (special_id=1) = {(batch['special_ids'] == 1).sum().item()}")
+            tqdm.write(f"  Debug: round_bandit_map range = [{batch['round_bandit_map'].min().item()}, {batch['round_bandit_map'].max().item()}]")
         for k in ["bandit_ids", "agent_ids", "action_ids", "reward_ids", "special_ids", "pad_mask",
                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
             batch[k] = batch[k].to(device)
@@ -396,7 +399,7 @@ def train_one_epoch(
         optimizer.zero_grad()
         out = model(batch, custom_attn_mask=attn_mask)
         if batch_idx == 0 and is_rank_0:
-            print(f"  ✓ First forward pass complete! Computing loss...")
+            tqdm.write(f"  ✓ First forward pass complete! Computing loss...")
         
         # Gather targets for each example's target bandit
         target_bandits_tensor = torch.tensor(target_bandits, device=device)
@@ -493,9 +496,13 @@ def train_one_epoch(
             total_experience_head += loss_experience_head
         
         if batch_idx == 0 and is_rank_0:
-            print(f"  ✓ First batch complete! loss={loss.item():.4f}")
+            tqdm.write(f"  ✓ First batch complete! loss={loss.item():.4f}")
         if (batch_idx + 1) % 50 == 0 and is_rank_0:
-            print(f"    Progress: {batch_idx + 1}/{len(loader)} batches")
+            seen = batch_idx + 1
+            pbar.set_postfix(loss=f"{total_loss / seen:.4f}",
+                             theta=f"{total_theta / seen:.4f}",
+                             demo=f"{total_demo / seen:.4f}",
+                             exp=f"{total_experience / seen:.4f}")
 
     n = len(loader)
     return {
@@ -513,6 +520,10 @@ def main():
                         default="demonstrations_data_02",
                         help="Dataset directory name (resolved against TRAINING_DATA_ROOT_DIR)")
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--num_workers", type=int, default=0,
+                        help="DataLoader worker processes (0 = load in the main process). "
+                             "Workers prefetch while the GPU computes; 4 is enough to hide "
+                             "data time at batch_size=128.")
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -826,6 +837,7 @@ def main():
         shuffle=True,
         sampler=train_sampler,
         normalizer=normalizer if normalize_beliefs else None,
+        num_workers=args.num_workers,
     )
 
     # Validation runs on rank 0 only (see epoch loop), so no distributed sampler.
@@ -836,6 +848,7 @@ def main():
         shuffle=False,
         sampler=None,
         normalizer=normalizer if normalize_beliefs else None,
+        num_workers=args.num_workers,
     )
 
     model = build_model(
@@ -1097,7 +1110,7 @@ def main():
                 model.eval()
                 with torch.no_grad():
                     val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0,"experience_head":0.0}
-                    for batch in val_loader:
+                    for batch in tqdm(val_loader, desc="val", unit="b", leave=False):
                         for k in ["bandit_ids","agent_ids","action_ids","reward_ids","special_ids","pad_mask",
                                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
                             batch[k] = batch[k].to(device)
