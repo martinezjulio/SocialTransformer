@@ -520,6 +520,9 @@ def main():
                         default="demonstrations_data_02",
                         help="Dataset directory name (resolved against TRAINING_DATA_ROOT_DIR)")
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="RNG seed for weight init, shuffling, and the per-example "
+                             "segment-cutoff draws. Matches the generation/inference default.")
     parser.add_argument("--num_workers", type=int, default=0,
                         help="DataLoader worker processes (0 = load in the main process). "
                              "Workers prefetch while the GPU computes; 4 is enough to hide "
@@ -615,6 +618,16 @@ def main():
                         help="Weight decay for optimizer (default: 0.01)")
     
     args = parser.parse_args()
+
+    # Seed every RNG the training path touches: torch (weight init), CUDA, and
+    # Python's `random` (the per-example segment cutoff in train_one_epoch).
+    # Set before the model and loaders are built so init and shuffle order are
+    # both covered. Note this makes runs comparable and re-runnable, not
+    # bitwise-identical -- cuDNN/cuBLAS kernels remain nondeterministic unless
+    # torch.use_deterministic_algorithms(True) is also set, which costs speed.
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
     # Resolve dataset_name to full path
     if not os.path.isabs(args.dataset_name):

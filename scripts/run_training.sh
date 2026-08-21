@@ -25,6 +25,8 @@ NUM_GPUS="${NUM_GPUS:-1}"
 BATCH_SIZE=128
 # DataLoader worker processes. Override: `NUM_WORKERS=8 bash scripts/run_training.sh`.
 NUM_WORKERS="${NUM_WORKERS:-4}"
+# RNG seed for weight init / shuffling / segment-cutoff draws.
+SEED="${SEED:-42}"
 LEARNING_RATE=0.00005
 EPOCHS=500
 DEVICE="cuda"
@@ -186,6 +188,7 @@ torchrun --standalone --nproc_per_node=$NUM_GPUS src/train.py \
   --dataset_name "$DATASET_NAME" \
   --batch_size $BATCH_SIZE \
   --num_workers $NUM_WORKERS \
+  --seed $SEED \
   --lr $LEARNING_RATE \
   --epochs $EPOCHS \
   --device $DEVICE \
