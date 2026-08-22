@@ -512,7 +512,11 @@ def create_segment_mask(
                 
                 # Mask all positions from attending to this segment
                 mask[:, start_pos:end_pos] = True
-    
+
+    # Never leave a row with no visible key — softmax over an all -inf row is NaN,
+    # which silently poisons every position downstream in eval mode.
+    mask.fill_diagonal_(False)
+
     return mask
 
 

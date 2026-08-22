@@ -1,6 +1,6 @@
 
 import argparse
-from typing import Dict
+from typing import Dict, Tuple
 import math
 import os
 import sys
@@ -108,8 +108,9 @@ def create_segment_mask(
         round_bandit_map: [B, num_rounds] - which bandit for each round
 
     Returns:
-        mask: [seq_len, seq_len] or [B, seq_len, seq_len] - causal mask with segment cutoffs
-            True = masked (not attended to), False = visible
+        mask: [B, seq_len, seq_len] - per-example causal mask with segment cutoffs.
+            True = masked (not attended to), False = visible. Callers pass this to
+            attention as [B*nhead, T, T] (see train_one_epoch).
     """
     B = len(cutoffs)
     # Start with full causal mask for each position
@@ -153,11 +154,13 @@ def create_segment_mask(
                     # Mask all positions from attending to this segment
                     batch_mask[b, :, start_pos:end_pos] = True
     
-    # If all examples have the same cutoff, can return single mask
-    # Otherwise need to handle per-example masks - PyTorch expects [B*H, T, T] for multi-head attention
-    # For simplicity, return the first example's mask (works if cutoffs are similar)
-    # TODO: For proper batched masking with different cutoffs per example, need more complex handling
-    return batch_mask[0]  # Return single [T, T] mask for now
+    # Never leave a row with no visible key: a softmax over an all -inf row is NaN,
+    # and under "current_bandit_only" every position in an earlier round loses all of
+    # its keys once the cutoff passes that round. The NaN is silent in train mode but
+    # poisons the whole sequence in eval mode (fused attention path).
+    batch_mask.diagonal(dim1=-2, dim2=-1).fill_(False)
+
+    return batch_mask  # [B, T, T] — caller expands to [B*nhead, T, T]
 
 
 def save_checkpoint(
@@ -320,6 +323,143 @@ def log_dataset_artifact(wandb_run, dataset_path: str, dataset_meta: dict) -> No
         print(f"Warning: Failed to log dataset artifact to wandb: {e}")
 
 
+def sample_segment_cutoffs(batch: Dict, rng) -> Tuple[list, list]:
+    """Draw one visible-segment cutoff per example and resolve its target bandit.
+
+    Shared by training and validation so both score the same task. ``rng`` is passed
+    in explicitly rather than taken from the global stream: training passes the
+    ``random`` module (seeded once from --seed), validation passes a generator
+    reseeded at the top of every val pass so its cutoffs are identical each epoch.
+    That keeps val/loss free of resampling jitter — it drives the plateau scheduler,
+    best-model selection, and the overfitting early-stop.
+
+    Returns ``(cutoffs, target_bandits)``, both length B.
+    """
+    cutoffs, target_bandits = [], []
+    for b in range(len(batch["segment_round"])):
+        num_segments = len(batch["segment_round"][b])
+        # Randomly choose how many segments visible (at least 1)
+        visible_segs = rng.randint(1, num_segments)
+        cutoffs.append(visible_segs)
+
+        # Target bandit is the one the last visible segment belongs to.
+        target_round = batch["segment_round"][b][visible_segs - 1]
+        target_bandits.append(int(batch["round_bandit_map"][b, target_round].item()))
+    return cutoffs, target_bandits
+
+
+def compute_losses(
+    out: Dict[str, torch.Tensor],
+    batch: Dict[str, torch.Tensor],
+    target_bandits: list,
+    device: torch.device,
+    *,
+    env_loss_fn,
+    env_theta_loss: str,
+    demo_loss_fn,
+    demo_loss_weight: float,
+    experience_loss_weight: float,
+    experience_head_loss_fn,
+    experience_head_loss_weight: float,
+    normalizer=None,
+    alpha0: float = 1.0,
+    beta0: float = 1.0,
+    num_arms: int = 12,
+) -> Dict[str, torch.Tensor]:
+    """The loss stack, shared by training and validation.
+
+    Deliberately kept in one place: this used to exist as two copies, which drifted
+    until train and val were measuring different tasks (val ran full-context against
+    the last bandit while train ran a truncated context against the cutoff's bandit).
+
+    Returns a dict of ``loss`` (the weighted total, differentiable) plus its
+    components. Components are tensors except ``experience_head``, which is the
+    float 0.0 when the model has no experience head.
+    """
+    B = batch["bandit_ids"].shape[0]
+    target_bandits_tensor = torch.tensor(target_bandits, device=device)
+    batch_indices = torch.arange(B, device=device)
+
+    y_theta_target = batch["y_thetas"][batch_indices, target_bandits_tensor]      # [B, K]
+    y_alpha_target = batch["y_alpha_demo"][batch_indices, target_bandits_tensor]  # [B, D, K]
+    y_beta_target = batch["y_beta_demo"][batch_indices, target_bandits_tensor]    # [B, D, K]
+
+    # out["alpha_demo"] is [B, num_queries, D, K]; one query per bandit.
+    pred_alpha_demo = out["alpha_demo"][batch_indices, target_bandits_tensor]  # [B, D, K]
+    pred_beta_demo = out["beta_demo"][batch_indices, target_bandits_tensor]    # [B, D, K]
+
+    # Environment theta loss: branch on the configured loss function
+    if env_theta_loss == "bce":
+        pred_theta_logits = out["theta_logits"][batch_indices, target_bandits_tensor]  # [B, K]
+        loss_theta = env_loss_fn(pred_theta_logits, y_theta_target)
+    else:
+        pred_alpha_theta = out["alpha_theta"][batch_indices, target_bandits_tensor]  # [B, K]
+        pred_beta_theta = out["beta_theta"][batch_indices, target_bandits_tensor]    # [B, K]
+        loss_theta = env_loss_fn(pred_alpha_theta, pred_beta_theta, y_theta_target)
+
+    # Denormalize predictions if normalization was used
+    if normalizer is not None:
+        pred_alpha = normalizer.denormalize_alpha(pred_alpha_demo)
+        pred_beta = normalizer.denormalize_beta(pred_beta_demo)
+        target_alpha_denorm = normalizer.denormalize_alpha(y_alpha_target)
+        target_beta_denorm = normalizer.denormalize_beta(y_beta_target)
+    else:
+        pred_alpha = pred_alpha_demo
+        pred_beta = pred_beta_demo
+        target_alpha_denorm = y_alpha_target
+        target_beta_denorm = y_beta_target
+
+    # Per-demonstrator loss using the selected loss function
+    num_demonstrators = y_alpha_target.shape[1]
+    loss_demo = 0.0
+    for demo_id in range(num_demonstrators):
+        loss_demo += demo_loss_fn(
+            pred_alpha[:, demo_id, :],
+            pred_beta[:, demo_id, :],
+            target_alpha_denorm[:, demo_id, :],
+            target_beta_denorm[:, demo_id, :]
+        )
+    loss_demo = loss_demo / num_demonstrators  # Average over demonstrators
+
+    # Per-demonstrator experience loss
+    loss_experience = 0.0
+    for demo_id in range(num_demonstrators):
+        loss_experience += experience_loss_log(
+            pred_alpha[:, demo_id, :],
+            pred_beta[:, demo_id, :],
+            target_alpha_denorm[:, demo_id, :],
+            target_beta_denorm[:, demo_id, :],
+            alpha0=alpha0,
+            beta0=beta0
+        )
+    loss_experience = loss_experience / num_demonstrators
+
+    # Compute experience head loss if present (for profile methods)
+    loss_experience_head = 0.0
+    if 'N_tot_pred' in out and experience_head_loss_fn is not None:
+        loss_experience_head = experience_head_loss_fn(
+            out['N_tot_pred'],
+            target_alpha_denorm,
+            target_beta_denorm,
+            alpha0=alpha0,
+            beta0=beta0,
+            K=num_arms
+        )
+
+    loss = (loss_theta +
+            demo_loss_weight * loss_demo +
+            experience_loss_weight * loss_experience +
+            experience_head_loss_weight * loss_experience_head)
+
+    return {
+        "loss": loss,
+        "theta": loss_theta,
+        "demo": loss_demo,
+        "experience": loss_experience,
+        "experience_head": loss_experience_head,
+    }
+
+
 def train_one_epoch(
     model: BaseSocialTransformer,
     loader: DataLoader,
@@ -341,6 +481,7 @@ def train_one_epoch(
     experience_head_loss_weight: float = 1.0,
     experience_head_loss_fn=None,
     num_arms: int = 12,
+    nhead: int = 8,
     is_rank_0: bool = True,
 ) -> Dict[str, float]:
     model.train()
@@ -362,26 +503,16 @@ def train_one_epoch(
                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
             batch[k] = batch[k].to(device)
 
-        B = batch["bandit_ids"].shape[0]
         seq_len = batch["bandit_ids"].shape[1]
-        
+
         # Randomly select visible segments for each example
-        segment_cutoffs = []
-        target_bandits = []
-        
         if use_segment_masking:
-            for b in range(B):
-                num_segments = len(batch["segment_round"][b])
-                # Randomly choose how many segments visible (at least 1)
-                visible_segs = random.randint(1, num_segments)
-                segment_cutoffs.append(visible_segs)
+            segment_cutoffs, target_bandits = sample_segment_cutoffs(batch, random)
 
-                # Find which round this segment belongs to
-                target_round = batch["segment_round"][b][visible_segs - 1]
-                target_bandit = batch["round_bandit_map"][b, target_round]
-                target_bandits.append(int(target_bandit.item()))
-
-            # Create custom attention mask based on segment cutoffs
+            # Create custom attention mask based on segment cutoffs. Every example gets
+            # its own cutoff, so the mask must be per-example too: attention takes a
+            # 3-D mask of [B*nhead, T, T]. (Collapsing this to one shared [T, T] would
+            # score each example's target against a different example's context.)
             attn_mask = create_segment_mask(
                 batch["segment_boundaries"],
                 segment_cutoffs,
@@ -390,7 +521,7 @@ def train_one_epoch(
                 masking_strategy=masking_strategy,
                 segment_round=batch["segment_round"],
                 round_bandit_map=batch["round_bandit_map"],
-            )
+            ).repeat_interleave(nhead, dim=0)
         else:
             # Use full context (last bandit)
             attn_mask = None
@@ -401,83 +532,26 @@ def train_one_epoch(
         if batch_idx == 0 and is_rank_0:
             tqdm.write(f"  ✓ First forward pass complete! Computing loss...")
         
-        # Gather targets for each example's target bandit
-        target_bandits_tensor = torch.tensor(target_bandits, device=device)
-        batch_indices = torch.arange(B, device=device)
-        
-        y_theta_target = batch["y_thetas"][batch_indices, target_bandits_tensor]  # [B, K]
-        y_alpha_target = batch["y_alpha_demo"][batch_indices, target_bandits_tensor]  # [B, num_demos, K]
-        y_beta_target = batch["y_beta_demo"][batch_indices, target_bandits_tensor]   # [B, num_demos, K]
-        
-        # Extract demo predictions for target bandits
-        # out["alpha_demo"] is [B, num_queries, D, K]; target_bandits_tensor is [B] with bandit indices
-        pred_alpha_demo = out["alpha_demo"][batch_indices, target_bandits_tensor]    # [B, D, K]
-        pred_beta_demo = out["beta_demo"][batch_indices, target_bandits_tensor]      # [B, D, K]
+        losses = compute_losses(
+            out, batch, target_bandits, device,
+            env_loss_fn=env_loss_fn,
+            env_theta_loss=env_theta_loss,
+            demo_loss_fn=demo_loss_fn,
+            demo_loss_weight=demo_loss_weight,
+            experience_loss_weight=experience_loss_weight,
+            experience_head_loss_fn=experience_head_loss_fn,
+            experience_head_loss_weight=experience_head_loss_weight,
+            normalizer=normalizer,
+            alpha0=alpha0,
+            beta0=beta0,
+            num_arms=num_arms,
+        )
+        loss = losses["loss"]
+        loss_theta = losses["theta"]
+        loss_demo = losses["demo"]
+        loss_experience = losses["experience"]
+        loss_experience_head = losses["experience_head"]
 
-        # Environment theta loss: branch on the configured loss function
-        if env_theta_loss == "bce":
-            pred_theta_logits = out["theta_logits"][batch_indices, target_bandits_tensor]  # [B, K]
-            loss_theta = env_loss_fn(pred_theta_logits, y_theta_target)
-        else:
-            pred_alpha_theta = out["alpha_theta"][batch_indices, target_bandits_tensor]  # [B, K]
-            pred_beta_theta = out["beta_theta"][batch_indices, target_bandits_tensor]    # [B, K]
-            loss_theta = env_loss_fn(pred_alpha_theta, pred_beta_theta, y_theta_target)
-        
-        # Compute remaining losses (demonstrator beliefs, experience)
-        
-        # Denormalize predictions if normalization was used
-        if normalizer is not None:
-            pred_alpha = normalizer.denormalize_alpha(pred_alpha_demo)
-            pred_beta = normalizer.denormalize_beta(pred_beta_demo)
-            target_alpha_denorm = normalizer.denormalize_alpha(y_alpha_target)
-            target_beta_denorm = normalizer.denormalize_beta(y_beta_target)
-        else:
-            pred_alpha = pred_alpha_demo
-            pred_beta = pred_beta_demo
-            target_alpha_denorm = y_alpha_target
-            target_beta_denorm = y_beta_target
-        
-        # Per-demonstrator loss using the selected loss function
-        num_demonstrators = y_alpha_target.shape[1]
-        loss_demo = 0.0
-        for demo_id in range(num_demonstrators):
-            loss_demo += demo_loss_fn(
-                pred_alpha[:, demo_id, :],
-                pred_beta[:, demo_id, :],
-                target_alpha_denorm[:, demo_id, :],
-                target_beta_denorm[:, demo_id, :]
-            )
-        loss_demo = loss_demo / num_demonstrators  # Average over demonstrators
-
-        # Per-demonstrator experience loss
-        loss_experience = 0.0
-        for demo_id in range(num_demonstrators):
-            loss_experience += experience_loss_log(
-                pred_alpha[:, demo_id, :],
-                pred_beta[:, demo_id, :],
-                target_alpha_denorm[:, demo_id, :],
-                target_beta_denorm[:, demo_id, :],
-                alpha0=alpha0,
-                beta0=beta0
-            )
-        loss_experience = loss_experience / num_demonstrators
-
-        # Compute experience head loss if present (for profile methods)
-        loss_experience_head = 0.0
-        if 'N_tot_pred' in out and experience_head_loss_fn is not None:
-            loss_experience_head = experience_head_loss_fn(
-                out['N_tot_pred'],
-                target_alpha_denorm,
-                target_beta_denorm,
-                alpha0=alpha0,
-                beta0=beta0,
-                K=num_arms
-            )
-
-        loss = (loss_theta + 
-                demo_loss_weight * loss_demo + 
-                experience_loss_weight * loss_experience + 
-                experience_head_loss_weight * loss_experience_head)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -1103,6 +1177,7 @@ def main():
                 experience_head_loss_weight=args.experience_head_loss_weight,
                 experience_head_loss_fn=experience_head_loss_fn,
                 num_arms=num_arms,
+                nhead=args.nhead,
                 is_rank_0=is_rank_0,
             )
 
@@ -1121,6 +1196,13 @@ def main():
             val_stats = None
             if is_rank_0:
                 model.eval()
+                # Validation scores the same task as training: a random segment cutoff
+                # per example, the same masking_strategy, and the target bandit taken
+                # from the cutoff. The generator is reseeded here so every epoch draws
+                # the *same* cutoffs — val/loss then moves only when the model does,
+                # which matters because it drives the plateau scheduler, best-model
+                # selection, and the overfitting early-stop.
+                val_rng = random.Random(args.seed)
                 with torch.no_grad():
                     val_tot = {"loss":0.0,"theta":0.0,"demo":0.0,"experience":0.0,"experience_head":0.0}
                     for batch in tqdm(val_loader, desc="val", unit="b", leave=False):
@@ -1128,84 +1210,40 @@ def main():
                                   "round_boundaries", "round_bandit_map", "segment_boundaries", "y_thetas", "y_alpha_demo", "y_beta_demo"]:
                             batch[k] = batch[k].to(device)
 
-                        # Use full context for validation (no masking)
-                        out = model(batch, custom_attn_mask=None)
+                        seq_len = batch["bandit_ids"].shape[1]
+                        segment_cutoffs, target_bandits = sample_segment_cutoffs(batch, val_rng)
+                        attn_mask = create_segment_mask(
+                            batch["segment_boundaries"],
+                            segment_cutoffs,
+                            seq_len,
+                            device,
+                            masking_strategy=args.masking_strategy,
+                            segment_round=batch["segment_round"],
+                            round_bandit_map=batch["round_bandit_map"],
+                        ).repeat_interleave(args.nhead, dim=0)
 
-                        # Get the last bandit (final round)
-                        B = batch["bandit_ids"].shape[0]
-                        last_bandit_idx = batch["round_bandit_map"][:, -1]
-                        batch_indices = torch.arange(B, device=device)
-                        y_theta_last = batch["y_thetas"][batch_indices, last_bandit_idx]
-                        y_alpha_demo_last = batch["y_alpha_demo"][batch_indices, last_bandit_idx]
-                        y_beta_demo_last = batch["y_beta_demo"][batch_indices, last_bandit_idx]
+                        out = model(batch, custom_attn_mask=attn_mask)
 
-                        # Extract demo predictions for last bandit
-                        pred_alpha_demo_val = out["alpha_demo"][batch_indices, last_bandit_idx]    # [B, D, K]
-                        pred_beta_demo_val = out["beta_demo"][batch_indices, last_bandit_idx]      # [B, D, K]
+                        val_losses = compute_losses(
+                            out, batch, target_bandits, device,
+                            env_loss_fn=env_loss_fn,
+                            env_theta_loss=args.env_theta_loss,
+                            demo_loss_fn=demo_loss_fn,
+                            demo_loss_weight=args.demo_loss_weight,
+                            experience_loss_weight=args.experience_loss_weight,
+                            experience_head_loss_fn=experience_head_loss_fn,
+                            experience_head_loss_weight=args.experience_head_loss_weight,
+                            normalizer=normalizer,
+                            alpha0=alpha0,
+                            beta0=beta0,
+                            num_arms=num_arms,
+                        )
 
-                        # Environment theta loss: branch on the configured loss function
-                        if args.env_theta_loss == "bce":
-                            pred_theta_logits_val = out["theta_logits"][batch_indices, last_bandit_idx]  # [B, K]
-                            lt = env_loss_fn(pred_theta_logits_val, y_theta_last)
-                        else:
-                            pred_alpha_theta_val = out["alpha_theta"][batch_indices, last_bandit_idx]  # [B, K]
-                            pred_beta_theta_val = out["beta_theta"][batch_indices, last_bandit_idx]    # [B, K]
-                            lt = env_loss_fn(pred_alpha_theta_val, pred_beta_theta_val, y_theta_last)
-
-                        # Denormalize predictions if needed
-                        if normalizer is not None:
-                            pred_alpha_val = normalizer.denormalize_alpha(pred_alpha_demo_val)
-                            pred_beta_val = normalizer.denormalize_beta(pred_beta_demo_val)
-                            target_alpha_val = normalizer.denormalize_alpha(y_alpha_demo_last)
-                            target_beta_val = normalizer.denormalize_beta(y_beta_demo_last)
-                        else:
-                            pred_alpha_val = pred_alpha_demo_val
-                            pred_beta_val = pred_beta_demo_val
-                            target_alpha_val = y_alpha_demo_last
-                            target_beta_val = y_beta_demo_last
-
-                        # Per-demonstrator belief loss
-                        num_demonstrators = y_alpha_demo_last.shape[1]
-
-                        ld = 0.0
-                        for demo_id in range(num_demonstrators):
-                            ld += demo_loss_fn(
-                                pred_alpha_val[:, demo_id, :],
-                                pred_beta_val[:, demo_id, :],
-                                target_alpha_val[:, demo_id, :],
-                                target_beta_val[:, demo_id, :]
-                            )
-                        ld = ld / num_demonstrators
-
-                        # Per-demonstrator experience loss
-                        le = 0.0
-                        for demo_id in range(num_demonstrators):
-                            le += experience_loss_log(
-                                pred_alpha_val[:, demo_id, :],
-                                pred_beta_val[:, demo_id, :],
-                                target_alpha_val[:, demo_id, :],
-                                target_beta_val[:, demo_id, :],
-                                alpha0=alpha0,
-                                beta0=beta0
-                            )
-                        le = le / num_demonstrators
-
-                        # Compute experience head loss if present
-                        le_head = 0.0
-                        if 'N_tot_pred' in out and experience_head_loss_fn is not None:
-                            le_head = experience_head_loss_fn(
-                                out['N_tot_pred'],
-                                target_alpha_val,
-                                target_beta_val,
-                                alpha0=alpha0,
-                                beta0=beta0,
-                                K=num_arms
-                            )
-
-                        val_tot["loss"] += (lt + args.demo_loss_weight*ld + args.experience_loss_weight*le + args.experience_head_loss_weight*le_head).item()
-                        val_tot["theta"]+= lt.item()
-                        val_tot["demo"] += ld.item()
-                        val_tot["experience"] += le.item()
+                        val_tot["loss"] += val_losses["loss"].item()
+                        val_tot["theta"]+= val_losses["theta"].item()
+                        val_tot["demo"] += val_losses["demo"].item()
+                        val_tot["experience"] += val_losses["experience"].item()
+                        le_head = val_losses["experience_head"]
                         if isinstance(le_head, torch.Tensor):
                             val_tot["experience_head"] += le_head.item()
                         else:

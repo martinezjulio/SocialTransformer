@@ -43,7 +43,7 @@ ENV_THETA_LOSS="bce" # Options: bce, beta_nll
 DEMO_LOSS_WEIGHT=1.0
 DEMO_BELIEF_LOSS="cross_entropy"       # Options: log_mse, kl_divergence, expected_value_mse, cross_entropy
 EXPERIENCE_LOSS_WEIGHT=1.0             # Weight for N_tot experience loss (0.0 = disabled, 1.0 = equal weight)
-MASKING_STRATEGY="current_bandit_only" # Options: all_bandits, current_bandit_only
+MASKING_STRATEGY="all_bandits" # Options: all_bandits, current_bandit_only
 
 # Model variant + Experience Head Configuration.
 # Override from the shell, e.g. `MODEL_TYPE=social bash scripts/run_training.sh`.
