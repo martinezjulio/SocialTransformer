@@ -1094,13 +1094,20 @@ def main():
             beta_methods = [m for m in beta_methods if m != "theta_betas"]
 
         # Run inference on each session for all combinations
-        print(f"\nProcessing {df['session_id'].nunique()} sessions with {args.num_rollouts} rollout(s) x {2 * len(beta_methods)} combinations...")
+        print(f"\nProcessing {df['session_id'].nunique()} sessions — "
+              f"human: 1 pass; model: {len(beta_methods)} methods x {args.num_rollouts} rollouts")
 
         per_game_results = []
         per_cutoff_results = []
 
         for learner_input in tqdm(["human", "model"], desc="Learner input mode", position=0):
-            for beta_method in tqdm(beta_methods,
+            # Human mode replays the participant's recorded actions — no Thompson
+            # sampling, so beta_method is never consulted and every rollout is
+            # identical. Run it once and label it. The label is spelled out rather
+            # than "n/a" because pandas.read_csv parses "n/a" back as NaN.
+            combos = ([(m, args.num_rollouts) for m in beta_methods]
+                      if learner_input == "model" else [("not_applicable", 1)])
+            for beta_method, n_rollouts in tqdm(combos,
                                     desc=f"Beta method ({learner_input})", position=1, leave=False):
 
                 session_ids = df['session_id'].unique()
@@ -1121,7 +1128,7 @@ def main():
                         SPECIAL,
                         learner_segment_input=learner_input,
                         beta_method=beta_method,
-                        num_rollouts=args.num_rollouts,
+                        num_rollouts=n_rollouts,
                         seed=args.seed,
                         masking_strategy=masking_strategy,
                         normalizer=normalizer,
@@ -1158,7 +1165,7 @@ def main():
 
         print(f"\nDone! Per-trial rows: {len(final_per_game_df)}, per-cutoff rows: {len(final_per_cutoff_df)}")
         print(f"  Sessions: {final_per_game_df['session_id'].nunique()}")
-        print(f"  - 8 combinations x {args.num_rollouts} rollouts = {8 * args.num_rollouts} runs per session")
+        print(f"  - per session: 1 human pass + {len(beta_methods) * args.num_rollouts} model passes")
         print(f"Per-trial output: {output_path}")
         print(f"Per-cutoff outputs: {human_cutoff_path}, {model_cutoff_path}")
 

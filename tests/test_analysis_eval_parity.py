@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 # Round-structure knowledge: in a watch-first session with 3 rounds of
 # [bandit_sep, D1, L1, D2, L2, query] (6 segments/round), the 12 game_index
@@ -29,7 +30,23 @@ GAME_INDEX_TO_CUTOFF = {
 }
 
 
-def _analysis_means(hybrid_csv: Path) -> pd.DataFrame:
+@pytest.fixture(scope="session")
+def beta_method(hybrid_csv: Path) -> str:
+    """The Thompson prior both pipelines are compared on.
+
+    `theta_betas` is the historical default, but it does not exist for checkpoints
+    with a BCE payoff head — that head emits a point estimate, not a Beta posterior,
+    so `run_inference.py` drops the method. Fall back to whatever the run produced,
+    otherwise both sides filter to empty and the comparison passes vacuously.
+    """
+    df = pd.read_csv(hybrid_csv, usecols=["learner_segment_input", "beta_method"])
+    methods = set(df.loc[df["learner_segment_input"] == "model", "beta_method"].dropna())
+    if not methods:
+        pytest.skip("inference CSVs contain no model-mode rows")
+    return "theta_betas" if "theta_betas" in methods else sorted(methods)[0]
+
+
+def _analysis_means(hybrid_csv: Path, beta_method: str) -> pd.DataFrame:
     """Analysis-side: group by session/game, sum step rewards, mean over sessions.
 
     Mirrors `reports/r/reward_plots.R` for the model-mode play segment.
@@ -37,7 +54,7 @@ def _analysis_means(hybrid_csv: Path) -> pd.DataFrame:
     df = pd.read_csv(hybrid_csv)
     d = df[
         (df["learner_segment_input"] == "model")
-        & (df["beta_method"] == "theta_betas")
+        & (df["beta_method"] == beta_method)
     ].copy()
     per_game = (
         d.groupby(
@@ -64,7 +81,7 @@ def _analysis_means(hybrid_csv: Path) -> pd.DataFrame:
     ).agg(mean_reward=("game_total", "mean"), n=("game_total", "size"))
 
 
-def _eval_means(model_mode_csv: Path) -> pd.DataFrame:
+def _eval_means(model_mode_csv: Path, beta_method: str) -> pd.DataFrame:
     """Eval-side: per-session-cutoff mean across rollouts, then mean across sessions.
 
     Mirrors `reports/eval_report.qmd`'s `prepare_source` + reward summary.
@@ -72,7 +89,7 @@ def _eval_means(model_mode_csv: Path) -> pd.DataFrame:
     df = pd.read_csv(model_mode_csv)
     d = df[
         (df["learner_segment_input"] == "model")
-        & (df["beta_method"] == "theta_betas")
+        & (df["beta_method"] == beta_method)
         & (df["segment_order"] == "watch-first")
         & (df["segment_type"].isin(["demo", "learner"]))
         & (df["segment_total_reward"].notna())
@@ -97,10 +114,11 @@ def _eval_means(model_mode_csv: Path) -> pd.DataFrame:
     ).agg(mean_reward=("segment_total_reward", "mean"), n=("segment_total_reward", "size"))
 
 
-def test_analysis_and_eval_agree_on_every_game(hybrid_csv, model_mode_csv):
+def test_analysis_and_eval_agree_on_every_game(hybrid_csv, model_mode_csv, beta_method):
     """Per-(game_sequence, game_index) means match between analysis and eval."""
-    analysis = _analysis_means(hybrid_csv)
-    eval_side = _eval_means(model_mode_csv)
+    analysis = _analysis_means(hybrid_csv, beta_method)
+    eval_side = _eval_means(model_mode_csv, beta_method)
+    assert not analysis.empty, f"no analysis rows for beta_method={beta_method}"
 
     analysis = analysis.assign(
         cutoff=analysis["game_index"].astype(int).map(GAME_INDEX_TO_CUTOFF)
@@ -128,15 +146,17 @@ def test_analysis_and_eval_agree_on_every_game(hybrid_csv, model_mode_csv):
     )
 
 
-def test_sample_counts_match(hybrid_csv, model_mode_csv):
+def test_sample_counts_match(hybrid_csv, model_mode_csv, beta_method):
     """Same sessions should populate both pipelines — n must match per (seq, game)."""
-    analysis = _analysis_means(hybrid_csv)
-    eval_side = _eval_means(model_mode_csv)
+    analysis = _analysis_means(hybrid_csv, beta_method)
+    eval_side = _eval_means(model_mode_csv, beta_method)
 
     # Analysis groups by (session, rollout) so its count is N× the eval count
-    # (which collapses rollouts first). Derive N from the CSV so the test
-    # adapts to whatever NUM_ROLLOUTS the run used.
-    n_rollouts = pd.read_csv(hybrid_csv, usecols=["rollout_id"])["rollout_id"].nunique()
+    # (which collapses rollouts first). Derive N from the model-mode rows so the
+    # test adapts to whatever NUM_ROLLOUTS the run used — human-mode rows carry a
+    # single rollout and would drag the count down.
+    rid = pd.read_csv(hybrid_csv, usecols=["learner_segment_input", "rollout_id"])
+    n_rollouts = rid.loc[rid["learner_segment_input"] == "model", "rollout_id"].nunique()
     assert n_rollouts >= 1, "hybrid_csv has no rollout_id values"
 
     analysis = analysis.assign(
