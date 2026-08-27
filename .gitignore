@@ -143,4 +143,7 @@ cache/
 # renv (override *.json rule for renv config)
 !renv/settings.json
 
+# claude related 
+docs/
+
 /.quarto/
