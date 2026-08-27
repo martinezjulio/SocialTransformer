@@ -532,6 +532,7 @@ def run_inference_on_session(
     SPECIAL: Dict[str, int] = None,
     learner_segment_input: str = "human",
     beta_method: str = "theta_betas",
+    own_experience: str = "carry",
     num_rollouts: int = 1,
     seed: int = 42,
     masking_strategy: str = "all_bandits",
@@ -712,6 +713,16 @@ def run_inference_on_session(
     per_game_rows = []
     per_cutoff_rows = []
 
+    # The readout is a belief about the DEMONSTRATOR, so it carries no record of what the
+    # learner itself earned. Without an explicit tally the learner would forget its own
+    # outcomes at every segment boundary. "carry" accumulates them across a round's two play
+    # segments; "reset" clears at each segment start, reproducing the pre-fix behaviour.
+    # Counts are always keyed by round: payoffs are redrawn per round, so nothing carries
+    # between rounds.
+    own_experience_label = (
+        own_experience if learner_segment_input == "model" else "not_applicable"
+    )
+
     for rollout_id in range(num_rollouts):
         # Per-(session, rollout) RNGs so sessions are statistically independent
         # while the same --seed still produces byte-identical CSVs across runs.
@@ -725,12 +736,14 @@ def run_inference_on_session(
         # Per-game bookkeeping populated during the cutoff sweep.
         game_pred_cache = {}  # game_idx -> dict(theta/expert/novice strings, round_idx)
         learner_trajectories = {}  # game_idx -> list of (action, reward)
+        own_counts = {}  # round_idx -> [successes, failures] over arms, this rollout
 
         for cutoff in range(1, num_segments + 1):
             seg_idx = cutoff - 1
             seg = segment_info[seg_idx]
             seg_type = seg['type']
             round_idx = seg['round']
+            thompson_betas_str = ''   # set below on model-mode learner cutoffs
 
             # Model-mode learner segment: pre-pass → Thompson → splice,
             # BEFORE the recorded forward pass runs on the updated tensors.
@@ -756,6 +769,21 @@ def run_inference_on_session(
                         seg_idx,
                     )
 
+                    # Fold in the learner's own experience on this round's bandit.
+                    acc = own_counts.setdefault(
+                        int(round_idx), [np.zeros(num_arms), np.zeros(num_arms)]
+                    )
+                    if own_experience == "reset":
+                        acc[0][:] = 0.0
+                        acc[1][:] = 0.0
+                    pred_alpha = pred_alpha + torch.as_tensor(
+                        acc[0], dtype=pred_alpha.dtype, device=pred_alpha.device
+                    )
+                    pred_beta = pred_beta + torch.as_tensor(
+                        acc[1], dtype=pred_beta.dtype, device=pred_beta.device
+                    )
+                    thompson_betas_str = serialize_betas(pred_alpha, pred_beta)
+
                     # Match the actual number of events the human played in this
                     # segment rather than the model-config default — human play
                     # segments vary in length (1..T_learner) and the spliced
@@ -777,6 +805,9 @@ def run_inference_on_session(
                         reward_val = int(reward) if int(reward) in (0, 1) else 2
                         full_tensors['action_ids'][0, pos] = action_val
                         full_tensors['reward_ids'][0, pos] = reward_val
+                        if 0 <= action_idx < num_arms:
+                            acc[0][action_idx] += float(reward)
+                            acc[1][action_idx] += 1.0 - float(reward)
 
                     learner_trajectories[seg_idx_to_game_idx[seg_idx]] = trajectory
 
@@ -871,6 +902,7 @@ def run_inference_on_session(
                 'rollout_id': rollout_id,
                 'learner_segment_input': learner_segment_input,
                 'beta_method': beta_method,
+                'own_experience': own_experience_label,
                 'cutoff': cutoff,
                 'segment_type': seg_type,
                 'segment_order': segment_order,
@@ -885,6 +917,7 @@ def run_inference_on_session(
                 'expert_betas': expert_betas_str,
                 'novice_betas': novice_betas_str,
                 'recent_betas': recent_betas_str,
+                'thompson_betas': thompson_betas_str,
                 'true_payoffs': true_payoffs_str,
             })
 
@@ -913,6 +946,7 @@ def run_inference_on_session(
                     row_dict['rollout_id'] = rollout_id
                     row_dict['learner_segment_input'] = learner_segment_input
                     row_dict['beta_method'] = beta_method
+                    row_dict['own_experience'] = own_experience_label
                     row_dict['theta_betas'] = theta_str
                     row_dict['theta_predicted'] = theta_pred_str
                     row_dict['expert_betas'] = expert_str
@@ -926,6 +960,7 @@ def run_inference_on_session(
                         row_dict['rollout_id'] = rollout_id
                         row_dict['learner_segment_input'] = learner_segment_input
                         row_dict['beta_method'] = beta_method
+                        row_dict['own_experience'] = own_experience_label
                         row_dict['theta_betas'] = theta_str
                         row_dict['theta_predicted'] = theta_pred_str
                         row_dict['expert_betas'] = expert_str
@@ -952,6 +987,7 @@ def run_inference_on_session(
                             'reward_generated': bool(reward),
                             'learner_segment_input': learner_segment_input,
                             'beta_method': beta_method,
+                            'own_experience': own_experience_label,
                             'theta_betas': theta_str,
                             'theta_predicted': theta_pred_str,
                             'expert_betas': expert_str,
@@ -971,6 +1007,12 @@ def main():
         help="Number of independent rollouts per session (default: 5)")
     parser.add_argument("--seed", type=int, default=42,
         help="Base random seed for reproducibility (default: 42)")
+    parser.add_argument("--own_experience", type=str, default="both",
+        choices=["carry", "reset", "both"],
+        help="How the simulated learner treats its own successes/failures on a round's bandit: "
+             "'carry' accumulates them across the round's two play segments (plain Bayes), "
+             "'reset' clears them at each segment boundary, 'both' runs each as a separate "
+             "pass tagged in the own_experience column (default: both)")
     parser.add_argument("--masking_strategy_override", type=str, default=None,
         choices=["all_bandits", "current_bandit_only"],
         help="Override masking strategy from checkpoint (optional)")
@@ -1093,9 +1135,15 @@ def main():
         if model.env_theta_loss == "bce":
             beta_methods = [m for m in beta_methods if m != "theta_betas"]
 
+        # Own-experience variants to run. "both" keeps them in one flat output directory,
+        # separated by the own_experience column, so neither overwrites the other.
+        own_variants = (["carry", "reset"] if args.own_experience == "both"
+                        else [args.own_experience])
+
         # Run inference on each session for all combinations
         print(f"\nProcessing {df['session_id'].nunique()} sessions — "
-              f"human: 1 pass; model: {len(beta_methods)} methods x {args.num_rollouts} rollouts")
+              f"human: 1 pass; model: {len(beta_methods)} methods x {len(own_variants)} "
+              f"own-experience variant(s) x {args.num_rollouts} rollouts")
 
         per_game_results = []
         per_cutoff_results = []
@@ -1105,14 +1153,15 @@ def main():
             # sampling, so beta_method is never consulted and every rollout is
             # identical. Run it once and label it. The label is spelled out rather
             # than "n/a" because pandas.read_csv parses "n/a" back as NaN.
-            combos = ([(m, args.num_rollouts) for m in beta_methods]
-                      if learner_input == "model" else [("not_applicable", 1)])
-            for beta_method, n_rollouts in tqdm(combos,
+            combos = ([(m, v, args.num_rollouts) for m in beta_methods for v in own_variants]
+                      if learner_input == "model"
+                      else [("not_applicable", "not_applicable", 1)])
+            for beta_method, own_exp, n_rollouts in tqdm(combos,
                                     desc=f"Beta method ({learner_input})", position=1, leave=False):
 
                 session_ids = df['session_id'].unique()
                 for session_id in tqdm(session_ids,
-                                      desc=f"Sessions ({learner_input}, {beta_method})",
+                                      desc=f"Sessions ({learner_input}, {beta_method}, {own_exp})",
                                       position=2, leave=False):
                     session_df = df[df['session_id'] == session_id].copy()
 
@@ -1128,6 +1177,7 @@ def main():
                         SPECIAL,
                         learner_segment_input=learner_input,
                         beta_method=beta_method,
+                        own_experience=own_exp,
                         num_rollouts=n_rollouts,
                         seed=args.seed,
                         masking_strategy=masking_strategy,

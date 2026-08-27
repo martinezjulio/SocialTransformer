@@ -46,12 +46,25 @@ def beta_method(hybrid_csv: Path) -> str:
     return "theta_betas" if "theta_betas" in methods else sorted(methods)[0]
 
 
+def _one_variant(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep a single own-experience variant.
+
+    `run_inference.py --own_experience both` writes the carry and reset learners into the same
+    flat CSVs, distinguished only by this column. Both sides must compare like with like;
+    without the filter the analysis-side groupby merges the two variants of a rollout and
+    doubles every reward sum. Older CSVs predate the column and need no filtering.
+    """
+    if "own_experience" not in df.columns:
+        return df
+    return df[df["own_experience"].isin(["carry", "not_applicable"])]
+
+
 def _analysis_means(hybrid_csv: Path, beta_method: str) -> pd.DataFrame:
     """Analysis-side: group by session/game, sum step rewards, mean over sessions.
 
     Mirrors `reports/r/reward_plots.R` for the model-mode play segment.
     """
-    df = pd.read_csv(hybrid_csv)
+    df = _one_variant(pd.read_csv(hybrid_csv))
     d = df[
         (df["learner_segment_input"] == "model")
         & (df["beta_method"] == beta_method)
@@ -86,7 +99,7 @@ def _eval_means(model_mode_csv: Path, beta_method: str) -> pd.DataFrame:
 
     Mirrors `reports/eval_report.qmd`'s `prepare_source` + reward summary.
     """
-    df = pd.read_csv(model_mode_csv)
+    df = _one_variant(pd.read_csv(model_mode_csv))
     d = df[
         (df["learner_segment_input"] == "model")
         & (df["beta_method"] == beta_method)
@@ -155,7 +168,8 @@ def test_sample_counts_match(hybrid_csv, model_mode_csv, beta_method):
     # (which collapses rollouts first). Derive N from the model-mode rows so the
     # test adapts to whatever NUM_ROLLOUTS the run used — human-mode rows carry a
     # single rollout and would drag the count down.
-    rid = pd.read_csv(hybrid_csv, usecols=["learner_segment_input", "rollout_id"])
+    rid = _one_variant(pd.read_csv(
+        hybrid_csv, usecols=["learner_segment_input", "rollout_id", "own_experience"]))
     n_rollouts = rid.loc[rid["learner_segment_input"] == "model", "rollout_id"].nunique()
     assert n_rollouts >= 1, "hybrid_csv has no rollout_id values"
 
