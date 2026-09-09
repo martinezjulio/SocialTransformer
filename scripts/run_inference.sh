@@ -39,11 +39,6 @@ SEED=42  # Base random seed for reproducibility
 WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
 CHECKPOINT_SOURCE="wandb_artifact"
 
-# Option 3: Load best model from wandb sweep (uncomment to use)
-# Format: "entity/project/sweep_id"
-#WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/74zpyuvn"
-#CHECKPOINT_SOURCE="wandb_sweep"
-
 # Print configuration
 echo "=================================="
 echo "Inference Configuration"
@@ -59,8 +54,6 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     echo "  Local path: $CHECKPOINT_PATH"
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     echo "  Wandb artifact: $WANDB_ARTIFACT"
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    echo "  Wandb sweep: $WANDB_SWEEP"
 fi
 echo ""
 echo "Note: Model configuration (num_arms, num_agents, T_learner, etc.)"
@@ -85,14 +78,9 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         echo "ERROR: WANDB_ARTIFACT not set when CHECKPOINT_SOURCE=wandb_artifact"
         exit 1
     fi
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    if [ -z "$WANDB_SWEEP" ]; then
-        echo "ERROR: WANDB_SWEEP not set when CHECKPOINT_SOURCE=wandb_sweep"
-        exit 1
-    fi
 else
     echo "ERROR: Invalid CHECKPOINT_SOURCE: $CHECKPOINT_SOURCE"
-    echo "Must be one of: local, wandb_artifact, wandb_sweep"
+    echo "Must be one of: local, wandb_artifact"
     exit 1
 fi
 
@@ -123,15 +111,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
         --wandb_artifact "$WANDB_ARTIFACT" \
-        --device $DEVICE \
-        --num_rollouts $NUM_ROLLOUTS \
-        --seed $SEED \
-        $MASKING_STRATEGY_FLAG \
-        $PROFILE_METHOD_FLAG
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    python src/run_inference.py \
-        --experiment_data_path "$EXPERIMENT_DATA_PATH" \
-        --wandb_sweep "$WANDB_SWEEP" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \

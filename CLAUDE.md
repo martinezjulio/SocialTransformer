@@ -1,197 +1,63 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+SocialTransformer: a transformer that observes demonstrators playing multi-armed
+bandits over several rounds and predicts arm payoffs plus each demonstrator's
+belief state as Beta distributions. Human experiment data is analyzed in R/Quarto.
 
-## Project Overview
-
-SocialTransformer is a transformer-based model for learning demonstrator beliefs and bandit payoffs from sequential observations. It models social learning where a learner observes multiple demonstrators interacting with multi-armed bandits across multiple rounds, predicting both bandit arm payoffs and individual demonstrator belief states as Beta distributions.
-
-## Environment Setup
+## Environment
 
 ```bash
 source /home/julio/miniforge3/etc/profile.d/conda.sh
 conda activate SocialTransformer
 ```
 
-Python 3.11, PyTorch 2.9.1+cu130, wandb for experiment tracking.
+## Out-of-repo directories (.env contract)
 
-## Directory Configuration
+Data and experiment outputs live outside the repo. Copy `.env.example` to `.env`
+and set absolute paths; every script in `scripts/` sources it. Dataset names
+(e.g. `demonstrations_data_04`) are given per script or sweep and resolved by
+`train.py` against `TRAINING_DATA_ROOT_DIR`. See `.env.example` for the
+variable list.
 
-Out-of-repo directories (data, experiments) are configured via a `.env` file in the repo root. Copy `.env.example` to `.env` and set absolute paths for your machine:
-
-```bash
-cp .env.example .env
-# Edit .env with your paths:
-#   TRAINING_DATA_ROOT_DIR=/path/to/data
-#   OUTPUT_DATA_DIR=/path/to/experiments/dev
-#   EXPERIMENT_DATA_DIR=/path/to/experiment_data
-```
-
-All shell scripts source `.env` automatically. Dataset names (e.g., `demonstrations_data_04`) are specified per-script/sweep and resolved against `TRAINING_DATA_ROOT_DIR` by `train.py`.
-
-## Common Commands
+## Running things
 
 ```bash
-# Generate dataset (auto-increments dataset name)
-bash scripts/generate_simulation.sh
-
-# Train model
-bash scripts/run_training.sh
-
-# Evaluate on test set
-bash scripts/run_eval.sh
-
-# Run inference on human experiment data
-bash scripts/run_inference.sh
-
-# Continue training from checkpoint
-./scripts/continue_training.sh --checkpoint <run_id> --source wandb --epochs 150
-
-# Hyperparameter sweep
-wandb sweep src/Sweeps/Sweep_Version_*.yaml
-wandb agent <sweep-id>
-
-# Resume incomplete sweep runs after crash/preemption
-./scripts/complete_sweep.sh <sweep_id>
+bash scripts/run_training.sh      # train
+bash scripts/run_eval.sh          # evaluate on synthetic test set
+bash scripts/run_inference.sh     # run model on human experiment data
+pytest tests/                     # invariants on generated outputs; see tests/README.md
+wandb sweep src/Sweeps/Sweep_Version_*.yaml && wandb agent <sweep-id>
+bash scripts/setup_r_env.sh       # one-time R packages via renv
+bash scripts/run_analysis.sh      # render Quarto reports in reports/
 ```
 
-Lightweight pytest suite under `tests/`. Run with `pytest tests/` inside the
-`SocialTransformer` conda env. Tests validate invariants of generated
-artifacts under `$OUTPUT_DATA_DIR` and auto-skip when required CSVs are
-missing. Broader validation still happens via `eval.py` against held-out
-test sets.
+## Design decisions (do not silently revisit)
 
-## Architecture
+- **Segment-level masking**: each training example picks 1..N visible segments,
+  masks later segments in attention, and predicts for the last visible
+  segment's bandit. Evaluation sweeps this cutoff. See `src/train.py`.
+- **Beta outputs, not point estimates**: heads emit Beta(alpha, beta). Theta
+  uses Beta NLL; beliefs use log-MSE, KL, or cross-entropy against true
+  pre-episode counts. See `src/models/losses.py`.
+- **Per-demonstrator beliefs**: predicted separately per demonstrator, never
+  averaged.
+- **Model factory boundary**: `build_model(model_type, config)` in
+  `src/models/__init__.py` is the only constructor used by train, eval, and
+  inference; it accepts the pre-rename type strings as aliases so old
+  checkpoints still load.
 
-### Pipeline: Data Generation → Training → Evaluation → Inference
+## Checkpoints
 
-1. **`src/generate_simulations.py`** — Creates synthetic multi-round bandit scenarios with expert/novice demonstrators. Outputs sharded `.pt` files with `manifest.json` per split.
+`BaseSocialTransformer.load_checkpoint` (in `src/models/base.py`) takes exactly
+one of `local_path` or `wandb_artifact` (`entity/project/artifact:alias`).
+wandb downloads are cached under
+`$OUTPUT_DATA_DIR/training_runs/wandb_<id>/checkpoints/` and reused.
 
-2. **`src/data/dataloader.py`** — Loads shards via `ShardedExamplesDataset`, tokenizes events into 5 channels (`bandit_ids`, `agent_ids`, `action_ids`, `reward_ids`, `special_ids`) via `BanditSequenceDataset`. Agent IDs are remapped: 0=learner, 1+=demonstrators. A QUERY token is appended for prediction readout. **`src/data/transforms.py`** provides `BeliefNormalizer` for target normalization.
+## Eval output naming
 
-3. **`src/models/`** — Model package built around an ABC contract + self-contained concrete models:
-   - **`base.py`** — `BaseSocialTransformer(nn.Module, ABC)`. The contract every model adheres to: `@abstractmethod forward`, plus concrete `save_checkpoint`, `load_checkpoint_from_local`, and `load_checkpoint_from_wandb_artifact` methods inherited by every model.
-   - **`components.py`** — Shared building blocks (`EventEmbedder`, `CausalTransformerEncoder`, `BanditPayoffsHead`, `DemoBeliefsHead`, `DemoExperienceHead`). Pure library.
-   - **`social_model.py`** — The default `SocialTransformer` (no_profile). Fully self-contained: owns its `__init__` and an inline flat `forward` — no hooks.
-   - **`profile_social_model.py`** — Profile-aware variants. `ProfileSocialTransformer` (cross_attention + agent_pooling) and `LearnedProfileTransformer` are each fully self-contained (own `__init__` and inline `forward`); both inherit directly from `BaseSocialTransformer`. Also contains the `ProfileExtractor` base class and its three subclasses.
-   - **`__init__.py`** — `build_model(profile_method, config)` factory used by `train.py`, `eval.py`, and `run_inference.py`.
-   - **`losses.py`** — Loss functions (Beta NLL, belief losses, experience loss).
-
-   Inference-time utilities (Thompson sampling) live separately in **`src/inference/`** (`thompson_sample_action` in `inference.py`). Checkpoint I/O is owned by `BaseSocialTransformer` itself — there is no separate `load_checkpoint` module.
-
-4. **`src/train.py`** — Training loop with **segment-level masking**: each example randomly selects 1..N visible segments, masks future segments in attention, and predicts for the bandit corresponding to the last visible segment's round. This teaches the model to predict from variable context lengths.
-
-5. **`src/eval/eval.py`** — Evaluates model at different context cutoffs (number of visible segments), measuring theta prediction and demonstrator belief accuracy.
-
-6. **`src/run_inference.py`** — Loads a trained model and runs inference on human experiment data via a unified cutoff sweep over the full tokenized session. Human mode uses the real learner actions; model mode runs a pre-segment forward pass per learner segment, feeds the resulting belief into Thompson sampling, and splices the sampled actions back into the shared tensors so later cutoffs condition on the simulated play. Emits two output schemas per run: `experiment_trial_predictions.csv` (per-trial behavior rows containing both human and model learner segments) and `experiment_cutoff_{human,model}_predictions.csv` (per-cutoff posterior rows for the N_total experience plots).
-
-### Key Design Decisions
-
-- **Beta distribution outputs**: The model predicts Beta(α,β) parameters, not point estimates. Theta loss uses Beta NLL; belief loss uses log-MSE, KL, or cross-entropy against true pre-episode counts.
-- **Per-demonstrator predictions**: Beliefs are predicted separately per demonstrator (not averaged), capturing individual expertise differences.
-- **Model types** (CLI flag `--model_type`): `social` (default, `SocialTransformer`), `social_profile_cross_attention` and `social_profile_agent_pooling` (`ProfileSocialTransformer`), `social_profile_learned` (`LearnedProfileTransformer`) — different ways to incorporate demonstrator identity into predictions. The `build_model` factory dispatches on this value and also accepts the pre-rename strings (`no_profile`, `cross_attention`, `agent_pooling`, `learned_profile`) as aliases so old checkpoints/configs still load.
-- **Head input configurations** (profile variants only): Each prediction head (`theta`, `demo_beliefs`, `experience`) can use `query_only`, `profiles_only`, or `query_and_profiles`. The no-profile model hardcodes `query_only`.
-- **Masking strategies**: `all_bandits` vs `current_bandit_only` — whether to predict for all bandits or only the current round's bandit.
-
-### Run Management
-
-Experiment outputs are organized under `$OUTPUT_DATA_DIR/` (set in `.env`):
-
-```
-$OUTPUT_DATA_DIR/
-  training_runs/              # Per-run directories keyed by wandb ID
-    wandb_<id>/
-      checkpoints/            # .pt files (local or downloaded from wandb)
-      wandb/                  # wandb logs
-  eval/                       # All eval + inference outputs (flat layout, overwrites on re-run)
-    data/                     # CSVs — naming: {source}_{shape}[_{mode}]_predictions.csv
-                              #   test_trial_model_predictions.csv        (from eval.py)
-                              #   test_cutoff_model_predictions.csv       (from eval.py)
-                              #   experiment_trial_predictions.csv        (from run_inference.py — both human & model rows)
-                              #   experiment_cutoff_human_predictions.csv (from run_inference.py)
-                              #   experiment_cutoff_model_predictions.csv (from run_inference.py)
-    figures/                  # eval_report + hybrid_model_pipeline_eval figures
-                              #   hybrid_model_pipeline_sessions/ — per-session PNGs
-    metadata/                 # eval_run.yaml, eval_config.yaml (from eval.py)
-                              # inference_run.yaml, inference_config.yaml (from run_inference.py)
-  analysis/                   # Analysis outputs (overwrites on re-run)
-    data/                     # analysis CSVs
-    figures/                  # analysis plots
-    metadata/                 # config.yaml, run.yaml
-```
-
-Training runs get per-run directories (keyed by wandb ID) under `training_runs/`. Eval, inference, and analysis use flat directories that overwrite on re-run. Both `eval.py` and `run_inference.py` now write to `eval/` (one shared flat layout). File naming encodes source (`test` = synthetic test set, `experiment` = human data) and shape (`trial` = per-trial rows, `cutoff` = per-cutoff posterior rows). The `experiment_trial_predictions.csv` file contains both `learner_segment_input ∈ {human, model}` rows in the same file and therefore carries no mode suffix.
-
-### Checkpoint Loading
-
-Three sources supported via `src/models/load_checkpoint.py` across eval/inference scripts:
-- `local` — file path to `.pt` checkpoint
-- `wandb_artifact` — `entity/project/artifact:alias`
-- `wandb_sweep` — `entity/project/sweep_id` (loads best model)
-
-Downloaded wandb checkpoints are cached under `training_runs/wandb_<id>/checkpoints/` for reuse across eval/inference runs. Subsequent loads skip the download if cached files exist.
-
-Checkpoints store model weights, optimizer/scheduler state, training config, and epoch info. Model architecture params are auto-detected from checkpoint config.
-
-## Data Format
-
-Events are tuples `(bandit_id, agent_id, action, reward)`:
-- `agent_id`: 0-N for demonstrators, 99 for learner, -1 for BANDIT_SEP tokens
-- Datasets stored as sharded `.pt` files under `$TRAINING_DATA_ROOT_DIR/demonstrations_data_NN/` with train/val/test splits
-- Dataset parameters (K, num_demonstrators, num_rounds) are auto-detected from `manifest.json`
-
-## R/Quarto Analysis Environment
-
-The R/Quarto analysis environment uses `renv` (at repo root) for R package management and the conda environment's R runtime. Quarto reports live in `reports/`, R scripts in `reports/r/`.
-
-### Setup
-
-```bash
-# One-time: install R packages
-bash scripts/setup_r_env.sh
-
-# Render analysis (requires experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/data/)
-bash scripts/run_analysis.sh
-```
-
-### Structure
-
-```
-repo root/
-├── .Rprofile                          # Activates renv on R startup
-├── _quarto.yml                        # Anchors Quarto project root
-├── renv.lock                          # Locked R dependencies
-├── renv/                              # renv bootstrap files
-└── reports/
-    ├── analysis_report.qmd                # Behavior analysis (reward, choice, entropy, correlations) — reads experiment_trial_predictions.csv
-    ├── eval_report.qmd                     # N_total experience comparison (3x2 plot) — reads the per-cutoff CSVs in eval/data/
-    ├── hybrid_model_pipeline_eval.qmd      # Per-session + cross-session rank-space diagnostics (issue #11) — reads experiment_trial_predictions.csv + experiment_cutoff_model_predictions.csv (or the test_* pair when data_source=test)
-    └── r/
-        ├── reward_plots.R                  # R helper scripts (plots, preprocessing)
-        ├── entropy_plots.R
-        ├── choice_frequencies.R
-        ├── correlations.R
-        ├── individual_behavior.R
-        ├── aggregate_behavior_distribution.R
-        ├── average_behavior_distribution.R
-        ├── individual_behavior_distribution.R
-        ├── experience_plots.R
-        ├── behavior_distribution_average.R
-        ├── hybrid_pipeline_plots.R         # Hybrid pipeline rank-space plotting helpers (issue #11)
-        └── preprocess.R
-```
-
-### Key Details
-
-- **R runtime**: Installed via conda (`r-base`) in the `SocialTransformer` environment.
-- **R packages**: Managed by `renv` (at repo root, independent of conda). Run `renv::restore()` to install from `renv.lock`.
-- **Data paths**: `analysis_report.qmd` reads `OUTPUT_DATA_DIR` and `EXPERIMENT_DATA_DIR` from the root `.env` file via the `dotenv` R package; the preprocessed CSV path is built from `EXPERIMENT_DATA_DIR` + report params (`experiment_name`, `version`).
-- **`here::here()`** resolves to the repo root (anchored by `.git/`). No `.here` sentinel needed.
-- **Figures**: All plots save to `$OUTPUT_DATA_DIR/analysis/figures/` when called from `analysis_report.qmd` (via `fig_dir` parameter). R scripts fall back to `reports/r/figures/` (gitignored) when run standalone.
-- **Preprocessing**: `reports/r/preprocess.R` reads/writes experiment data from `$EXPERIMENT_DATA_DIR`.
-
-## W&B Integration
-
-- Project: `social-belief-modeling`, Entity: `juliomartinez-individual`
-- Sweep configs in `src/Sweeps/Sweep_Version_*.yaml` (Bayesian optimization)
-- `src/complete_sweep.py` recovers crashed/killed/failed sweep runs
+`eval.py` and `run_inference.py` both write to `$OUTPUT_DATA_DIR/eval/` and
+overwrite on re-run. CSVs in `eval/data/` are named
+`{source}_{shape}[_{mode}]_predictions.csv`: source is `test` (synthetic) or
+`experiment` (human), shape is `trial` (per-trial rows) or `cutoff` (per-cutoff
+posterior rows), mode is `human` or `model`. `experiment_trial_predictions.csv`
+holds both modes in one file, distinguished by `learner_segment_input`.

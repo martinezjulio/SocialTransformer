@@ -53,11 +53,6 @@ MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
 CHECKPOINT_SOURCE="wandb_artifact"
 
-# Option 3: Load best model from wandb sweep (uncomment to use)
-# Format: "entity/project/sweep_id"
-#WANDB_SWEEP="juliomartinez-individual/social-belief-modeling/74zpyuvn"
-#CHECKPOINT_SOURCE="wandb_sweep"
-
 # Print configuration
 echo "=================================="
 echo "Evaluation Configuration"
@@ -77,8 +72,6 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     echo "  Local path: $CHECKPOINT_PATH"
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     echo "  Wandb artifact: $WANDB_ARTIFACT"
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    echo "  Wandb sweep: $WANDB_SWEEP"
 fi
 echo "=================================="
 echo ""
@@ -101,14 +94,9 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         echo "ERROR: WANDB_ARTIFACT not set when CHECKPOINT_SOURCE=wandb_artifact"
         exit 1
     fi
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    if [ -z "$WANDB_SWEEP" ]; then
-        echo "ERROR: WANDB_SWEEP not set when CHECKPOINT_SOURCE=wandb_sweep"
-        exit 1
-    fi
 else
     echo "ERROR: Invalid CHECKPOINT_SOURCE: $CHECKPOINT_SOURCE"
-    echo "Must be one of: local, wandb_artifact, wandb_sweep"
+    echo "Must be one of: local, wandb_artifact"
     exit 1
 fi
 
@@ -145,14 +133,6 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/eval/eval.py \
         --test_data_dir "$TEST_DATA_DIR" \
         --wandb_artifact "$WANDB_ARTIFACT" \
-        --device $DEVICE \
-        $MAX_EXAMPLES_FLAG \
-        $MASKING_STRATEGY_FLAG \
-        $PROFILE_METHOD_FLAG
-elif [ "$CHECKPOINT_SOURCE" = "wandb_sweep" ]; then
-    python src/eval/eval.py \
-        --test_data_dir "$TEST_DATA_DIR" \
-        --wandb_sweep "$WANDB_SWEEP" \
         --device $DEVICE \
         $MAX_EXAMPLES_FLAG \
         $MASKING_STRATEGY_FLAG \
