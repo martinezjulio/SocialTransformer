@@ -1,6 +1,6 @@
 """Hierarchical Thompson-sampling policy models for the human bandit choices.
 
-The models are defined in docs/Model_0.md and docs/Model_1.md and fitted from
+The models are defined in docs/Model_0.md, Model_1.md and Model_2.md and fitted from
 notebooks/analysis.py section 6. This module holds everything that does not depend on the
 notebook's state: the grids' constants, the win-probability quadrature that tabulates each
 belief's log-policy on a grid, the numpyro model that interpolates that grid at fitted
@@ -102,8 +102,10 @@ def hierarchical(name, plate, mu_scale, tau_scale):
     return numpyro.deterministic(name, mu + tau * z)
 
 
-def policy_model(part, logp, act, n_part, prev_arm, prev_rew, kappa=True, own=False, habit=False):
-    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md).
+def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, kappa=True, own=False,
+                 habit=False, trend=False):
+    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md)
+    and round trends on the trust parameters (docs/Model_2.md).
 
     `logp` is one belief's log-probability grid whose axes after the trial axis are, in order,
     the ones the flags ask for: kappa=True adds a |KAPPA| axis, interpolated at each
@@ -112,16 +114,25 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, kappa=True, own=Fa
     linear in lambda_carry because of its zero knot). Both flags: the trilinear Both cells.
     Neither: the grid's only column, a belief with nothing to fit. habit=True adds
     b_{i,t} = rho0_i + rhow_i * prev_rew to the previous arm's log-probability before
-    renormalising; the lapse comes last."""
+    renormalising; the lapse comes last. trend=True adds delta * rnd, one group-level slope
+    each, to every trial's log kappa and log lambda_within before interpolation; rnd is the
+    centred round index, so the other parameters keep their meaning at the middle round."""
     plate = numpyro.plate("participant", n_part)
     n, lq = logp.shape[0], logp
+    if trend:
+        dk = numpyro.sample("delta_kappa", dist.Normal(0., 0.5))
+        dw = numpyro.sample("delta_lambda_within", dist.Normal(0., 0.5))
     if kappa:
-        lk = hierarchical("log_kappa", plate, 0.5, 0.3)
-        lq = interp(lk[part], LOGK, lq)                     # log p at this participant's kappa
+        lk = hierarchical("log_kappa", plate, 0.5, 0.3)[part]
+        if trend:
+            lk = lk + dk * rnd
+        lq = interp(lk, LOGK, lq)                           # log p at this trial's kappa
     if own:
-        lw = numpyro.sample("log_lambda_within", dist.Normal(0., 1.5))
+        lw = jnp.full(n, numpyro.sample("log_lambda_within", dist.Normal(0., 1.5)))
         lc = numpyro.sample("lambda_carry", dist.HalfNormal(4.))
-        lq = interp(jnp.full(n, lc), LAM_C_J, interp(jnp.full(n, lw), LOG_LAM_W, lq))
+        if trend:
+            lw = lw + dw * rnd
+        lq = interp(jnp.full(n, lc), LAM_C_J, interp(lw, LOG_LAM_W, lq))
     if not (kappa or own):
         lq = logp[:, 0]
     if habit:
@@ -137,15 +148,17 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, kappa=True, own=Fa
 
 class Trials(NamedTuple):
     """The per-trial data every fit shares. act: arm chosen; part: participant index; prev_arm /
-    prev_rew: the previous trial of this segment (-1 / 0 on its first trial)."""
+    prev_rew: the previous trial of this segment (-1 / 0 on its first trial); rnd: the round,
+    centred (round 1..3 -> -1, 0, 1), read only under trend=True."""
     act: np.ndarray
     part: np.ndarray
     n_part: int
     prev_arm: np.ndarray
     prev_rew: np.ndarray
+    rnd: np.ndarray
 
 
-def fit(logp, data, kappa=True, own=False, habit=False, seed=0, init=None,
+def fit(logp, data, kappa=True, own=False, habit=False, trend=False, seed=0, init=None,
         num_warmup=1500, num_samples=2500):
     """Fit policy_model to one grid. Returns a dict: every group-level site's draws (mu_*,
     tau_*, the lambdas), the pointwise WAIC elpd, and two r_hats.
@@ -156,8 +169,8 @@ def fit(logp, data, kappa=True, own=False, habit=False, seed=0, init=None,
     wide range of kappa leaves that individual barely identified, which shows up here and
     nowhere else. `init`: site -> value to start every chain from, for a multimodal cell."""
     args = (jnp.asarray(data.part), jnp.asarray(logp), jnp.asarray(data.act), data.n_part,
-            jnp.asarray(data.prev_arm), jnp.asarray(data.prev_rew))
-    kw = dict(kappa=kappa, own=own, habit=habit)
+            jnp.asarray(data.prev_arm), jnp.asarray(data.prev_rew), jnp.asarray(data.rnd))
+    kw = dict(kappa=kappa, own=own, habit=habit, trend=trend)
     kernel = NUTS(policy_model, target_accept_prob=0.95,
                   **({"init_strategy": init_to_value(values=init)} if init else {}))
     mc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=N_CHAINS,
@@ -175,7 +188,7 @@ def fit(logp, data, kappa=True, own=False, habit=False, seed=0, init=None,
 
 def fit_many(jobs, data, workers=4, **kw):
     """Fit several grids at once, each in its own process (N_CHAINS chains each), `workers` at
-    a time. jobs: name -> dict(logp=array, kappa=..., own=..., habit=..., init=...). Returns
+    a time. jobs: name -> dict(logp=array, kappa=..., own=..., habit=..., trend=..., init=...). Returns
     name -> fit result, in job order. Extra keyword arguments go to fit() for every job.
 
     Separate interpreters rather than a multiprocessing pool: jax's device count is fixed at
@@ -212,6 +225,6 @@ if __name__ == "__main__":                                   # one fit_many work
     with open(sys.argv[1], "rb") as f:
         job = pickle.load(f)
     result = fit(job["logp"], job["data"], **{k: job.get(k, d) for k, d in
-                 dict(kappa=True, own=False, habit=False, init=None).items()}, **job["kw"])
+                 dict(kappa=True, own=False, habit=False, trend=False, init=None).items()}, **job["kw"])
     with open(sys.argv[2], "wb") as f:
         pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
