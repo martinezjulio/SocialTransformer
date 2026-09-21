@@ -1,6 +1,6 @@
 """Hierarchical Thompson-sampling policy models for the human bandit choices.
 
-The models are defined in docs/Model_0.md, Model_1.md and Model_2.md and fitted from
+The models are defined in docs/Model_0.md to Model_3.md and fitted from
 notebooks/analysis.py section 6. This module holds everything that does not depend on the
 notebook's state: the grids' constants, the win-probability quadrature that tabulates each
 belief's log-policy on a grid, the numpyro model that interpolates that grid at fitted
@@ -102,10 +102,11 @@ def hierarchical(name, plate, mu_scale, tau_scale):
     return numpyro.deterministic(name, mu + tau * z)
 
 
-def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, kappa=True, own=False,
-                 habit=False, trend=False):
-    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md)
-    and round trends on the trust parameters (docs/Model_2.md).
+def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kappa=True,
+                 own=False, habit=False, trend=False, mix=False, logp2=None):
+    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md),
+    round trends on the trust parameters (docs/Model_2.md), and a per-trial mixture of two
+    belief sources (docs/Model_3.md, 3a-switch).
 
     `logp` is one belief's log-probability grid whose axes after the trial axis are, in order,
     the ones the flags ask for: kappa=True adds a |KAPPA| axis, interpolated at each
@@ -116,9 +117,13 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, kappa=True, o
     b_{i,t} = rho0_i + rhow_i * prev_rew to the previous arm's log-probability before
     renormalising; the lapse comes last. trend=True adds delta * rnd, one group-level slope
     each, to every trial's log kappa and log lambda_within before interpolation; rnd is the
-    centred round index, so the other parameters keep their meaning at the middle round."""
+    centred round index, so the other parameters keep their meaning at the middle round.
+    mix=True reads a second grid, logp2, at the same parameters and tilt, and mixes the two
+    finished policies: weight omega on logp's, 1 - omega on logp2's, where omega is
+    omega_E_i on trials whose last watched demonstrator was the expert (last_exp) and
+    omega_N_i on the others, each per participant on the logit scale."""
     plate = numpyro.plate("participant", n_part)
-    n, lq = logp.shape[0], logp
+    n = logp.shape[0]
     if trend:
         dk = numpyro.sample("delta_kappa", dist.Normal(0., 0.5))
         dw = numpyro.sample("delta_lambda_within", dist.Normal(0., 0.5))
@@ -126,21 +131,37 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, kappa=True, o
         lk = hierarchical("log_kappa", plate, 0.5, 0.3)[part]
         if trend:
             lk = lk + dk * rnd
-        lq = interp(lk, LOGK, lq)                           # log p at this trial's kappa
     if own:
         lw = jnp.full(n, numpyro.sample("log_lambda_within", dist.Normal(0., 1.5)))
         lc = numpyro.sample("lambda_carry", dist.HalfNormal(4.))
         if trend:
             lw = lw + dw * rnd
-        lq = interp(jnp.full(n, lc), LAM_C_J, interp(lw, LOG_LAM_W, lq))
-    if not (kappa or own):
-        lq = logp[:, 0]
+    if mix:
+        lo_e = hierarchical("logit_omega_E", plate, 1.5, 1.0)
+        lo_n = hierarchical("logit_omega_N", plate, 1.5, 1.0)
+        numpyro.deterministic("omega_E", jax.nn.sigmoid(lo_e))
+        numpyro.deterministic("omega_N", jax.nn.sigmoid(lo_n))
     if habit:
         rho0 = hierarchical("rho0", plate, 2.0, 1.0)
         rhow = hierarchical("rhow", plate, 2.0, 1.0)
         b = (rho0[part] + rhow[part] * prev_rew) * (prev_arm >= 0)   # no previous arm: no tilt
-        lq = lq + b[:, None] * jax.nn.one_hot(jnp.clip(prev_arm, 0), K_ARMS)
-    lq = lq - logsumexp(lq, -1, keepdims=True)              # renormalise after the tilt
+
+    def policy(lq):
+        """One grid -> the normalised log-policy at this trial's parameters, tilt included."""
+        if kappa:
+            lq = interp(lk, LOGK, lq)                       # log p at this trial's kappa
+        if own:
+            lq = interp(jnp.full(n, lc), LAM_C_J, interp(lw, LOG_LAM_W, lq))
+        if not (kappa or own):
+            lq = lq[:, 0]
+        if habit:
+            lq = lq + b[:, None] * jax.nn.one_hot(jnp.clip(prev_arm, 0), K_ARMS)
+        return lq - logsumexp(lq, -1, keepdims=True)        # renormalise after the tilt
+
+    lq = policy(logp)
+    if mix:
+        lo = jnp.where(last_exp, lo_e[part], lo_n[part])[:, None]
+        lq = jnp.logaddexp(jax.nn.log_sigmoid(lo) + lq, jax.nn.log_sigmoid(-lo) + policy(logp2))
     numpyro.sample("a", dist.Categorical(logits=lapse_mix(lq, jnp)), obs=act)
 
 
@@ -149,19 +170,22 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, kappa=True, o
 class Trials(NamedTuple):
     """The per-trial data every fit shares. act: arm chosen; part: participant index; prev_arm /
     prev_rew: the previous trial of this segment (-1 / 0 on its first trial); rnd: the round,
-    centred (round 1..3 -> -1, 0, 1), read only under trend=True."""
+    centred (round 1..3 -> -1, 0, 1), read only under trend=True; last_exp: the expert was the
+    last demonstrator watched, read only under mix=True."""
     act: np.ndarray
     part: np.ndarray
     n_part: int
     prev_arm: np.ndarray
     prev_rew: np.ndarray
     rnd: np.ndarray
+    last_exp: np.ndarray
 
 
-def fit(logp, data, kappa=True, own=False, habit=False, trend=False, seed=0, init=None,
-        num_warmup=1500, num_samples=2500):
-    """Fit policy_model to one grid. Returns a dict: every group-level site's draws (mu_*,
-    tau_*, the lambdas), the pointwise WAIC elpd, and two r_hats.
+def fit(logp, data, kappa=True, own=False, habit=False, trend=False, mix=False, logp2=None,
+        seed=0, init=None, num_warmup=1500, num_samples=2500):
+    """Fit policy_model to one grid (two under mix=True). Returns a dict: every site's draws
+    except the raw z (group sites are (draws,), per-participant ones (draws, n_part)), the
+    pointwise WAIC elpd, and two r_hats.
 
     Two r_hats, because they mean different things. The group one covers the scalar sites,
     what the figures plot and what the WAIC comparison rests on. The worst one additionally
@@ -169,8 +193,10 @@ def fit(logp, data, kappa=True, own=False, habit=False, trend=False, seed=0, ini
     wide range of kappa leaves that individual barely identified, which shows up here and
     nowhere else. `init`: site -> value to start every chain from, for a multimodal cell."""
     args = (jnp.asarray(data.part), jnp.asarray(logp), jnp.asarray(data.act), data.n_part,
-            jnp.asarray(data.prev_arm), jnp.asarray(data.prev_rew), jnp.asarray(data.rnd))
-    kw = dict(kappa=kappa, own=own, habit=habit, trend=trend)
+            jnp.asarray(data.prev_arm), jnp.asarray(data.prev_rew), jnp.asarray(data.rnd),
+            jnp.asarray(data.last_exp))
+    kw = dict(kappa=kappa, own=own, habit=habit, trend=trend, mix=mix,
+              logp2=None if logp2 is None else jnp.asarray(logp2))
     kernel = NUTS(policy_model, target_accept_prob=0.95,
                   **({"init_strategy": init_to_value(values=init)} if init else {}))
     mc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=N_CHAINS,
@@ -182,13 +208,14 @@ def fit(logp, data, kappa=True, own=False, habit=False, trend=False, seed=0, ini
     rh = numpyro.diagnostics.summary(mc.get_samples(group_by_chain=True))
     worst = lambda ks: max(np.atleast_1d(rh[k]["r_hat"]).max() for k in ks)
     group = [k for k in s if s[k].ndim == 1]                  # scalar sites: not per participant
-    return dict({k: np.asarray(s[k]) for k in group}, elpd=elpd,
+    return dict({k: np.asarray(s[k]) for k in s if not k.startswith("z_")}, elpd=elpd,
                 rhat_grp=worst(group), rhat_worst=worst(rh))
 
 
 def fit_many(jobs, data, workers=4, **kw):
     """Fit several grids at once, each in its own process (N_CHAINS chains each), `workers` at
-    a time. jobs: name -> dict(logp=array, kappa=..., own=..., habit=..., trend=..., init=...). Returns
+    a time. jobs: name -> dict(logp=array, kappa=..., own=..., habit=..., trend=..., mix=...,
+    logp2=..., init=...). Returns
     name -> fit result, in job order. Extra keyword arguments go to fit() for every job.
 
     Separate interpreters rather than a multiprocessing pool: jax's device count is fixed at
@@ -225,6 +252,7 @@ if __name__ == "__main__":                                   # one fit_many work
     with open(sys.argv[1], "rb") as f:
         job = pickle.load(f)
     result = fit(job["logp"], job["data"], **{k: job.get(k, d) for k, d in
-                 dict(kappa=True, own=False, habit=False, trend=False, init=None).items()}, **job["kw"])
+                 dict(kappa=True, own=False, habit=False, trend=False, mix=False, logp2=None,
+                      init=None).items()}, **job["kw"])
     with open(sys.argv[2], "wb") as f:
         pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
