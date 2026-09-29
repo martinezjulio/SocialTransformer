@@ -1,7 +1,7 @@
 """Hierarchical Thompson-sampling policy models for the human bandit choices.
 
 The models are defined in docs/Model_0.md to Model_4.md and fitted from
-notebooks/analysis.py section 6. This module holds everything that does not depend on the
+notebooks/analysis.py section 8. This module holds everything that does not depend on the
 notebook's state: the grids' constants, the win-probability quadrature that tabulates each
 belief's log-policy on a grid, the numpyro model that interpolates that grid at fitted
 parameters, and a runner that fits many grids in parallel processes.
@@ -104,7 +104,8 @@ def hierarchical(name, plate, mu_scale, tau_scale):
 
 
 def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kappa=True,
-                 own=False, habit=False, trend=False, mix=False, logp2=None, record=False):
+                 own=False, habit=False, trend=False, mix=False, logp2=None, trend_omega=None,
+                 record=False):
     """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md),
     round trends on the trust parameters (docs/Model_2.md), and a per-trial mixture of two
     belief sources (docs/Model_3.md, 3a-switch).
@@ -122,7 +123,13 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kap
     mix=True reads a second grid, logp2, at the same parameters and tilt, and mixes the two
     finished policies: weight omega on logp's, 1 - omega on logp2's, where omega is
     omega_E_i on trials whose last watched demonstrator was the expert (last_exp) and
-    omega_N_i on the others, each per participant on the logit scale. record=True also stores
+    omega_N_i on the others, each per participant on the logit scale. trend_omega (docs/
+    Model_3.md, 3b; needs mix=True) is a (trials, C) array of round regressors: each column j
+    adds delta_omega_E_j * x_j to the logit weight on trials after the expert and
+    delta_omega_N_j * x_j on the others, group-level coefficients with a Normal(0, 1) prior.
+    The caller chooses the coding (a step after round 1, a dummy per round, a slope) and
+    centres it, so omega_E and omega_N keep their meaning at the regressors' zero.
+    record=True also stores
     the finished log-policy, lapse included, as the deterministic site logq (trials, arms); it
     is read by predict() and off during sampling."""
     plate = numpyro.plate("participant", n_part)
@@ -164,6 +171,11 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kap
     lq = policy(logp)
     if mix:
         lo = jnp.where(last_exp, lo_e[part], lo_n[part])[:, None]
+        if trend_omega is not None:
+            for j in range(trend_omega.shape[1]):
+                de = numpyro.sample(f"delta_omega_E_{j}", dist.Normal(0., 1.))
+                dn = numpyro.sample(f"delta_omega_N_{j}", dist.Normal(0., 1.))
+                lo = lo + (jnp.where(last_exp, de, dn) * trend_omega[:, j])[:, None]
         lq = jnp.logaddexp(jax.nn.log_sigmoid(lo) + lq, jax.nn.log_sigmoid(-lo) + policy(logp2))
     lq = lapse_mix(lq, jnp)
     if record:
@@ -195,7 +207,7 @@ def _args(logp, data):
 
 
 def fit(logp, data, kappa=True, own=False, habit=False, trend=False, mix=False, logp2=None,
-        seed=0, init=None, num_warmup=1500, num_samples=2500):
+        trend_omega=None, seed=0, init=None, num_warmup=1500, num_samples=2500):
     """Fit policy_model to one grid (two under mix=True). Returns a dict: every site's draws
     except the raw z (group sites are (draws,), per-participant ones (draws, n_part)), the
     pointwise WAIC elpd, and two r_hats.
@@ -207,7 +219,8 @@ def fit(logp, data, kappa=True, own=False, habit=False, trend=False, mix=False, 
     nowhere else. `init`: site -> value to start every chain from, for a multimodal cell."""
     args = _args(logp, data)
     kw = dict(kappa=kappa, own=own, habit=habit, trend=trend, mix=mix,
-              logp2=None if logp2 is None else jnp.asarray(logp2))
+              logp2=None if logp2 is None else jnp.asarray(logp2),
+              trend_omega=None if trend_omega is None else jnp.asarray(trend_omega, float))
     kernel = NUTS(policy_model, target_accept_prob=0.95,
                   **({"init_strategy": init_to_value(values=init)} if init else {}))
     mc = MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=N_CHAINS,
@@ -244,7 +257,7 @@ def predict(logp, data, draws, thin=25, **flags):
 def fit_many(jobs, data, workers=4, **kw):
     """Fit several grids at once, each in its own process (N_CHAINS chains each), `workers` at
     a time. jobs: name -> dict(logp=array, kappa=..., own=..., habit=..., trend=..., mix=...,
-    logp2=..., init=...). Returns
+    logp2=..., trend_omega=..., init=...). Returns
     name -> fit result, in job order. Extra keyword arguments go to fit() for every job.
 
     Separate interpreters rather than a multiprocessing pool: jax's device count is fixed at
@@ -282,6 +295,6 @@ if __name__ == "__main__":                                   # one fit_many work
         job = pickle.load(f)
     result = fit(job["logp"], job["data"], **{k: job.get(k, d) for k, d in
                  dict(kappa=True, own=False, habit=False, trend=False, mix=False, logp2=None,
-                      init=None).items()}, **job["kw"])
+                      trend_omega=None, init=None).items()}, **job["kw"])
     with open(sys.argv[2], "wb") as f:
         pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
