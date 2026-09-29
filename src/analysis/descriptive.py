@@ -1,7 +1,8 @@
 """Descriptive hierarchical regressions of trial outcomes on the session design.
 
 docs/Model_4.md, 4a: the same linear predictor for every outcome (reward, chosen payoff, stay,
-distinct arms), fitted from notebooks/analysis.py section 6. Nothing here reads the belief
+distinct arms), fitted from notebooks/analysis.py section 7. The design columns (the condition
+x demonstrator x round factorial) are built there; this module takes named regressors. Nothing here reads the belief
 grids; the models in policy.py ask which policy explains a choice, these ask how the outcomes
 of the choices move across the session. Shares policy.py's participant hierarchy so the two
 report the same way.
@@ -20,16 +21,15 @@ from numpyro.infer import MCMC, NUTS
 FAMILIES = ("bernoulli", "normal", "binomial")
 
 
-def outcome_model(part, rnd, X, y, n_part, family, trials=None):
-    """eta = a_i + b_i * rnd + sum_j gamma_j * X_j, with participant intercepts a_i and round
-    slopes b_i, non-centred: mu_a ~ N(0, 1.5), mu_b, gamma ~ N(0, 1), tau ~ HalfNormal(1).
-    rnd is the centred round; X maps a name to a per-row regressor, each giving a site gamma_name.
+def outcome_model(part, X, y, n_part, family, trials=None):
+    """eta = a_i + sum_j gamma_j * X_j, with participant intercepts a_i, non-centred:
+    mu_a ~ N(0, 1.5), gamma ~ N(0, 1), tau_a ~ HalfNormal(1). The random-effects structure of
+    lmer's (1 | participant). X maps a name to a per-row regressor, each giving a site gamma_name.
     family: bernoulli (logit), normal (identity, sigma ~ HalfNormal(1)), binomial (logit, y
     successes out of `trials`)."""
     plate = numpyro.plate("participant", n_part)
     a = hierarchical("a", plate, 1.5, 1.0)
-    b = hierarchical("b", plate, 1.0, 1.0)
-    eta = a[part] + b[part] * rnd
+    eta = a[part]
     for name, x in X.items():
         eta = eta + numpyro.sample(f"gamma_{name}", dist.Normal(0., 1.)) * x
     if family == "normal":
@@ -43,13 +43,12 @@ def outcome_model(part, rnd, X, y, n_part, family, trials=None):
         raise ValueError(f"family must be one of {FAMILIES}, not {family!r}")
 
 
-def fit_outcome(y, part, n_part, rnd, X, family, trials=None, seed=0, num_warmup=1000,
+def fit_outcome(y, part, n_part, X, family, trials=None, seed=0, num_warmup=1000,
                 num_samples=2000):
     """Fit outcome_model in this process (N_CHAINS chains). Returns a dict of every site's draws
-    except the raw z (group sites (draws,), a and b (draws, n_part)) and the worst r_hat."""
+    except the raw z (group sites (draws,), a (draws, n_part)) and the worst r_hat."""
     X = {k: jnp.asarray(np.asarray(v, float)) for k, v in dict(X).items()}
-    args = (jnp.asarray(part), jnp.asarray(np.asarray(rnd, float)), X,
-            jnp.asarray(np.asarray(y, float)), n_part, family, trials)
+    args = (jnp.asarray(part), X, jnp.asarray(np.asarray(y, float)), n_part, family, trials)
     mc = MCMC(NUTS(outcome_model, target_accept_prob=0.9), num_warmup=num_warmup,
               num_samples=num_samples, num_chains=N_CHAINS, progress_bar=False)
     mc.run(jax.random.PRNGKey(seed), *args)
