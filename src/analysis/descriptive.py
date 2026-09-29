@@ -1,6 +1,6 @@
 """Descriptive hierarchical regressions of trial outcomes on the session design.
 
-docs/Model_4.md, 4a: the same linear predictor for every outcome (reward, chosen payoff, stay,
+docs/D_descriptive.md, D2: the same linear predictor for every outcome (reward, chosen payoff, stay,
 distinct arms), fitted from notebooks/analysis.py section 7. The design columns (the condition
 x demonstrator x round factorial) are built there; this module takes named regressors. Nothing here reads the belief
 grids; the models in policy.py ask which policy explains a choice, these ask how the outcomes

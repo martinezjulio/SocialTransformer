@@ -1,6 +1,6 @@
 """Hierarchical Thompson-sampling policy models for the human bandit choices.
 
-The models are defined in docs/Model_0.md to Model_4.md and fitted from
+The models are defined in docs/C0.md to C5.md and fitted from
 notebooks/analysis.py section 8. This module holds everything that does not depend on the
 notebook's state: the grids' constants, the win-probability quadrature that tabulates each
 belief's log-policy on a grid, the numpyro model that interpolates that grid at fitted
@@ -37,7 +37,7 @@ KAPPA = np.geomspace(0.25, 16, 13)   # ratio sqrt(2); 1.0 is on the grid. Linear
                                      # between knots is off by ~0.1 per trial at ratio 2
 LAPSE = 0.02                         # so one surprising choice cannot dominate a participant
 P_FLOOR = 1e-12                      # log p is stored without the lapse; this keeps -inf out
-LAM_W = np.array([0.1, 0.25, 0.5, 1, 2, 4, 8, 16])   # own-experience weights, Model 1 Own and Both
+LAM_W = np.array([0.1, 0.25, 0.5, 1, 2, 4, 8, 16])   # own-experience weights, C1 Own and Both
 LAM_C = np.array([0., 0.25, 0.5, 1, 2, 4])           # cells: within-segment (log-spaced), carried (has 0)
 LOGK, LOG_LAM_W, LAM_C_J = jnp.log(KAPPA), jnp.log(LAM_W), jnp.asarray(LAM_C)
 
@@ -106,9 +106,9 @@ def hierarchical(name, plate, mu_scale, tau_scale):
 def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kappa=True,
                  own=False, habit=False, trend=False, mix=False, logp2=None, trend_omega=None,
                  record=False):
-    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/Model_1.md),
-    round trends on the trust parameters (docs/Model_2.md), and a per-trial mixture of two
-    belief sources (docs/Model_3.md, 3a-switch).
+    """Hierarchical sharpened-Thompson policy, optionally with a habit tilt (docs/C1.md),
+    round trends on the trust parameters (docs/C2.md), and a per-trial mixture of two
+    belief sources (docs/C3.md).
 
     `logp` is one belief's log-probability grid whose axes after the trial axis are, in order,
     the ones the flags ask for: kappa=True adds a |KAPPA| axis, interpolated at each
@@ -124,7 +124,7 @@ def policy_model(part, logp, act, n_part, prev_arm, prev_rew, rnd, last_exp, kap
     finished policies: weight omega on logp's, 1 - omega on logp2's, where omega is
     omega_E_i on trials whose last watched demonstrator was the expert (last_exp) and
     omega_N_i on the others, each per participant on the logit scale. trend_omega (docs/
-    Model_3.md, 3b; needs mix=True) is a (trials, C) array of round regressors: each column j
+    C4.md; needs mix=True) is a (trials, C) array of round regressors: each column j
     adds delta_omega_E_j * x_j to the logit weight on trials after the expert and
     delta_omega_N_j * x_j on the others, group-level coefficients with a Normal(0, 1) prior.
     The caller chooses the coding (a step after round 1, a dummy per round, a slope) and
