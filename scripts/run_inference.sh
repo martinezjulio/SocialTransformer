@@ -16,6 +16,7 @@ conda activate SocialTransformer
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
 VERSION="${VERSION:-pilot_D}"
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_data.csv"
+EVAL_DIR="${OUTPUT_DATA_DIR}/eval/${VERSION}"   # per-pilot outputs: eval/<version>/{data,metadata}
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"  # Inherited from run_eval.sh env if set; else default to 5
 SEED=42  # Base random seed for reproducibility
@@ -101,6 +102,7 @@ echo "Starting inference..."
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
     python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
+        --eval_dir "$EVAL_DIR" \
         --checkpoint_path "$CHECKPOINT_PATH" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
@@ -110,6 +112,7 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
+        --eval_dir "$EVAL_DIR" \
         --wandb_artifact "$WANDB_ARTIFACT" \
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \

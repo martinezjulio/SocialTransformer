@@ -68,8 +68,20 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
     # Sort by session_id and game_index to maintain temporal order
     df_filtered = df_filtered.sort_values(['session_id', 'round_index', 'game_index']).reset_index(drop=True)
     
+    # Solo-play sessions (pilot_E's "play-play-play-play" condition) have no demonstrators, so
+    # there is nothing for the network to read out: skip them here, and say so.
+    has_watch = df_filtered.groupby('session_id')['game'].apply(lambda g: (g == 'watch').any())
+    solo = sorted(has_watch.index[~has_watch])
+    if solo:
+        print(f"Skipping {len(solo)} session(s) with no watch games (solo play): "
+              f"{', '.join(solo[:3])}{', ...' if len(solo) > 3 else ''}")
+        df_filtered = df_filtered[~df_filtered['session_id'].isin(solo)].reset_index(drop=True)
+
     # Validate session structure (expected to pass — preprocess.R drops bad sessions upstream).
-    expected_rounds = {0, 1, 2}
+    # The round count is the dataset's own: pilots differ (pilot_D ran 3 rounds, pilot_E 2), and
+    # every session must have all of them.
+    expected_rounds = set(range(int(df_filtered['round_index'].max()) + 1))
+    print(f"Detected {len(expected_rounds)} rounds per session: {sorted(expected_rounds)}")
     expected_games_per_round = 4  # watch, play, watch, play
     expected_shots_per_play = 6   # matches training T_learner; enforced strictly
 
@@ -1002,6 +1014,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run model inference on human experiment data to generate hybrid predictions")
     parser.add_argument("--experiment_data_path",type=str,required=True,help="Path to experiment CSV file")
     parser.add_argument("--output_path",type=str,default="data/model_predictions/experiment_trial_predictions.csv",help="Path to output CSV file")
+    parser.add_argument("--eval_dir", type=str, default=None,
+        help="Directory for the CSVs (data/) and metadata yamls (metadata/); default "
+             "$OUTPUT_DATA_DIR/eval/. Give a per-pilot directory, e.g. $OUTPUT_DATA_DIR/eval/pilot_E, "
+             "so pilots do not overwrite each other")
     parser.add_argument("--device",type=str,default="cpu",choices=["cpu", "cuda"],help="Device to run inference on")
     parser.add_argument("--num_rollouts", type=int, default=5,
         help="Number of independent rollouts per session (default: 5)")
@@ -1027,7 +1043,12 @@ def main():
     args = parser.parse_args()
     
     # Set up eval directory structure (all inference artifacts now live under eval/)
-    eval_dir = setup_eval_directory()
+    if args.eval_dir is None:
+        eval_dir = setup_eval_directory()
+    else:
+        eval_dir = Path(args.eval_dir)
+        for subdir in ['data', 'metadata']:
+            (eval_dir / subdir).mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {eval_dir}")
 
     # Write run metadata under eval/metadata/ with an inference_ prefix so it
