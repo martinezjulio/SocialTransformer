@@ -25,16 +25,22 @@ def output_data_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
-def hybrid_csv(output_data_dir: Path) -> Path:
-    p = output_data_dir / "eval" / "data" / "experiment_trial_predictions.csv"
+def eval_version_dir(output_data_dir: Path) -> Path:
+    """run_inference.py writes per pilot under eval/<version>/; EXPERIMENT_VERSION picks one."""
+    return output_data_dir / "eval" / os.environ.get("EXPERIMENT_VERSION", "pilot_D")
+
+
+@pytest.fixture(scope="session")
+def hybrid_csv(eval_version_dir: Path) -> Path:
+    p = eval_version_dir / "data" / "experiment_trial_predictions.csv"
     if not p.exists():
         pytest.skip(f"{p} not present — run scripts/run_inference.sh first")
     return p
 
 
 @pytest.fixture(scope="session")
-def model_mode_csv(output_data_dir: Path) -> Path:
-    p = output_data_dir / "eval" / "data" / "experiment_cutoff_model_predictions.csv"
+def model_mode_csv(eval_version_dir: Path) -> Path:
+    p = eval_version_dir / "data" / "experiment_cutoff_model_predictions.csv"
     if not p.exists():
         pytest.skip(f"{p} not present — run scripts/run_inference.sh first")
     return p

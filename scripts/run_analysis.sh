@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render the Quarto analysis document
-# Requires: experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/data/
+# Requires: experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/<VERSION>/data/
 
 # Load environment configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
