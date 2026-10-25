@@ -77,7 +77,7 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
               f"{', '.join(solo[:3])}{', ...' if len(solo) > 3 else ''}")
         df_filtered = df_filtered[~df_filtered['session_id'].isin(solo)].reset_index(drop=True)
 
-    # Validate session structure (expected to pass — preprocess.R drops bad sessions upstream).
+    # Validate session structure (expected to pass — preprocess_participant_data.R drops bad sessions upstream).
     # The round count is the dataset's own: pilots differ (pilot_D ran 3 rounds, pilot_E 2), and
     # every session must have all of them.
     expected_rounds = set(range(int(df_filtered['round_index'].max()) + 1))
@@ -104,7 +104,7 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
         lines = [f"  {sid}: {'; '.join(rs)}" for sid, rs in bad_sessions.items()]
         raise ValueError(
             f"Found {len(bad_sessions)} session(s) with invalid structure in "
-            f"preprocessed_data.csv. Re-run reports/r/preprocess.R to regenerate.\n"
+            f"preprocessed_participant_data.csv. Re-run reports/r/preprocess_participant_data.R to regenerate.\n"
             + "\n".join(lines)
         )
 

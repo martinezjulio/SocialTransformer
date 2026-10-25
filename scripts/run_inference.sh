@@ -15,7 +15,7 @@ conda activate SocialTransformer
 # Pilot selection — override from caller (e.g. run_eval.sh) via env; else defaults apply.
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
 VERSION="${VERSION:-pilot_D}"
-EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_data.csv"
+EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_participant_data.csv"
 EVAL_DIR="${OUTPUT_DATA_DIR}/eval/${VERSION}"   # per-pilot outputs: eval/<version>/{data,metadata}
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"  # Inherited from run_eval.sh env if set; else default to 5

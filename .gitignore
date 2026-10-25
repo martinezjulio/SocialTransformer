@@ -70,7 +70,7 @@ venv.bak/
 Thumbs.db
 
 # Configuration files with secrets
-scripts/anonymize_data.py
+src/anonymize_participant_data.py
 .env.local
 .env.production
 config.json
