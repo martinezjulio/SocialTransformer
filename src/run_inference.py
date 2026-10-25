@@ -104,7 +104,7 @@ def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
         lines = [f"  {sid}: {'; '.join(rs)}" for sid, rs in bad_sessions.items()]
         raise ValueError(
             f"Found {len(bad_sessions)} session(s) with invalid structure in "
-            f"preprocessed_participant_data.csv. Re-run reports/r/preprocess_participant_data.R to regenerate.\n"
+            f"preprocessed_participant_data.csv. Re-run src/r/preprocess_participant_data.R to regenerate.\n"
             + "\n".join(lines)
         )
 
