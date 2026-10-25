@@ -146,3 +146,5 @@ cache/
 # claude related
 
 /.quarto/
+
+.claude/docs/analysis_update_10_19_2026/
