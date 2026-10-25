@@ -1,9 +1,9 @@
-"""Run notebooks/analysis.py top to bottom as a batch job.
+"""Run notebooks/analysis.py (the legacy pilot-era notebook) top to bottom as a batch job.
 
 The notebook is a cell file (`# %%` markers, IPython magics, display()). Each cell runs in an
 IPython InteractiveShell in order, so magics work and names carry over exactly as in a kernel.
 Figures are not shown but saved: plt.show is replaced by a function that writes every open
-figure to $OUTPUT_DATA_DIR/analysis/<version>/figures/<cell>_<title>_<k>.png. The first failing
+figure to $OUTPUT_DATA_DIR/legacy_analysis/<version>/figures/<cell>_<title>_<k>.png. The first failing
 cell stops the run with its traceback and a non-zero exit.
 
     python scripts/run_notebook.py --version pilot_E --override-analysis --override-inference
@@ -54,7 +54,7 @@ def main():
 
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env", override=True)
-    fig_dir = Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / args.version / "figures"
+    fig_dir = Path(os.environ["OUTPUT_DATA_DIR"]) / "legacy_analysis" / args.version / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     import matplotlib

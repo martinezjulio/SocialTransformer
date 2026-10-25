@@ -1,5 +1,6 @@
 #!/bin/bash
-# Render the Quarto analysis document
+# Render the legacy Quarto analysis report (reports/analysis_report.qmd).
+# The new analysis pipeline's driver is scripts/run_analysis.sh.
 # Requires: experiment_trial_predictions.csv in $OUTPUT_DATA_DIR/eval/<VERSION>/data/
 
 # Load environment configuration
@@ -24,7 +25,7 @@ echo ""
 
 cd "${SCRIPT_DIR}/.."
 quarto render reports/analysis_report.qmd \
-    --output-dir "$OUTPUT_DATA_DIR/analysis" \
+    --output-dir "$OUTPUT_DATA_DIR/legacy_analysis" \
     -P experiment_name="$EXPERIMENT_NAME" \
     -P version="$VERSION"
 
@@ -33,7 +34,7 @@ if [ $? -eq 0 ]; then
     echo "=================================="
     echo "Analysis rendered successfully!"
     echo "=================================="
-    echo "Output: $OUTPUT_DATA_DIR/analysis/analysis_report.html"
+    echo "Output: $OUTPUT_DATA_DIR/legacy_analysis/analysis_report.html"
 else
     echo ""
     echo "=================================="
