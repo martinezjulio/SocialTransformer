@@ -4,8 +4,15 @@ Columns: participant, session, session_order (1..3, randomised per participant),
 (expert-first, novice-first, solo), round (1, 2), slot (position of the game in the round, 1..4),
 play (first, second: the social play games; solo slots 2 and 4 by information state), demonstrator
 (expert, novice, none: who was watched just before), payoff (mean true payoff of the chosen arms),
-reward (mean observed reward), entropy (Shannon bits over the six choices), n_shots.
+reward (mean observed reward), entropy (Shannon bits over the six choices), n_shots, exploratory
+(True for solo slots 1 and 3, which have no social counterpart and stay out of the primary fits).
+
+Run directly with EXPERIMENT_NAME and VERSION set to write
+$OUTPUT_DATA_DIR/analysis/<experiment>/<version>/games/play_games.csv.
 """
+
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -45,4 +52,20 @@ def play_games(preprocessed: pd.DataFrame) -> pd.DataFrame:
     assert table.groupby("participant")["condition"].nunique().eq(3).all(), "each participant has one session per condition"
     assert table.groupby("participant")["session_order"].agg(lambda s: sorted(set(s)) == [1, 2, 3]).all()
     assert (social["demonstrator"] == np.where((social["condition"] == "expert-first") == (social["slot"] == 2), "expert", "novice")).all()
+    table["exploratory"] = table["play"].isna()
+    assert table["exploratory"].sum() == len(solo) // 2 and (table.loc[table["exploratory"], "condition"] == "solo").all()
     return table
+
+
+def write_play_games(preprocessed_path: Path, analysis_dir: Path) -> Path:
+    """Build the table from ``preprocessed_path`` and write ``<analysis_dir>/games/play_games.csv``."""
+    out = Path(analysis_dir) / "games" / "play_games.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    play_games(pd.read_csv(preprocessed_path, dtype={"timestamp": str}, low_memory=False)).to_csv(out, index=False)
+    return out
+
+
+if __name__ == "__main__":
+    experiment, version = os.environ["EXPERIMENT_NAME"], os.environ["VERSION"]
+    print(write_play_games(Path(os.environ["EXPERIMENT_DATA_DIR"]) / experiment / version / "preprocessed_participant_data.csv",
+                           Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / experiment / version))
