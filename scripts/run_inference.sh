@@ -31,14 +31,14 @@ SEED=42  # Base random seed for reproducibility
 # CHECKPOINT LOADING OPTIONS (choose ONE of the following three options)
 # ==============================================================================
 
-# Option 1: Load from local file path
-#CHECKPOINT_PATH="/Users/juliomartinez/Documents/PhD/SocialBanditGuider/checkpoints/1nb09uxg/epoch_003_best.pt"
-#CHECKPOINT_SOURCE="local"
+# Option 1: Load from local file path (pilot E checkpoint, run wandb_0i8yhqm7, epoch 119)
+CHECKPOINT_PATH="$OUTPUT_DATA_DIR/training_runs/wandb_0i8yhqm7/checkpoints/epoch_119_best.pt"
+CHECKPOINT_SOURCE="local"
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
-CHECKPOINT_SOURCE="wandb_artifact"
+#WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
+#CHECKPOINT_SOURCE="wandb_artifact"
 
 # Print configuration
 echo "=================================="

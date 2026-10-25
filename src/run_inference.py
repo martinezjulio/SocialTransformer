@@ -23,94 +23,15 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from models import BaseSocialTransformer
-from inference import thompson_sample_action
 from data.transforms import BeliefNormalizer
+from inference.learners import ThompsonLearner, TrialState
+from inference.readout import load_model, readout
+from inference.sessions import (convert_session_to_model_format, encode_events_to_tensors,
+                                load_shots, parse_bandit_payoffs, validate_sessions)
+from inference.simulate import play_segment
 from utils import setup_eval_directory, get_training_runs_dir, write_run_yaml, write_config_yaml, finalize_run_yaml, get_special_characters
 
 
-def load_and_preprocess_data(csv_path: str) -> pd.DataFrame:
-    """
-    Load experiment data and filter for relevant rows.
-    
-    Args:
-        csv_path: Path to the experiment CSV file
-        
-    Returns:
-        Filtered DataFrame with only shot events from watch/play games
-    """
-    print(f"Loading data from {csv_path}...")
-    df = pd.read_csv(csv_path)
-    
-    print(f"Loaded {len(df)} total rows")
-    
-    # Convert boolean strings to actual booleans - handle various formats
-    # The CSV has "FALSE" and "TRUE" as strings
-    df['shot'] = df['shot'].astype(str).str.upper().isin(['TRUE', 'T', '1', 'YES'])
-    df['reward_generated'] = df['reward_generated'].astype(str).str.upper().isin(['TRUE', 'T', '1', 'YES'])
-    
-    print(f"Rows with shot==True: {df['shot'].sum()}")
-    print(f"Games: {df['game'].value_counts().to_dict()}")
-    
-    # Filter: only keep rows where shot==True and game is not 'choice'
-    df_filtered = df[(df['shot'] == True) & (df['game'].isin(['watch', 'play']))].copy()
-    
-    print(f"After filtering for shot==True and game in ['watch', 'play']: {len(df_filtered)} rows")
-    
-    # Keep only relevant columns
-    cols_to_keep = [
-        'session_id', 'session_index', 'anonymous_id', 'position', 'action',
-        'game', 'game_sequence', 'game_index', 'round_index', 'demonstrator_type', 
-        'zone_bandit', 'zone_global_index', 'reward_generated'
-    ]
-    df_filtered = df_filtered[cols_to_keep]
-    
-    # Sort by session_id and game_index to maintain temporal order
-    df_filtered = df_filtered.sort_values(['session_id', 'round_index', 'game_index']).reset_index(drop=True)
-    
-    # Solo-play sessions (pilot_E's "play-play-play-play" condition) have no demonstrators, so
-    # there is nothing for the network to read out: skip them here, and say so.
-    has_watch = df_filtered.groupby('session_id')['game'].apply(lambda g: (g == 'watch').any())
-    solo = sorted(has_watch.index[~has_watch])
-    if solo:
-        print(f"Skipping {len(solo)} session(s) with no watch games (solo play): "
-              f"{', '.join(solo[:3])}{', ...' if len(solo) > 3 else ''}")
-        df_filtered = df_filtered[~df_filtered['session_id'].isin(solo)].reset_index(drop=True)
-
-    # Validate session structure (expected to pass — preprocess_participant_data.R drops bad sessions upstream).
-    # The round count is the dataset's own: pilots differ (pilot_D ran 3 rounds, pilot_E 2), and
-    # every session must have all of them.
-    expected_rounds = set(range(int(df_filtered['round_index'].max()) + 1))
-    print(f"Detected {len(expected_rounds)} rounds per session: {sorted(expected_rounds)}")
-    expected_games_per_round = 4  # watch, play, watch, play
-    expected_shots_per_play = 6   # matches training T_learner; enforced strictly
-
-    bad_sessions = {}
-    for sid in df_filtered['session_id'].unique():
-        sdf = df_filtered[df_filtered['session_id'] == sid]
-        rounds = set(int(r) for r in sdf['round_index'].unique())
-        n_games = sdf['game_index'].nunique()
-        reasons = []
-        if rounds != expected_rounds or n_games != expected_games_per_round * len(expected_rounds):
-            reasons.append(f"incomplete-rounds (rounds={sorted(rounds)}, n_games={n_games})")
-        play_counts = sdf[sdf['game'] == 'play'].groupby('game_index').size()
-        if (play_counts != expected_shots_per_play).any():
-            bad = play_counts[play_counts != expected_shots_per_play].to_dict()
-            reasons.append(f"short-play {bad}")
-        if reasons:
-            bad_sessions[sid] = reasons
-
-    if bad_sessions:
-        lines = [f"  {sid}: {'; '.join(rs)}" for sid, rs in bad_sessions.items()]
-        raise ValueError(
-            f"Found {len(bad_sessions)} session(s) with invalid structure in "
-            f"preprocessed_participant_data.csv. Re-run src/r/preprocess_participant_data.R to regenerate.\n"
-            + "\n".join(lines)
-        )
-
-    print(f"Validated {len(df_filtered)} shot events from {df_filtered['session_id'].nunique()} sessions")
-
-    return df_filtered
 
 
 def parse_game_sequence(game_seq: str) -> List[str]:
@@ -126,18 +47,6 @@ def parse_game_sequence(game_seq: str) -> List[str]:
     return game_seq.split('-')
 
 
-def parse_bandit_payoffs(zone_bandit_str: str) -> List[float]:
-    """
-    Parse zone_bandit string to list of float payoffs.
-    
-    Args:
-        zone_bandit_str: e.g., "0.55,0,0.8,0.5,0.4,0.3,0.6,0.75,0.1,0.35,0.45,0.2"
-        
-    Returns:
-        List of payoff probabilities
-    """
-    cleaned = zone_bandit_str.strip().strip('[]')
-    return [float(x) for x in cleaned.split(',')]
 
 
 def parse_demonstrator_order(game_sequence: str) -> Dict[str, int]:
@@ -199,337 +108,6 @@ def _rollout_seed(base_seed: int, session_id: str, rollout_id: int) -> int:
     return (base_seed + int.from_bytes(digest[:4], "big")) % (2**31)
 
 
-def thompson_sampling_step(
-    alpha: torch.Tensor,
-    beta: torch.Tensor,
-    bandit_payoffs: List[float],
-    num_steps: int = 6,
-    *,
-    rng: random.Random,
-    np_rng: np.random.Generator,
-) -> List[Tuple[int, int]]:
-    """
-    Run Thompson sampling for a learner segment.
-
-    Args:
-        alpha: Initial alpha parameters [K]
-        beta: Initial beta parameters [K]
-        bandit_payoffs: True payoff probabilities for each arm
-        num_steps: Number of actions to take (default 6)
-        rng: Python RNG for reward Bernoulli draws
-        np_rng: Numpy generator for Thompson action sampling
-
-    Returns:
-        List of (action, reward) tuples
-    """
-    alpha = alpha.clone()
-    beta = beta.clone()
-    trajectory = []
-
-    for _ in range(num_steps):
-        action = thompson_sample_action(alpha, beta, np_rng)
-        reward = 1 if rng.random() < bandit_payoffs[action] else 0
-        trajectory.append((action, reward))
-        alpha[action] += reward
-        beta[action] += (1 - reward)
-
-    return trajectory
-
-
-def convert_session_to_model_format(
-    session_df: pd.DataFrame,
-    visible_game_indices: List[int],
-    num_arms: int = 12
-) -> Dict:
-    """
-    Convert session data to model input format.
-    
-    Args:
-        session_df: DataFrame for a single session
-        visible_game_indices: Which game_index values to include
-        num_arms: Number of bandit arms
-        
-    Returns:
-        Dictionary with model input tensors and metadata
-    """
-    # Filter to visible games
-    visible_df = session_df[session_df['game_index'].isin(visible_game_indices)].copy()
-    
-    # Map zone_global_index to local bandit IDs (0-indexed per session)
-    zone_to_bandit = {zone: idx for idx, zone in enumerate(sorted(visible_df['zone_global_index'].unique()))}
-    visible_df['bandit_id'] = visible_df['zone_global_index'].map(zone_to_bandit)
-    
-    # Map demonstrator types to agent IDs
-    # Learner = 0, then assign IDs to demonstrators in order they appear
-    demo_types = []
-    for _, row in visible_df.iterrows():
-        if row['game'] == 'watch' and pd.notna(row['demonstrator_type']):
-            if row['demonstrator_type'] not in demo_types:
-                demo_types.append(row['demonstrator_type'])
-    
-    demo_to_agent = {demo_type: idx + 1 for idx, demo_type in enumerate(demo_types)}
-    
-    # Build events list with segment boundaries matching training data format:
-    # Each segment (watch/play game) gets a boundary, plus QUERY tokens at end of each round
-    events = []
-    segment_boundaries = [0]
-    segment_info = []
-    round_boundaries = [0]
-    current_round = None
-    current_game_idx = None
-    rounds_seen = []
-    
-    for idx, (_, row) in enumerate(visible_df.iterrows()):
-        bandit_id = int(row['bandit_id'])
-        action = int(row['position'])
-        reward = 1 if row['reward_generated'] else 0
-
-        if row['game'] == 'watch':
-            agent_id = demo_to_agent[row['demonstrator_type']]
-            seg_type = "demo"
-        else:
-            agent_id = 0
-            seg_type = "learner"
-
-        if current_round is None:
-            current_round = row['round_index']
-            current_game_idx = row['game_index']
-            rounds_seen.append(current_round)
-
-            # BANDIT_SEP token at start of first round
-            events.append((bandit_id, -1, -1, -1))
-            segment_boundaries.append(len(events))
-            segment_info.append({"round": int(current_round), "type": "bandit_sep", "agent": -1})
-        elif row['round_index'] != current_round:
-            # End of previous segment
-            segment_boundaries.append(len(events))
-            prev_row = visible_df.iloc[idx - 1]
-            prev_agent = demo_to_agent[prev_row['demonstrator_type']] if prev_row['game'] == 'watch' else 0
-            segment_info.append({
-                "round": int(current_round),
-                "type": "demo" if prev_row['game'] == 'watch' else "learner",
-                "agent": prev_agent
-            })
-
-            # QUERY token at end of previous round
-            prev_bandit = int(visible_df.iloc[idx - 1]['bandit_id'])
-            events.append((prev_bandit, -1, -2, -1))
-            segment_boundaries.append(len(events))
-            segment_info.append({
-                "round": int(current_round),
-                "type": "query",
-                "agent": -1,
-                "bandit": prev_bandit
-            })
-
-            round_boundaries.append(len(events))
-            current_round = row['round_index']
-            current_game_idx = row['game_index']
-            rounds_seen.append(current_round)
-
-            # BANDIT_SEP token at start of new round
-            events.append((bandit_id, -1, -1, -1))
-            segment_boundaries.append(len(events))
-            segment_info.append({"round": int(current_round), "type": "bandit_sep", "agent": -1})
-        elif row['game_index'] != current_game_idx:
-            # New segment within same round
-            segment_boundaries.append(len(events))
-            prev_row = visible_df.iloc[idx - 1]
-            prev_agent = demo_to_agent[prev_row['demonstrator_type']] if prev_row['game'] == 'watch' else 0
-            segment_info.append({
-                "round": int(current_round),
-                "type": "demo" if prev_row['game'] == 'watch' else "learner",
-                "agent": prev_agent
-            })
-            current_game_idx = row['game_index']
-
-        events.append((bandit_id, agent_id, action, reward))
-    
-    # Final segment info for last segment
-    last_row = visible_df.iloc[-1]
-    last_agent = demo_to_agent[last_row['demonstrator_type']] if last_row['game'] == 'watch' else 0
-    segment_boundaries.append(len(events))
-    segment_info.append({
-        "round": int(last_row['round_index']),
-        "type": "demo" if last_row['game'] == 'watch' else "learner",
-        "agent": last_agent
-    })
-    
-    # QUERY token at end of last round
-    last_bandit = int(last_row['bandit_id'])
-    events.append((last_bandit, -1, -2, -1))
-    segment_boundaries.append(len(events))
-    segment_info.append({
-        "round": int(last_row['round_index']),
-        "type": "query",
-        "agent": -1,
-        "bandit": last_bandit
-    })
-    
-    round_boundaries.append(len(events))
-    
-    # Round-to-query-index mapping (each round produces one QUERY, indexed 0, 1, 2...)
-    sorted_rounds = sorted(visible_df['round_index'].unique())
-    round_to_index = {r: i for i, r in enumerate(sorted_rounds)}
-    
-    round_bandit_map = []
-    for round_idx in sorted_rounds:
-        round_df = visible_df[visible_df['round_index'] == round_idx]
-        round_bandit_map.append(int(round_df.iloc[0]['bandit_id']))
-    
-    bandits_info = []
-    for zone_idx in sorted(zone_to_bandit.keys()):
-        zone_df = visible_df[visible_df['zone_global_index'] == zone_idx]
-        payoffs = parse_bandit_payoffs(zone_df.iloc[0]['zone_bandit'])
-        bandits_info.append({
-            'zone_global_index': int(zone_idx),
-            'payoffs': payoffs
-        })
-    
-    return {
-        'events': events,
-        'segment_boundaries': segment_boundaries,
-        'segment_info': segment_info,
-        'round_boundaries': round_boundaries,
-        'round_bandit_map': round_bandit_map,
-        'round_to_index': round_to_index,
-        'bandits_info': bandits_info,
-        'zone_to_bandit': zone_to_bandit,
-        'demo_to_agent': demo_to_agent,
-        'num_demonstrators': len(demo_types)
-    }
-
-
-def encode_events_to_tensors(
-    events: List[Tuple[int, int, int, int]],
-    num_arms: int,
-    num_bandits: int,
-    num_agents: int,
-    SPECIAL: Dict[str, int]
-) -> Dict[str, torch.Tensor]:
-    """
-    Encode events to tensor format for model input.
-    Handles structural tokens (BANDIT_SEP and QUERY) which use ag=-1 sentinel.
-    
-    Args:
-        events: List of (bandit_id, agent_id, action, reward) tuples
-                QUERY tokens: (bandit_id, -1, -2, -1)
-                BANDIT_SEP tokens: (bandit_id, -1, -1, -1) 
-        num_arms: Number of bandit arms
-        num_bandits: Number of unique bandits
-        num_agents: Number of agents (for padding)
-        SPECIAL: Dictionary of special token IDs
-        
-    Returns:
-        Dictionary of tensors
-    """
-    bandit_ids = []
-    agent_ids = []
-    action_ids = []
-    reward_ids = []
-    special_ids = []
-    
-    for (b, ag, a, r) in events:
-        # Check if structural token (uses -1 sentinel)
-        if ag == -1:
-            # Distinguish BANDIT_SEP (a=-1) from QUERY (a=-2)
-            if a == -2:
-                # QUERY token
-                bandit_ids.append(min(max(b, 0), num_bandits - 1))
-                agent_ids.append(num_agents)  # padding
-                action_ids.append(num_arms)   # padding
-                reward_ids.append(2)          # padding
-                special_ids.append(SPECIAL["QUERY"])
-            else:
-                # BANDIT_SEP token
-                bandit_ids.append(min(max(b, 0), num_bandits - 1))
-                agent_ids.append(num_agents)  # padding
-                action_ids.append(num_arms)   # padding
-                reward_ids.append(2)          # padding
-                special_ids.append(SPECIAL["BANDIT_SEP"])
-        else:
-            # Regular event
-            bandit_ids.append(min(max(b, 0), num_bandits - 1))
-            agent_ids.append(ag)
-            action_ids.append(a if (0 <= a < num_arms) else num_arms)
-            reward_ids.append(r if r in (0, 1) else 2)
-            special_ids.append(SPECIAL["NONE"])
-    
-    return {
-        'bandit_ids': torch.tensor(bandit_ids, dtype=torch.long).unsqueeze(0),  # [1, T]
-        'agent_ids': torch.tensor(agent_ids, dtype=torch.long).unsqueeze(0),
-        'action_ids': torch.tensor(action_ids, dtype=torch.long).unsqueeze(0),
-        'reward_ids': torch.tensor(reward_ids, dtype=torch.long).unsqueeze(0),
-        'special_ids': torch.tensor(special_ids, dtype=torch.long).unsqueeze(0),
-    }
-
-
-def create_segment_mask(
-    segment_boundaries: List[int],
-    cutoff: int,
-    seq_len: int,
-    device: torch.device,
-    masking_strategy: str = "all_bandits",
-    segment_info: List[Dict] = None,
-    round_bandit_map: List[int] = None
-) -> torch.Tensor:
-    """
-    Create attention mask that makes only the first 'cutoff' segments visible.
-    
-    Args:
-        segment_boundaries: List of segment start positions
-        cutoff: Number of segments to make visible (1-indexed)
-        seq_len: Total sequence length
-        device: torch device
-        masking_strategy: "all_bandits" or "current_bandit_only"
-        segment_info: List of segment metadata dicts
-        round_bandit_map: List mapping round index to bandit ID
-        
-    Returns:
-        mask: [seq_len, seq_len] - True = masked (not attended to), False = visible
-    """
-    # Start with causal mask
-    mask = torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
-    
-    # Get cutoff position
-    if cutoff < len(segment_boundaries):
-        cutoff_pos = segment_boundaries[cutoff]
-    else:
-        cutoff_pos = seq_len  # All visible
-    
-    # Mask out everything from cutoff_pos onward
-    if cutoff_pos < seq_len:
-        mask[:, cutoff_pos:] = True
-    
-    # Additional masking for "current_bandit_only" strategy
-    if masking_strategy == "current_bandit_only" and segment_info is not None and round_bandit_map is not None:
-        # Determine the target bandit from the cutoff segment
-        seg_info_target = segment_info[cutoff - 1]
-        target_round = seg_info_target["round"]
-        target_bandit = int(round_bandit_map[target_round])
-        
-        # Mask out all segments that belong to different bandits
-        for seg_idx in range(cutoff):
-            seg_info_i = segment_info[seg_idx]
-            round_i = seg_info_i["round"]
-            bandit_i = int(round_bandit_map[round_i])
-            
-            if bandit_i != target_bandit:
-                # Mask this entire segment
-                start_pos = segment_boundaries[seg_idx]
-                if seg_idx + 1 < len(segment_boundaries):
-                    end_pos = segment_boundaries[seg_idx + 1]
-                else:
-                    end_pos = cutoff_pos
-                
-                # Mask all positions from attending to this segment
-                mask[:, start_pos:end_pos] = True
-
-    # Never leave a row with no visible key — softmax over an all -inf row is NaN,
-    # which silently poisons every position downstream in eval mode.
-    mask.fill_diagonal_(False)
-
-    return mask
 
 
 def run_inference_on_session(
@@ -675,19 +253,11 @@ def run_inference_on_session(
             (alpha_row.sum() + beta_row.sum() - alpha0 * K - beta0 * K).item()
         )
 
+    segment_round = [seg['round'] for seg in segment_info]
+
     def _run_forward(tensors_state, mask_cutoff: int) -> Dict[str, torch.Tensor]:
-        mask = create_segment_mask(
-            segment_boundaries,
-            mask_cutoff,
-            full_seq_len,
-            device,
-            masking_strategy=masking_strategy,
-            segment_info=segment_info,
-            round_bandit_map=full_model_input['round_bandit_map'],
-        )
-        with torch.no_grad():
-            model.eval()
-            return model(tensors_state, custom_attn_mask=mask)
+        return readout(model, tensors_state, segment_boundaries, [mask_cutoff], masking_strategy,
+                       segment_round, full_model_input['round_bandit_map'])
 
     def _most_recent_demo_agent_idx(upper_inclusive: int) -> Optional[int]:
         for idx in range(upper_inclusive, -1, -1):
@@ -695,32 +265,6 @@ def run_inference_on_session(
             if prior['type'] == 'demo':
                 return prior['agent'] - 1
         return None
-
-    def _choose_thompson_betas(pre_alpha_theta, pre_beta_theta,
-                               pre_alpha_demo, pre_beta_demo, seg_idx):
-        """Pick (alpha, beta) the Thompson sampler should draw from."""
-        if beta_method == "theta_betas":
-            if pre_alpha_theta is None:
-                raise ValueError(
-                    "beta_method='theta_betas' is unavailable for env_theta_loss='bce' "
-                    "checkpoints — the BCE theta head produces no Beta posterior."
-                )
-            return pre_alpha_theta, pre_beta_theta
-        if beta_method == "novice_betas":
-            return pre_alpha_demo[novice_demo_idx, :], pre_beta_demo[novice_demo_idx, :]
-        if beta_method == "expert_betas":
-            return pre_alpha_demo[expert_demo_idx, :], pre_beta_demo[expert_demo_idx, :]
-        if beta_method == "recent_betas":
-            recent_idx = _most_recent_demo_agent_idx(seg_idx - 1)
-            if recent_idx is not None:
-                return (pre_alpha_demo[recent_idx, :], pre_beta_demo[recent_idx, :])
-            if pre_alpha_theta is None:
-                raise ValueError(
-                    "beta_method='recent_betas' found no prior demonstrator to fall back "
-                    "on, and env_theta_loss='bce' provides no theta posterior fallback."
-                )
-            return pre_alpha_theta, pre_beta_theta
-        raise ValueError(f"Unknown beta_method: {beta_method}")
 
     per_game_rows = []
     per_cutoff_rows = []
@@ -775,52 +319,22 @@ def run_inference_on_session(
                         pre_alpha_demo_raw, pre_beta_demo_raw
                     )
 
-                    pred_alpha, pred_beta = _choose_thompson_betas(
-                        pre_alpha_theta, pre_beta_theta,
-                        pre_alpha_demo, pre_beta_demo,
-                        seg_idx,
-                    )
-
-                    # Fold in the learner's own experience on this round's bandit.
-                    acc = own_counts.setdefault(
-                        int(round_idx), [np.zeros(num_arms), np.zeros(num_arms)]
-                    )
+                    # Own experience on this round's bandit: "carry" keeps both play games, "reset" this one.
+                    acc = own_counts.setdefault(int(round_idx), [np.zeros(num_arms), np.zeros(num_arms)])
                     if own_experience == "reset":
                         acc[0][:] = 0.0
                         acc[1][:] = 0.0
-                    pred_alpha = pred_alpha + torch.as_tensor(
-                        acc[0], dtype=pred_alpha.dtype, device=pred_alpha.device
-                    )
-                    pred_beta = pred_beta + torch.as_tensor(
-                        acc[1], dtype=pred_beta.dtype, device=pred_beta.device
-                    )
-                    thompson_betas_str = serialize_betas(pred_alpha, pred_beta)
-
-                    # Match the actual number of events the human played in this
-                    # segment rather than the model-config default — human play
-                    # segments vary in length (1..T_learner) and the spliced
-                    # trajectory must fit the tensor slots exactly.
+                    learner = ThompsonLearner(beta_method, own_experience, np_rng)
+                    state = TrialState(pre_alpha_demo, pre_beta_demo, pre_alpha_theta, pre_beta_theta,
+                                       expert_demo_idx, novice_demo_idx, _most_recent_demo_agent_idx(seg_idx - 1),
+                                       torch.zeros(2, num_arms), torch.as_tensor(np.stack(acc)), round_index=int(round_idx))
+                    thompson_betas_str = serialize_betas(*learner.belief(state))
+                    # The human's slots are refilled exactly: play segments vary in length (1..T_learner).
                     start_pos, end_pos = learner_seg_slices[seg_idx]
-                    seg_len = end_pos - start_pos
-
-                    trajectory = thompson_sampling_step(
-                        pred_alpha.detach().cpu(),
-                        pred_beta.detach().cpu(),
-                        learner_seg_bandit_payoffs[seg_idx],
-                        seg_len,
-                        rng=rng,
-                        np_rng=np_rng,
-                    )
-                    for step_idx, (action_idx, reward) in enumerate(trajectory):
-                        pos = start_pos + step_idx
-                        action_val = action_idx if (0 <= action_idx < num_arms) else num_arms
-                        reward_val = int(reward) if int(reward) in (0, 1) else 2
-                        full_tensors['action_ids'][0, pos] = action_val
-                        full_tensors['reward_ids'][0, pos] = reward_val
-                        if 0 <= action_idx < num_arms:
-                            acc[0][action_idx] += float(reward)
-                            acc[1][action_idx] += 1.0 - float(reward)
-
+                    trajectory = play_segment(learner, state, full_tensors, start_pos, end_pos,
+                                              learner_seg_bandit_payoffs[seg_idx], rng, np_rng)
+                    acc[0] += state.own_within[0].numpy()
+                    acc[1] += state.own_within[1].numpy()
                     learner_trajectories[seg_idx_to_game_idx[seg_idx]] = trajectory
 
             # Recorded (post-segment) forward pass on the current tensor state.
@@ -1073,7 +587,9 @@ def main():
     
     try:
         # Load experiment data
-        df = load_and_preprocess_data(args.experiment_data_path)
+        df = load_shots(args.experiment_data_path)
+        validate_sessions(df)
+        df = df.drop(columns=['step', 'timestamp'])   # ordering columns only; keeps the CSV schema unchanged
         
         if len(df) == 0:
             print("\nERROR: No data after filtering!")
@@ -1087,14 +603,8 @@ def main():
         print("Loading Model Checkpoint")
         print("="*60)
         
-        model, checkpoint = BaseSocialTransformer.load_checkpoint(
-            local_path=args.checkpoint_path,
-            wandb_artifact=args.wandb_artifact,
-            cache_dir=str(get_training_runs_dir()),
-        )
-
-        model = model.to(device)
-        model.eval()
+        model, checkpoint, normalizer = load_model(args.checkpoint_path, args.wandb_artifact,
+                                                   str(get_training_runs_dir()), args.device)
         model_config = checkpoint['model_config']
 
         print(f"\nModel configuration:")
@@ -1129,26 +639,6 @@ def main():
         beta0 = checkpoint['normalization']['beta0']
         print(f"  alpha0={alpha0}, beta0={beta0}")
 
-        # Mirror eval.py: if the checkpoint normalized beliefs during training,
-        # wire up a BeliefNormalizer so inference denormalizes before computing
-        # N_tot. Without this the per-cutoff experience numbers would be in
-        # normalized space and meaningless.
-        normalizer = None
-        if checkpoint['normalization'].get('normalize_beliefs', False):
-            norm_dict = checkpoint['normalization']
-            if 'expert_N_max' in norm_dict:
-                max_exp = norm_dict['expert_N_max']
-            elif 'N_max' in norm_dict:
-                print("WARNING: checkpoint uses deprecated 'N_max' key in normalization dict.")
-                max_exp = norm_dict['N_max']
-            else:
-                raise ValueError("Checkpoint normalization missing both 'expert_N_max' and 'N_max'")
-            normalizer = BeliefNormalizer(
-                max_experience=max_exp,
-                alpha0=norm_dict['alpha0'],
-                beta0=norm_dict['beta0'],
-            )
-            print("✓ Using belief normalization")
 
         # Thompson beta methods. theta_betas needs a Beta posterior over theta,
         # which a BCE environment head does not produce — drop it for those.
