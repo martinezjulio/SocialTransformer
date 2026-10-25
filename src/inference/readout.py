@@ -1,7 +1,7 @@
 """Load a checkpoint and read the network's beliefs out at several segment cutoffs in one batch.
 
 One session's token tensors ([1, T], from ``sessions.encode_events_to_tensors``) are
-expanded to one row per cutoff; the mask comes from ``train.create_segment_mask`` so
+expanded to one row per cutoff; the mask comes from ``models.masking.create_segment_mask`` so
 inference and training share the cutoff semantics. Demonstrator betas are returned
 denormalised when the checkpoint trained with normalised beliefs.
 """
@@ -12,7 +12,7 @@ import torch
 
 from data.transforms import BeliefNormalizer
 from models import BaseSocialTransformer
-from train import create_segment_mask
+from models.masking import create_segment_mask
 
 
 def load_model(local_path: Optional[str] = None, wandb_artifact: Optional[str] = None,
