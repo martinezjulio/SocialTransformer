@@ -30,6 +30,7 @@ class ModelSpec:
     persev: bool = False        # one group-level bonus on any arm already chosen in this play game
     mixture: str = "none"       # MIXTURES: two = ω_E, ω_N per participant; by_round = + δ_E, δ_N; eight = group weights
     kappa_trend: bool = False   # δ_κ: round slope on log κ (robustness)
+    lapse: float | None = 0.02  # fixed lapse rate; None fits ε at group level, Beta(1, 9) (lapse robustness)
     role: str = "reported"      # full | S2 | S3 | S1 | reported | robustness | exploratory
 
     def __post_init__(self):
@@ -61,6 +62,8 @@ REGISTRY = {m.name: m for m in [
     ModelSpec("Switch-8", habit=True, mixture="eight", role="exploratory"),
     ModelSpec("H+Both+persev", habit=True, persev=True, role="exploratory"),
     ModelSpec("H+Both-reset", habit=True, reset=True, role="exploratory"),
+    ModelSpec("H+Both+eps", habit=True, lapse=None, role="robustness"),
+    ModelSpec("Switch-by-round+eps", habit=True, mixture="by_round", lapse=None, role="robustness"),
 ]}
 
 
@@ -71,8 +74,6 @@ import numpyro
 import numpyro.distributions as dist
 
 from analysis.thompson import KAPPA, LAM_C, LAM_W
-
-LAPSE = 0.02
 
 
 def grids(spec: ModelSpec):
@@ -114,13 +115,40 @@ def log_policy(tab, kappa, lam_w, lam_c, log_k, log_w, c, tilt):
     return lq - jax.scipy.special.logsumexp(lq, -1, keepdims=True)
 
 
-def model(spec: ModelSpec, T: TrialData, tab, observed: bool = True):
-    """numpyro model of one spec on the trials T through its table; observed=False samples choices (simulation)."""
+def mixture_logit(spec, plate, part, last_exp, round_pm, expert_first):
+    """Per-trial logit (N,) of the weight on the expert-readout policy: ω_E,i / ω_N,i by the last demonstrator
+    (two), plus δ_E / δ_N times the ±½ round (by_round), or eight group weights by (demonstrator, round, condition)
+    around which participants deviate with the same τ z_i (eight)."""
+    eight = spec.mixture == "eight"
+    lo = {}
+    for s in "EN":
+        mu = 0.0 if eight else numpyro.sample(f"mu_logit_omega_{s}", dist.Normal(0.0, 1.5))
+        tau = numpyro.sample(f"tau_logit_omega_{s}", dist.HalfNormal(1.0))
+        with plate:
+            z = numpyro.sample(f"z_logit_omega_{s}", dist.Normal(0.0, 1.0))
+        lo[s] = numpyro.deterministic(f"logit_omega_{s}", mu + tau * z)
+        if not eight:
+            numpyro.deterministic(f"omega_{s}", jax.nn.sigmoid(lo[s]))
+    out = jnp.where(last_exp, lo["E"][part], lo["N"][part])
+    if spec.mixture == "by_round":
+        d_e, d_n = numpyro.sample("delta_E", dist.Normal(0.0, 1.0)), numpyro.sample("delta_N", dist.Normal(0.0, 1.0))
+        out = out + jnp.where(last_exp, d_e, d_n) * round_pm
+    if eight:
+        out = out + numpyro.sample("logit_omega_8", dist.Normal(0.0, 1.5).expand([8]))[last_exp * 4 + (round_pm > 0) * 2 + expert_first]
+    return out
+
+
+def model(spec: ModelSpec, T: TrialData, tab, observed: bool = True, tab2=None):
+    """numpyro model of one spec on the trials T through its table (tab2: the novice-readout table of a Switch
+    model, same grids); observed=False samples choices (simulation)."""
     part, prev_arm, prev_rew, act = (jnp.asarray(x) for x in (T.part, T.prev_arm, T.prev_rew, T.act))
+    last_exp, round_pm, expert_first = (jnp.asarray(x) for x in (T.last_exp, T.round_pm, T.expert_first))
     N, K = T.act.shape[0], T.theta.shape[1]
     plate = numpyro.plate("participant", len(T.people))
     kappa, lam_w, lam_c = grids(spec)
     log_k = hierarchical("log_kappa", plate, 0.5, 0.3)[part] if spec.kappa else jnp.zeros(N)
+    if spec.kappa_trend:
+        log_k = log_k + numpyro.sample("delta_kappa", dist.Normal(0.0, 0.5)) * round_pm
     log_w = numpyro.sample("log_lambda_w", dist.Normal(0.0, 1.5)) if spec.own else 0.0
     c = 0.0 if spec.reset or not spec.own else numpyro.sample("lambda_c", dist.HalfNormal(4.0))
     tilt = jnp.zeros((N, K))
@@ -130,5 +158,9 @@ def model(spec: ModelSpec, T: TrialData, tab, observed: bool = True):
     if spec.persev:
         tilt = tilt + numpyro.sample("persev", dist.Normal(0.0, 2.0)) * jnp.asarray(T.own_seg.sum(-1) > 0)
     lq = log_policy(jnp.asarray(tab), kappa, lam_w, lam_c, log_k, log_w, c, tilt)
-    lq = jnp.logaddexp(jnp.log1p(-LAPSE) + lq, jnp.log(LAPSE / K))
+    if spec.mixture != "none":
+        lo = mixture_logit(spec, plate, part, last_exp, round_pm, expert_first)[:, None]
+        lq = jnp.logaddexp(jax.nn.log_sigmoid(lo) + lq, jax.nn.log_sigmoid(-lo) + log_policy(jnp.asarray(tab2), kappa, lam_w, lam_c, log_k, log_w, c, tilt))
+    eps = numpyro.sample("eps", dist.Beta(1.0, 9.0)) if spec.lapse is None else spec.lapse
+    lq = jnp.logaddexp(jnp.log1p(-eps) + lq, jnp.log(eps / K))
     numpyro.sample("a", dist.Categorical(logits=lq), obs=act if observed else None)
