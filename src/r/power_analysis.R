@@ -2,6 +2,10 @@
 # descriptive model, apply the registered rule, and record how often each test comes out "supported".
 # Input:  .../games/play_games.csv, .../descriptive/{contrast_weights,cell_means,contrasts}.csv (stages 4.1-4.5)
 # Output: .../power/decision_rates.csv   N x effect x hypothesis x outcome: rate of "supported", n_sims, n_failed
+#         .../power/closed_form_n.csv    per contrast: the paired-difference N for 90% power at the pilot and half effect
+#         (one-sample t on per-participant contrast scores, alpha 0.05, no Holm), the simple reference beside the simulation
+# S4 rides along as hypothesis "S4", outcome "choice": pilot = the resampled participants' observed picks; half = picks
+# regenerated from the pilot logistic fit with the common preference halved and each participant's deviation kept.
 # Effect levels: "pilot" = the resampled data as is; "half" = every outcome shrunk toward its grand mean by half
 # of the pilot cell effect, which halves every contrast and keeps the participant structure and the noise.
 # Run:    VERSION=pilot_E N_SIMS=500 N_CORES=8 Rscript src/r/power_analysis.R   (N_SIMS default 500, N_CORES 1)
@@ -26,6 +30,9 @@ cell_effect <- read_csv(file.path(analysis_dir, "descriptive", "cell_means.csv")
   mutate(effect = emmean - mean(emmean)) %>% ungroup() %>% select(outcome, condition, play, round, effect) %>%
   tidyr::pivot_wider(names_from = outcome, values_from = effect, names_prefix = "effect_") %>% mutate(round = factor(round, levels = c(1, 2)))
 games <- left_join(games, cell_effect, by = c("condition", "play", "round"))
+choices <- read_csv(file.path(analysis_dir, "partner_choice", "choices.csv"), show_col_types = FALSE)
+s4_fit <- glmer(chose_expert ~ 1 + (1 | participant), data = choices, family = binomial)
+s4_b0 <- fixef(s4_fit)[[1]]; s4_blup <- setNames(ranef(s4_fit)$participant[[1]], rownames(ranef(s4_fit)$participant))
 options(contrasts = c("contr.sum", "contr.poly"))
 emm_options(lmerTest.limit = 1e5)   # keep Satterthwaite df above emmeans' 3000-row default (the full experiment exceeds it)
 
@@ -43,7 +50,16 @@ decide <- function(N, effect) {
   inner_join(tests, p, by = c("hypothesis", "outcome")) %>% group_by(hypothesis) %>% mutate(p_holm = p.adjust(p.value, "holm")) %>% ungroup() %>%
     mutate(supported = p_holm < 0.05 & sign(estimate) == expected_sign, N = N, effect = effect)
 }
-one_sim <- function(s) bind_rows(lapply(N_GRID, function(N) bind_rows(lapply(c("pilot", "half"), function(e) tryCatch(decide(N, e), error = function(err) NULL)))))
+decide_s4 <- function(N, effect) {
+  ids <- sample(unique(choices$participant), N, replace = TRUE)
+  d <- bind_rows(lapply(seq_along(ids), function(i) mutate(choices[choices$participant == ids[i], ], participant = i)))
+  if (effect == "half") d$chose_expert <- rbinom(nrow(d), 1, plogis(0.5 * s4_b0 + s4_blup[ids[d$participant]]))
+  co <- coef(summary(glmer(chose_expert ~ 1 + (1 | participant), data = d, family = binomial)))[1, ]
+  tibble(hypothesis = "S4", outcome = "choice", expected_sign = 1, estimate = co[["Estimate"]], p.value = co[["Pr(>|z|)"]], p_holm = co[["Pr(>|z|)"]],
+         supported = p_holm < 0.05 & estimate > 0, N = N, effect = effect)
+}
+one_sim <- function(s) bind_rows(lapply(N_GRID, function(N) bind_rows(lapply(c("pilot", "half"), function(e)
+  tryCatch(bind_rows(decide(N, e), decide_s4(N, e)), error = function(err) NULL)))))
 
 # 3) Rates over simulations (RNG streams per core are reproducible under mclapply with the L'Ecuyer kind).
 RNGkind("L'Ecuyer-CMRG")
@@ -51,4 +67,14 @@ sims <- parallel::mclapply(seq_len(N_SIMS), one_sim, mc.cores = N_CORES, mc.set.
 rates <- bind_rows(sims) %>% group_by(N, effect, hypothesis, outcome) %>%
   summarise(rate = mean(supported), mean_estimate = mean(estimate), n_sims = n(), n_failed = N_SIMS - n(), .groups = "drop") %>% arrange(effect, N, hypothesis, outcome)
 write_csv(rates, file.path(out_dir, "decision_rates.csv"))
+
+# 4) Closed-form paired N: each participant has all 12 cells once, so the contrast applied to their own cell values
+#    is a paired score; the one-sample t test on the scores is the paired test behind the hypothesis.
+gw <- inner_join(mutate(games, across(c(condition, play), as.character), round = as.integer(as.character(round))), weights, by = c("condition", "play", "round"))
+closed <- bind_rows(lapply(seq_len(nrow(tests)), function(i) {
+  sc <- tapply(gw[[tests$outcome[i]]] * gw[[tests$hypothesis[i]]], gw$participant, sum)
+  n_at <- function(delta) ceiling(power.t.test(delta = abs(delta), sd = sd(sc), sig.level = 0.05, power = 0.9, type = "one.sample")$n)
+  tibble(hypothesis = tests$hypothesis[i], outcome = tests$outcome[i], mean_score = mean(sc), sd_score = sd(sc), n_pilot_effect = n_at(mean(sc)), n_half_effect = n_at(mean(sc) / 2))
+}))
+write_csv(closed, file.path(out_dir, "closed_form_n.csv")); print(as.data.frame(closed), digits = 3)
 cat("N_SIMS =", N_SIMS, "\n"); print(as.data.frame(tidyr::pivot_wider(rates, id_cols = c(effect, hypothesis, outcome), names_from = N, values_from = rate)), digits = 2)
