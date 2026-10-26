@@ -3,6 +3,8 @@
 # Output: .../descriptive/cell_means.csv   emmeans grid, one row per outcome x condition x play x round
 #         .../descriptive/contrasts.csv    H1-H5 (confirmatory: Holm within hypothesis, verdict) and the
 #                                          registered exploratory contrasts, as weight vectors over the 12 cells
+#         .../descriptive/robustness.csv   H1-H5 under two sensitivity fits: random slopes for round and play
+#                                          (reduced in a stated order if singular) and session order as a covariate
 # Model:  outcome ~ condition * play * round + (1 | participant), sum-to-zero coding, REML,
 #         Satterthwaite df (lmerTest). Solo slots 1 and 3 (exploratory) are left out.
 # Run:    VERSION=pilot_E Rscript src/r/descriptive.R
@@ -71,13 +73,14 @@ CONTRASTS <- with(grid, list(
 ))
 stopifnot(all(sapply(CONTRASTS, function(k) abs(sum(k$w)) < 1e-12)))
 
-contrasts <- bind_rows(lapply(names(CONTRASTS), function(h) {
+contrast_rows <- function(emm_list, names) bind_rows(lapply(names, function(h) {
   k <- CONTRASTS[[h]]
   bind_rows(lapply(seq_along(k$outcomes), function(i) {
-    est <- summary(contrast(emms[[k$outcomes[i]]], method = list(w = k$w)), infer = TRUE)
+    est <- summary(contrast(emm_list[[k$outcomes[i]]], method = list(w = k$w)), infer = TRUE)
     data.frame(hypothesis = h, outcome = k$outcomes[i], role = k$role, expected_sign = k$sign[i], as.data.frame(est)[, -1])
   }))
-})) %>%
+}))
+contrasts <- contrast_rows(emms, names(CONTRASTS)) %>%
   group_by(hypothesis) %>%
   mutate(p_holm = if (first(role) == "confirmatory") p.adjust(p.value, method = "holm") else NA_real_) %>%
   ungroup() %>%
@@ -87,3 +90,32 @@ contrasts <- bind_rows(lapply(names(CONTRASTS), function(h) {
                              TRUE ~ "not supported"))
 write_csv(contrasts, file.path(out_dir, "contrasts.csv"))
 print(as.data.frame(contrasts[contrasts$role == "confirmatory", c("hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value", "p_holm", "verdict")]), digits = 3)
+
+# 5) Robustness fits (exploratory sensitivity, H1-H5 only, no Holm or verdict). Random slopes for round and
+#    play by participant are reduced in a fixed order when the fit is singular or does not converge:
+#    correlated slopes -> uncorrelated slopes -> intercept only (the main model). The random part uses
+#    +-0.5 codings of round and play (lme4's || would expand a factor into one column per level). Session
+#    order (1..3, randomised per participant) enters as a numeric covariate; emmeans takes it at its mean.
+games <- mutate(games, round_c = ifelse(round == "2", 0.5, -0.5), play_c = ifelse(play == "second", 0.5, -0.5))
+FIXED <- "condition * play * round"
+RANDOM <- c(slopes_correlated = "(1 + round_c + play_c | participant)", slopes_uncorrelated = "(1 + round_c + play_c || participant)",
+            intercept_only = "(1 | participant)")
+fit_ok <- function(fit) !isSingular(fit) && is.null(fit@optinfo$conv$lme4$messages)
+fit_reduced <- function(y) {
+  for (spec in names(RANDOM)) {
+    fit <- suppressWarnings(suppressMessages(lmer(reformulate(paste(FIXED, "+", RANDOM[[spec]]), response = y), data = games, REML = TRUE)))
+    if (fit_ok(fit) || spec == "intercept_only") return(list(fit = fit, spec = spec))
+  }
+}
+ROBUST <- list(
+  random_slopes = lapply(setNames(OUTCOMES, OUTCOMES), fit_reduced),
+  session_order = lapply(setNames(OUTCOMES, OUTCOMES), function(y) list(
+    fit = lmer(reformulate(paste(FIXED, "+ session_order + (1 | participant)"), response = y), data = games, REML = TRUE), spec = "covariate"))
+)
+robustness <- bind_rows(lapply(names(ROBUST), function(f) {
+  emm_f <- lapply(ROBUST[[f]], function(r) emmeans(r$fit, ~ condition * play * round, lmer.df = "satterthwaite"))
+  spec_of <- sapply(ROBUST[[f]], function(r) r$spec)
+  contrast_rows(emm_f, c("H1", "H2", "H3", "H4", "H5")) %>% mutate(fit = f, spec = spec_of[outcome], .before = 1) %>% select(-role)
+}))
+write_csv(robustness, file.path(out_dir, "robustness.csv"))
+print(as.data.frame(robustness[, c("fit", "spec", "hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value")]), digits = 3)
