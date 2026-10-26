@@ -3,6 +3,7 @@
 # Output: .../descriptive/cell_means.csv   emmeans grid, one row per outcome x condition x play x round
 #         .../descriptive/contrasts.csv    H1-H5 (confirmatory: Holm within hypothesis, verdict) and the
 #                                          registered exploratory contrasts, as weight vectors over the 12 cells
+#         .../descriptive/contrast_weights.csv  the 12-cell weight vector of every contrast (one column each)
 #         .../descriptive/robustness.csv   H1-H5 under two sensitivity fits: random slopes for round and play
 #                                          (reduced in a stated order if singular) and session order as a covariate
 # Model:  outcome ~ condition * play * round + (1 | participant), sum-to-zero coding, REML,
@@ -39,6 +40,7 @@ games <- read_csv(file.path(analysis_dir, "games", "play_games.csv"), show_col_t
   )
 stopifnot(nrow(games) == 12 * nlevels(games$participant), all(table(games$participant) == 12))
 options(contrasts = c("contr.sum", "contr.poly"))
+emm_options(lmerTest.limit = 1e5)   # keep Satterthwaite df above emmeans' 3000-row default (the full experiment exceeds it)
 
 # 3) One model per outcome; the emmeans grid over the 12 cells.
 fits <- lapply(setNames(OUTCOMES, OUTCOMES), function(y) {
@@ -72,6 +74,7 @@ CONTRASTS <- with(grid, list(
   novice_vs_solo4     = list(w = m(demo == "novice") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(NA, NA), role = "exploratory")
 ))
 stopifnot(all(sapply(CONTRASTS, function(k) abs(sum(k$w)) < 1e-12)))
+write_csv(bind_cols(grid, as.data.frame(lapply(CONTRASTS, `[[`, "w"))), file.path(out_dir, "contrast_weights.csv"))   # read by power_analysis.R
 
 contrast_rows <- function(emm_list, names) bind_rows(lapply(names, function(h) {
   k <- CONTRASTS[[h]]

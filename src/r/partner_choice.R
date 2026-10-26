@@ -1,7 +1,8 @@
 # Partner choice (S4): every social session ends with one pick, expert or novice.
 # Input:  $EXPERIMENT_DATA_DIR/<experiment>/<version>/preprocessed_participant_data.csv (the choice game is
 #         not tokenised, so it appears in no inference CSV)
-# Output: $OUTPUT_DATA_DIR/analysis/<experiment>/<version>/partner_choice/rates.csv   expert-choice rate with
+# Output: $OUTPUT_DATA_DIR/analysis/<experiment>/<version>/partner_choice/choices.csv  one row per session: participant, condition, chose_expert
+#         .../partner_choice/rates.csv   expert-choice rate with
 #         Wilson 95% intervals: all sessions, expert-first (novice seen last), novice-first (expert seen last)
 #         .../partner_choice/model.csv  S4: P(choose expert) > 0.5 from a mixed logistic model with a participant
 #         intercept, two-sided alpha 0.05 with sign (confirmatory); the recency check (exploratory): the
@@ -27,6 +28,8 @@ choices <- raw %>%
             chose_expert = as.integer(choice_demonstrator_type == "expert"))
 stopifnot(!anyNA(choices$chose_expert), n_distinct(choices$session) == nrow(choices),
           all(table(choices$participant, choices$condition) == 1))   # one pick per session, both conditions per participant
+
+write_csv(choices, file.path(out_dir, "choices.csv"))   # one row per session; read by power_analysis.R
 
 # 2) Raw rates with Wilson intervals (prop.test without continuity correction is the Wilson score interval).
 wilson <- function(k, n) { ci <- prop.test(k, n, correct = FALSE)$conf.int; tibble(k = k, n = n, p = k / n, lo = ci[1], hi = ci[2]) }
