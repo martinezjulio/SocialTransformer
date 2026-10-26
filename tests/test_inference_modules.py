@@ -36,10 +36,11 @@ def ref(output_data_dir):
     cfg = yaml.safe_load((d / "metadata" / "inference_config.yaml").read_text())
     if cfg["device"] == "cuda" and not torch.cuda.is_available():
         pytest.skip("reference run used cuda")
-    if not Path(cfg["checkpoint_path"]).exists() or not Path(cfg["experiment_data_path"]).exists():
+    data_csv = Path(os.environ.get("EXPERIMENT_DATA_DIR", "")) / "pilot_E" / "preprocessed_participant_data.csv"   # the reference metadata predates the flat layout
+    if not Path(cfg["checkpoint_path"]).exists() or not data_csv.exists():
         pytest.skip("reference checkpoint or preprocessed CSV not present")
     model, _, normalizer = load_model(local_path=cfg["checkpoint_path"], device=cfg["device"])
-    shots = se.load_shots(cfg["experiment_data_path"])
+    shots = se.load_shots(str(data_csv))
     sids = sorted(shots.session_id.unique())[:N_SESSIONS]
     csv = {k: pd.read_csv(d / "data" / f"experiment_{k}_predictions.csv", low_memory=False) for k in ("cutoff_human", "cutoff_model", "trial")}
     return dict(model=model, normalizer=normalizer, shots=shots, sids=sids, seed=cfg["seed"], **csv)

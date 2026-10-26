@@ -15,7 +15,9 @@ conda activate SocialTransformer
 ## Out-of-repo directories (.env contract)
 
 Data and experiment outputs live outside the repo. Copy `.env.example` to `.env`
-and set absolute paths; every script in `scripts/` sources it. Dataset names
+and set absolute paths; every script in `scripts/` sources it. Human experiment data
+and analysis outputs are keyed by version only: `$EXPERIMENT_DATA_DIR/<version>/` and
+`$OUTPUT_DATA_DIR/analysis/<version>/` (no experiment-name level). Dataset names
 (e.g. `demonstrations_data_04`) are given per script or sweep and resolved by
 `train.py` against `TRAINING_DATA_ROOT_DIR`. See `.env.example` for the
 variable list.
