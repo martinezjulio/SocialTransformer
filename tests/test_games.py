@@ -26,7 +26,7 @@ OUTCOMES = ["payoff", "reward", "entropy"]
 @pytest.fixture(scope="module")
 def table():
     root = os.environ.get("EXPERIMENT_DATA_DIR")
-    p = Path(root or "") / "transfer_bandits_choice_textbox" / "pilot_E" / "preprocessed_participant_data.csv"
+    p = Path(root or "") / "pilot_E" / "preprocessed_participant_data.csv"
     if not root or not p.exists():
         pytest.skip(f"{p} not present")
     return play_games(pd.read_csv(p, dtype={"timestamp": str}, low_memory=False))

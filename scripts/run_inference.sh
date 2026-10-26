@@ -13,9 +13,8 @@ conda activate SocialTransformer
 
 # Set parameters
 # Pilot selection — override from caller (e.g. run_eval.sh) via env; else defaults apply.
-EXPERIMENT_NAME="${EXPERIMENT_NAME:-transfer_bandits_choice_textbox}"
 VERSION="${VERSION:-pilot_D}"
-EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${EXPERIMENT_NAME}/${VERSION}/preprocessed_participant_data.csv"
+EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${VERSION}/preprocessed_participant_data.csv"
 EVAL_DIR="${OUTPUT_DATA_DIR}/eval/${VERSION}"   # per-pilot outputs: eval/<version>/{data,metadata}
 DEVICE="cuda"  # Options: cuda, cpu
 NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"  # Inherited from run_eval.sh env if set; else default to 5
@@ -44,7 +43,7 @@ CHECKPOINT_SOURCE="local"
 echo "=================================="
 echo "Inference Configuration"
 echo "=================================="
-echo "Pilot: $EXPERIMENT_NAME / $VERSION"
+echo "Pilot: $VERSION"
 echo "Experiment data: $EXPERIMENT_DATA_PATH"
 echo "Device: $DEVICE"
 echo "Number of rollouts: $NUM_ROLLOUTS"

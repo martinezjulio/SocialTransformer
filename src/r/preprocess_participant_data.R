@@ -13,19 +13,18 @@ experiment_data_dir <- Sys.getenv("EXPERIMENT_DATA_DIR")
 # 1) Experiment name and version. VERSION has no default: a silent fallback could
 #    overwrite another pilot's preprocessed file, so the caller must set it, e.g.
 #    VERSION=pilot_E Rscript src/r/preprocess_participant_data.R
-experiment_name <- Sys.getenv("EXPERIMENT_NAME", unset = "transfer_bandits_choice_textbox")
 version         <- Sys.getenv("VERSION")
 if (version == "") stop("VERSION is not set (e.g. VERSION=pilot_E Rscript src/r/preprocess_participant_data.R)")
 file_prefix     <- Sys.getenv("FILE_PREFIX",     unset = "socialbandits_transfer")
 
-demographics_path  <- file.path(experiment_data_dir, experiment_name, version,
+demographics_path  <- file.path(experiment_data_dir, version,
                                 paste0(file_prefix, "_", version, "_demographics_anonymized.csv"))
-mongologs_path     <- file.path(experiment_data_dir, experiment_name, version,
+mongologs_path     <- file.path(experiment_data_dir, version,
                                 paste0(file_prefix, "_", version, "_trials_anonymized.csv"))
-preprocessed_path  <- file.path(experiment_data_dir, experiment_name, version,
+preprocessed_path  <- file.path(experiment_data_dir, version,
                                 "preprocessed_participant_data.csv")
 
-cat(sprintf("Experiment: %s / %s\n", experiment_name, version))
+cat(sprintf("Version: %s\n", version))
 cat(sprintf("  demographics: %s\n", demographics_path))
 cat(sprintf("  mongologs:    %s\n", mongologs_path))
 cat(sprintf("  output:       %s\n", preprocessed_path))

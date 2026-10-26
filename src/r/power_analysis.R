@@ -12,10 +12,9 @@
 
 suppressPackageStartupMessages({ library(here); library(dplyr); library(readr); library(lme4); library(lmerTest); library(emmeans) })
 if (Sys.getenv("OUTPUT_DATA_DIR") == "") dotenv::load_dot_env(here::here(".env"))
-experiment_name <- Sys.getenv("EXPERIMENT_NAME", unset = "transfer_bandits_choice_textbox")
 version         <- Sys.getenv("VERSION")
 if (version == "") stop("VERSION is not set (e.g. VERSION=pilot_E Rscript src/r/power_analysis.R)")
-analysis_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", experiment_name, version)
+analysis_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", version)
 out_dir <- file.path(analysis_dir, "power"); dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 N_GRID <- c(200, 250, 300, 350, 400, 500, 600, 700, 800); N_SIMS <- as.integer(Sys.getenv("N_SIMS", unset = "500")); N_CORES <- as.integer(Sys.getenv("N_CORES", unset = "1"))
 set.seed(20261025)

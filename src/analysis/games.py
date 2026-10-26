@@ -7,8 +7,7 @@ play (first, second: the social play games; solo slots 2 and 4 by information st
 reward (mean observed reward), entropy (Shannon bits over the six choices), n_shots, exploratory
 (True for solo slots 1 and 3, which have no social counterpart and stay out of the primary fits).
 
-Run directly with EXPERIMENT_NAME and VERSION set to write
-$OUTPUT_DATA_DIR/analysis/<experiment>/<version>/games/play_games.csv.
+Run directly with VERSION set to write $OUTPUT_DATA_DIR/analysis/<version>/games/play_games.csv.
 """
 
 import os
@@ -66,6 +65,6 @@ def write_play_games(preprocessed_path: Path, analysis_dir: Path) -> Path:
 
 
 if __name__ == "__main__":
-    experiment, version = os.environ["EXPERIMENT_NAME"], os.environ["VERSION"]
-    print(write_play_games(Path(os.environ["EXPERIMENT_DATA_DIR"]) / experiment / version / "preprocessed_participant_data.csv",
-                           Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / experiment / version))
+    version = os.environ["VERSION"]
+    print(write_play_games(Path(os.environ["EXPERIMENT_DATA_DIR"]) / version / "preprocessed_participant_data.csv",
+                           Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / version))

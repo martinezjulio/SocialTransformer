@@ -1,5 +1,5 @@
 # Descriptive stage: the 12-cell mixed model per outcome on the per-play-game table.
-# Input:  $OUTPUT_DATA_DIR/analysis/<experiment>/<version>/games/play_games.csv (src/analysis/games.py)
+# Input:  $OUTPUT_DATA_DIR/analysis/<version>/games/play_games.csv (src/analysis/games.py)
 # Output: .../descriptive/cell_means.csv   emmeans grid, one row per outcome x condition x play x round
 #         .../descriptive/contrasts.csv    H1-H5 (confirmatory: Holm within hypothesis, verdict) and the
 #                                          registered exploratory contrasts, as weight vectors over the 12 cells
@@ -21,10 +21,9 @@ suppressPackageStartupMessages({
 if (Sys.getenv("OUTPUT_DATA_DIR") == "") dotenv::load_dot_env(here::here(".env"))
 
 # 1) Paths; VERSION has no default so a run can never target the wrong pilot silently.
-experiment_name <- Sys.getenv("EXPERIMENT_NAME", unset = "transfer_bandits_choice_textbox")
 version         <- Sys.getenv("VERSION")
 if (version == "") stop("VERSION is not set (e.g. VERSION=pilot_E Rscript src/r/descriptive.R)")
-analysis_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", experiment_name, version)
+analysis_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", version)
 out_dir      <- file.path(analysis_dir, "descriptive")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 

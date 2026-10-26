@@ -1,7 +1,7 @@
 # Partner choice (S4): every social session ends with one pick, expert or novice.
-# Input:  $EXPERIMENT_DATA_DIR/<experiment>/<version>/preprocessed_participant_data.csv (the choice game is
+# Input:  $EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv (the choice game is
 #         not tokenised, so it appears in no inference CSV)
-# Output: $OUTPUT_DATA_DIR/analysis/<experiment>/<version>/partner_choice/choices.csv  one row per session: participant, condition, chose_expert
+# Output: $OUTPUT_DATA_DIR/analysis/<version>/partner_choice/choices.csv  one row per session: participant, condition, chose_expert
 #         .../partner_choice/rates.csv   expert-choice rate with
 #         Wilson 95% intervals: all sessions, expert-first (novice seen last), novice-first (expert seen last)
 #         .../partner_choice/model.csv  S4: P(choose expert) > 0.5 from a mixed logistic model with a participant
@@ -11,14 +11,13 @@
 
 suppressPackageStartupMessages({ library(here); library(dplyr); library(readr); library(lme4) })
 if (Sys.getenv("OUTPUT_DATA_DIR") == "") dotenv::load_dot_env(here::here(".env"))
-experiment_name <- Sys.getenv("EXPERIMENT_NAME", unset = "transfer_bandits_choice_textbox")
 version         <- Sys.getenv("VERSION")
 if (version == "") stop("VERSION is not set (e.g. VERSION=pilot_E Rscript src/r/partner_choice.R)")
-out_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", experiment_name, version, "partner_choice")
+out_dir <- file.path(Sys.getenv("OUTPUT_DATA_DIR"), "analysis", version, "partner_choice")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 1) One row per social session: the shot of the choice game names the demonstrator picked.
-raw <- read_csv(file.path(Sys.getenv("EXPERIMENT_DATA_DIR"), experiment_name, version, "preprocessed_participant_data.csv"),
+raw <- read_csv(file.path(Sys.getenv("EXPERIMENT_DATA_DIR"), version, "preprocessed_participant_data.csv"),
                 col_types = cols(.default = col_character()))
 choices <- raw %>%
   filter(game == "choice", shot == "TRUE") %>%
