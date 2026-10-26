@@ -27,7 +27,7 @@ def parse_betas(s: str) -> np.ndarray:
 @dataclass(frozen=True)
 class Sessions:
     version: str
-    trials: pd.DataFrame        # human shots of complete social sessions: session_id, anonymous_id, game_sequence, round_index, game_index, demonstrator_type, position, reward
+    trials: pd.DataFrame        # human shots of complete social sessions: session_id, anonymous_id, game_sequence, round_index, game_index, demonstrator_type, position, zone_bandit, reward
     readouts: pd.DataFrame      # one row per (session_id, cutoff): theta (K,), and expert/novice/recent (K, 2) arrays
     trials_per_game: int
     dropped: tuple              # incomplete session ids
@@ -41,7 +41,7 @@ def load_sessions(eval_dir: Path, version: str) -> Sessions:
     trials_per_game = int(n.mode()[0])
     dropped = tuple(sorted({sid for sid, _ in n[n != trials_per_game].index}))
     hum = hum[~hum["session_id"].isin(dropped)]
-    trials = hum[["session_id", "anonymous_id", "game_sequence", "round_index", "game_index", "demonstrator_type", "position"]].copy()
+    trials = hum[["session_id", "anonymous_id", "game_sequence", "round_index", "game_index", "demonstrator_type", "position", "zone_bandit"]].copy()
     trials["reward"] = hum["reward_generated"].astype(float)
     trials = trials.sort_values(["session_id", "game_index"], kind="stable").reset_index(drop=True)
 
@@ -61,3 +61,60 @@ def load_sessions(eval_dir: Path, version: str) -> Sessions:
     K = len(readouts["theta"].iloc[0])
     assert all(a is None or a.shape == (K, 2) for name in READOUTS for a in readouts[name]) and readouts["expert"].notna().all()
     return Sessions(version, trials, readouts, trials_per_game, dropped)
+
+
+@dataclass(frozen=True)
+class TrialData:
+    """One entry per human play shot (N), in (session, game, shot) order. Count arrays are (N, K, 2) of
+    (successes, failures) on the round's bandit, as the learner sees them before the shot."""
+    session: np.ndarray      # session id per shot
+    part: np.ndarray         # participant index 0..P-1 (sorted anonymous ids)
+    act: np.ndarray          # arm chosen
+    prev_arm: np.ndarray     # previous arm in this play segment, -1 on its first shot
+    prev_rew: np.ndarray     # its reward, 0.0 on the first shot
+    round_pm: np.ndarray     # -0.5 round 1, +0.5 round 2
+    seg: np.ndarray          # play segment 1..4 (2 per round)
+    expert_first: np.ndarray  # condition: the expert demonstrated first in this session
+    last_exp: np.ndarray     # the demonstrator watched just before this segment was the expert
+    expert_seen: np.ndarray  # the expert has demonstrated on this round's bandit before this shot
+    read: dict               # 'expert', 'novice', 'recent' -> (N, K, 2) readout entering the segment
+    own_seg: np.ndarray      # learner's own counts earlier in this segment (S_SEG)
+    own_prev: np.ndarray     # learner's own counts from the round's earlier play segment (S_PREV)
+    vis_last: np.ndarray     # visible pulls of the demonstration watched last
+    vis_expert: np.ndarray   # visible pulls of the expert's demonstration this round (zeros if unseen)
+    vis_round: np.ndarray    # every visible pull this round so far, demonstrations and own (legacy naive)
+    theta: np.ndarray        # (N, K) true payoffs of the round's bandit
+    people: tuple            # anonymous ids in participant-index order
+
+
+def trial_data(s: Sessions) -> TrialData:
+    K = len(s.readouts["theta"].iloc[0])
+    people = tuple(sorted(s.trials["anonymous_id"].unique())); pidx = {p: i for i, p in enumerate(people)}
+    read = {(r.session_id, r.cutoff): r for r in s.readouts.itertuples()}
+    cols = {k: [] for k in ("session", "part", "act", "prev_arm", "prev_rew", "round_pm", "seg", "expert_first", "last_exp", "expert_seen",
+                            "own_seg", "own_prev", "vis_last", "vis_expert", "vis_round", "theta")}
+    reads = {name: [] for name in READOUTS}
+    for sid, sess in s.trials.groupby("session_id", sort=True):
+        expert_first = sess["game_sequence"].iloc[0] == "expert-play-novice-play-choice"
+        for rnd, games in sess.groupby("round_index", sort=True):
+            theta = np.array(ast.literal_eval(games["zone_bandit"].iloc[0]), dtype=float)   # one bandit per round
+            carried, vis_round, vis_expert, vis_last, last_exp = np.zeros((K, 2)), np.zeros((K, 2)), np.zeros((K, 2)), None, None
+            for gi, g in games.groupby("game_index", sort=True):
+                pos, rew = g["position"].to_numpy(), g["reward"].to_numpy()
+                if gi % 4 in (0, 2):                                 # a demonstration: tally its visible pulls
+                    vis_last = np.zeros((K, 2)); np.add.at(vis_last, (pos, 0), rew); np.add.at(vis_last, (pos, 1), 1 - rew)
+                    vis_round += vis_last; last_exp = g["demonstrator_type"].iloc[0] == "expert"
+                    if last_exp: vis_expert = vis_expert + vis_last
+                    continue
+                pre = read[(sid, SEGMENTS_PER_ROUND * rnd + gi % 4 + 1)]   # readout right after that demonstration
+                within = np.zeros((K, 2))
+                for t, (a, r) in enumerate(zip(pos, rew)):
+                    for k, v in dict(session=sid, part=pidx[sess["anonymous_id"].iloc[0]], act=a, prev_arm=pos[t - 1] if t else -1,
+                                     prev_rew=rew[t - 1] if t else 0.0, round_pm=rnd - 0.5, seg=2 * rnd + (gi % 4 == 3) + 1, expert_first=expert_first,
+                                     last_exp=last_exp, expert_seen=bool(vis_expert.any()), own_seg=within.copy(), own_prev=carried.copy(),
+                                     vis_last=vis_last.copy(), vis_expert=vis_expert.copy(), vis_round=vis_round.copy(), theta=theta).items():
+                        cols[k].append(v)
+                    for name in READOUTS: reads[name].append(getattr(pre, name))
+                    within[a, 0] += r; within[a, 1] += 1 - r; vis_round[a, 0] += r; vis_round[a, 1] += 1 - r
+                carried = carried + within
+    return TrialData(**{k: np.array(v) for k, v in cols.items()}, read={n: np.stack(v) for n, v in reads.items()}, people=people)
