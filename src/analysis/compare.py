@@ -58,3 +58,29 @@ def ladder(loos: dict, base: str, part: np.ndarray) -> pd.DataFrame:
 def by_cell(a: Loo, b: Loo, T: TrialData, cells: dict) -> pd.DataFrame:
     """ΔELPD a − b per named trial subset (``cells``: name -> boolean mask over trials)."""
     return pd.DataFrame({n: {k: v for k, v in paired(a, b, T.part, m).items() if k != "per_participant"} for n, m in cells.items()}).T
+
+
+def subset(T: TrialData, mask: np.ndarray) -> TrialData:
+    """The trials where ``mask`` is True, participant indexing unchanged."""
+    per_trial = {f: v[mask] for f, v in vars(T).items() if isinstance(v, np.ndarray) and v.shape[:1] == mask.shape}
+    return replace(T, **per_trial, read={k: v[mask] for k, v in T.read.items()})
+
+
+def loso(l: Loo, spec, T: TrialData, tab, tab2=None, seed: int = 0) -> Loo:
+    """Pareto-k fallback: for every session holding a trial with k > K_BAD, refit without that session and replace
+    its trials' pointwise elpd by the exact held-out log predictive density (log mean over draws); k set to 0 there."""
+    from numpyro.infer import log_likelihood
+    from scipy.special import logsumexp
+    from analysis.fitting import LADDER, fit_once
+    from analysis.policies import model
+    elpd_i, k = l.elpd_i.copy(), l.pareto_k.copy()
+    for sid in np.unique(T.session[k > K_BAD]):
+        held = T.session == sid
+        for rung in range(len(LADDER)):
+            f = fit_once(spec, subset(T, ~held), tab[~held], None if tab2 is None else tab2[~held], rung, seed)
+            if f.passed:
+                break
+        draws = {s: v.reshape(-1, *v.shape[2:]) for s, v in f.posterior.items()}
+        ll = np.asarray(log_likelihood(model, draws, spec, subset(T, held), tab[held], True, None if tab2 is None else tab2[held])["a"])
+        elpd_i[held], k[held] = logsumexp(ll, 0) - np.log(len(ll)), 0.0
+    return Loo(l.name, float(elpd_i.sum()), elpd_i, k, int((k > K_BAD).sum()))
