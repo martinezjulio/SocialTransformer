@@ -30,6 +30,7 @@ class TrialState:
     prev_reward: Optional[int] = None
     round_index: int = 0
     trial: int = 0
+    vis_last: Optional[torch.Tensor] = None   # [2, K] (wins, losses) visible in the demonstration watched last
 
 
 @runtime_checkable

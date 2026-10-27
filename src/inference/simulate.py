@@ -68,11 +68,14 @@ def simulate_session(model: torch.nn.Module, normalizer, session_df: pd.DataFram
     tensors = encode_events_to_tensors(info["events"], num_arms, len(info["bandits_info"]), num_agents, get_special_characters())
     segs, bounds = info["segment_info"], info["segment_boundaries"]
     expert, novice = info["demo_to_agent"]["expert"] - 1, info["demo_to_agent"]["novice"] - 1
-    next_game, last_watched, own, out = iter(games), None, {}, []
+    next_game, last_watched, own, out, vis = iter(games), None, {}, [], None
     for seg_idx, seg in enumerate(segs):
         if seg["type"] == "demo":
-            last_watched = seg["agent"] - 1
-            out.append(session_df[session_df["game_index"] == next(next_game)].assign(expert_betas=np.nan, novice_betas=np.nan))
+            last_watched, game_df = seg["agent"] - 1, session_df[session_df["game_index"] == next(next_game)]
+            vis = torch.zeros(2, num_arms)   # the demonstration's visible (wins, losses), for the copying policies
+            for a, r in zip(game_df["position"].astype(int), game_df["reward_generated"].astype(int)):
+                vis[1 - r, a] += 1.0
+            out.append(game_df.assign(expert_betas=np.nan, novice_betas=np.nan))
         elif seg["type"] == "learner":
             game_df, r = session_df[session_df["game_index"] == next(next_game)], seg["round"]
             q = info["round_to_index"][r]
@@ -80,7 +83,7 @@ def simulate_session(model: torch.nn.Module, normalizer, session_df: pd.DataFram
             a_demo, b_demo = o["alpha_demo"][0, q].cpu(), o["beta_demo"][0, q].cpu()
             theta = (o["alpha_theta"][0, q].cpu(), o["beta_theta"][0, q].cpu()) if "alpha_theta" in o else (None, None)
             carry = own.get(r, torch.zeros(2, num_arms))
-            state = TrialState(a_demo, b_demo, *theta, expert, novice, last_watched, torch.zeros(2, num_arms), carry, round_index=r)
+            state = TrialState(a_demo, b_demo, *theta, expert, novice, last_watched, torch.zeros(2, num_arms), carry, round_index=r, vis_last=vis)
             traj = play_segment(policy, state, tensors, bounds[seg_idx], bounds[seg_idx + 1], parse_bandit_payoffs(game_df.iloc[0]["zone_bandit"]), rng, np_rng)
             own[r] = carry + state.own_within
             rows = pd.DataFrame([{**game_df.iloc[0].to_dict(), "step": i, "position": a, "reward_generated": bool(rw), "timestamp": np.nan} for i, (a, rw) in enumerate(traj)])

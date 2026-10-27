@@ -4,7 +4,7 @@
 ``FittedPolicy`` holds one participant's parameters at one posterior draw and turns a ``TrialState`` into
 the model's choice probabilities with the exact Thompson quadrature (no tables: simulated beliefs are new).
 It implements the same four steps as ``policies.model`` (belief, Thompson, habit tilt, lapse) and the
-Switch mixture. Sources available in the loop: expert, novice, recent (last watched), uniform.
+Switch mixture. Sources available in the loop: expert, novice, recent (last watched), vis_last, uniform.
 ``simulated_trial_data`` turns the simulator's session frames into ``TrialData`` through the human
 builder, and ``sample_participants`` draws new participants from the fitted hierarchy.
 """
@@ -61,6 +61,8 @@ class FittedPolicy:
     def _source(self, s: TrialState, source: str) -> np.ndarray:   # (K, 2) counts before the learner's own
         if source == "uniform":
             return np.ones((s.own_within.shape[1], 2))
+        if source == "vis_last":
+            return 1.0 + s.vis_last.numpy().T
         d = {"expert": s.expert, "novice": s.novice, "recent": s.last_watched}[source]
         return np.stack([s.alpha_demo[d].numpy(), s.beta_demo[d].numpy()], -1)
 
