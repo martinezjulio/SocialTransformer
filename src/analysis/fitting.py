@@ -18,8 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import arviz as az
-import jax
-import numpy as np
+
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")   # before JAX's backend starts: on unified-memory boxes the 75% default takes the host's RAM too
+import jax  # noqa: E402
+import numpy as np  # noqa: E402
 from numpyro import handlers
 from numpyro.infer import MCMC, NUTS, log_likelihood
 
@@ -54,8 +56,9 @@ def fit_once(spec: ModelSpec, T: TrialData, tab, tab2, rung: int, seed: int, cha
     post = {k: np.asarray(v) for k, v in mc.get_samples(group_by_chain=True).items()}
     ll = np.asarray(log_likelihood(model, mc.get_samples(), *args)["a"]).reshape(CHAINS, -1, len(T.act)).astype(np.float32)
     idata = az.from_dict(posterior={k: post[k] for k in sites})
-    d = dict(rhat_max=float(az.rhat(idata).to_array().max()), ess_bulk_min=float(az.ess(idata, method="bulk").to_array().min()),
-             ess_tail_min=float(az.ess(idata, method="tail").to_array().min()), divergences=int(mc.get_extra_fields()["diverging"].sum()), rung=rung, seconds=time.time() - t0)
+    rhat, bulk, tail = az.rhat(idata), az.ess(idata, method="bulk"), az.ess(idata, method="tail")   # reduced per site: to_array() would
+    d = dict(rhat_max=max(float(rhat[v].max()) for v in rhat.data_vars), ess_bulk_min=min(float(bulk[v].min()) for v in bulk.data_vars),   # outer-join
+             ess_tail_min=min(float(tail[v].min()) for v in tail.data_vars), divergences=int(mc.get_extra_fields()["diverging"].sum()), rung=rung, seconds=time.time() - t0)   # the participant dims
     passed = d["rhat_max"] < GATE["rhat"] and min(d["ess_bulk_min"], d["ess_tail_min"]) >= GATE["ess"] and d["divergences"] <= GATE["divergences"]
     return Fit(spec.name, post, ll, d, passed)
 
@@ -88,7 +91,6 @@ def run_many(names, eval_dir, version, table_paths: dict, key: str, cache_dir, w
     """Fit the named registry models in spawned processes, ``workers`` at a time (default: one per JAX device; several
     processes on one GPU only contend, see the plan's Findings for 5.13). Each process loads the trials and memory-maps
     its tables; ``table_paths[name] = (table, second table or None)``. Returns name -> Fit, read back from the cache."""
-    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     workers = workers or len(jax.devices())
     jobs = [(n, str(eval_dir), version, str(table_paths[n][0]), table_paths[n][1] and str(table_paths[n][1]), key, str(cache_dir), seed) for n in names]
     with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
