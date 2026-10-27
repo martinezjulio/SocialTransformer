@@ -104,11 +104,13 @@ def hierarchical(name, plate, mu_scale, tau_scale):
 
 def log_policy(tab, kappa, lam_w, lam_c, log_k, log_w, c, tilt):
     """Normalised log-policy (N, K) from a table (N, |κ|, |λ_w|, |λ_c|, K) at per-trial log κ, group log λ_w and
-    λ_c (log axis above the first nonzero knot, linear blend with the λ_c = 0 rung below it) plus a tilt (N, K)."""
+    λ_c (log axis above the first nonzero knot; below it a cubic on the linear axis through the λ_c = 0 knot) plus a tilt (N, K)."""
     lq = cubic(jnp.broadcast_to(log_w, log_k.shape), jnp.log(lam_w) if len(lam_w) > 1 else lam_w, cubic(log_k, jnp.log(kappa), tab))
     if len(lam_c) > 1:
-        f = jnp.clip(c / lam_c[1], 0.0, 1.0)
-        lq = f * cubic(jnp.broadcast_to(jnp.log(jnp.maximum(c, lam_c[1])), log_k.shape), jnp.log(lam_c[1:]), lq[:, 1:]) + (1 - f) * lq[:, 0]
+        cq = jnp.broadcast_to(c, log_k.shape)
+        hi = cubic(jnp.log(jnp.maximum(cq, lam_c[1])), jnp.log(lam_c[1:]), lq[:, 1:])
+        lo = cubic(jnp.minimum(cq, lam_c[1]), jnp.asarray(lam_c[:4]), lq[:, :4])
+        lq = jnp.where((cq < lam_c[1])[:, None], lo, hi)
     else:
         lq = lq[:, 0]
     lq = lq + tilt

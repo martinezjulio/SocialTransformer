@@ -67,3 +67,11 @@ def test_cubic_interpolation_on_dense_grid(output_data_dir):
     err = np.abs(np.array(err))                                  # (40, 60, K)
     chosen = err[:, np.arange(len(idx)), act]
     assert chosen.mean() < 1e-4 and err.max() < 0.01, (chosen.mean(), err.max())
+    # below the first nonzero λ_c knot the model uses a cubic on the linear axis through the zero knot
+    (ia, wa), (ib, wb) = lagrange4(lk, lk[16]), lagrange4(lw, lw[7])   # κ = 1, λ_w on a knot: only the λ_c axis is interpolated
+    for c in (0.03, 0.137, 0.2):
+        exact = mix(p_win_all(np.exp(lk[16]) * (read + np.exp(lw[7]) * own_s + c * own_p)))
+        ic, wc = lagrange4(LAM_C[:4], c)
+        logp = np.einsum("i,j,k,nijka->na", wa, wb, wc, tab[idx][:, ia:ia + 4, ib:ib + 4, ic:ic + 4])
+        e = np.abs(mix(np.exp(logp)) - exact)
+        assert e[np.arange(len(idx)), act].mean() < 1e-4 and e.max() < 0.01, (c, e.mean(), e.max())

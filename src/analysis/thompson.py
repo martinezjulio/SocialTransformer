@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from scipy.special import betainc, betaln, expit, log_expit
 
-KAPPA = np.geomspace(0.25, 16, 25)                        # ratio 2^¼; 1.0 on the grid
+KAPPA = np.geomspace(0.0625, 16, 33)                      # ratio 2^¼; 1.0 on the grid; floor below the least trusting pilot participants
 LAM_W = np.geomspace(0.1, 16, 16)                         # within-segment own weight
 LAM_C = np.concatenate([[0.0], np.geomspace(0.25, 4, 9)])  # carried own weight; 0 = reset learner
 P_FLOOR = 1e-12                                           # log p stored without the lapse; keeps -inf out
