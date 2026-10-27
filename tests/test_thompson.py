@@ -90,3 +90,17 @@ def test_table_assembles_from_cached_blocks(tmp_path):
     assert assembled.shape == (10, 2, 2, 2, K) and np.array_equal(assembled, direct) and np.array_equal(np.concatenate(blocks), direct)
     assert table_path(*args, **grid).exists() and not any(block_path(table_path(*args, **grid), b, 3).exists() for b in range(3))
     assert np.array_equal(table(*args, **grid), direct), "the assembled table is served from the cache"
+
+
+def test_gpu_builder_matches_scipy(tmp_path):
+    from analysis.thompson import p_win_gpu, table, table_path
+    rng = np.random.default_rng(1)
+    ab = np.concatenate([rng.gamma(1.5, s, size=(40, K, 2)) + 0.1 for s in (0.1, 10, 300)] + [rng.uniform(90, 110, size=(40, K, 2))])
+    p, g = p_win(ab), p_win_gpu(ab)   # counts 0.1 .. ~3500, plus the hard case: every arm near 100
+    assert np.abs(g - p).max() < 1e-5 and np.abs(g.sum(-1) - 1).max() < 5e-5, (np.abs(g - p).max(), np.abs(g.sum(-1) - 1).max())
+    read, own_seg, own_prev = (rng.gamma(2.0, 2.0, size=(6, K, 2)) for _ in range(3))
+    grid = dict(kappa=np.array([0.5, 16.0]), lam_w=np.array([1.0]), lam_c=np.array([0.0, 4.0]))
+    exact, fast = (table("toy", read, own_seg, own_prev, tmp_path, **grid, builder=b) for b in ("scipy", "gpu"))
+    assert table_path("toy_gpu", read, own_seg, own_prev, tmp_path, **grid).exists() and fast.shape == exact.shape
+    big = exact > np.log(1e-4)
+    assert np.abs(fast[big] - exact[big]).max() < 5e-3, "log p within 5e-3 where p > 1e-4 (the lapse floor is 1.7e-3)"
