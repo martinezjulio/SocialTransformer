@@ -75,3 +75,18 @@ def test_cubic_interpolation_on_dense_grid(output_data_dir):
         logp = np.einsum("i,j,k,nijka->na", wa, wb, wc, tab[idx][:, ia:ia + 4, ib:ib + 4, ic:ic + 4])
         e = np.abs(mix(np.exp(logp)) - exact)
         assert e[np.arange(len(idx)), act].mean() < 1e-4 and e.max() < 0.01, (c, e.mean(), e.max())
+
+
+def test_table_assembles_from_cached_blocks(tmp_path):
+    from analysis.thompson import block_path, table, table_path
+    rng = np.random.default_rng(0)
+    read, own_seg, own_prev = (rng.gamma(2.0, 2.0, size=(10, K, 2)) for _ in range(3))
+    grid = dict(kappa=np.array([0.5, 2.0]), lam_w=np.array([0.5, 1.0]), lam_c=np.array([0.0, 1.0]))
+    args = ("toy", read, own_seg, own_prev, tmp_path)
+    direct = table("toy", read, own_seg, own_prev, tmp_path / "direct", **grid)
+    blocks = [table(*args, **grid, block=b, n_blocks=3) for b in range(3)]
+    assert [len(b) for b in blocks] == [4, 3, 3] and all(block_path(table_path(*args, **grid), b, 3).exists() for b in range(3))
+    assembled = table(*args, **grid, n_blocks=3)
+    assert assembled.shape == (10, 2, 2, 2, K) and np.array_equal(assembled, direct) and np.array_equal(np.concatenate(blocks), direct)
+    assert table_path(*args, **grid).exists() and not any(block_path(table_path(*args, **grid), b, 3).exists() for b in range(3))
+    assert np.array_equal(table(*args, **grid), direct), "the assembled table is served from the cache"

@@ -49,18 +49,38 @@ def table_path(name: str, read, own_seg, own_prev, cache_dir, kappa=KAPPA, lam_w
     return Path(cache_dir) / f"{name}_{key}.npy"
 
 
-def table(name: str, read: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path,
-          kappa: np.ndarray = KAPPA, lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = 16) -> np.ndarray:
-    """Cached log-policy table (N, |κ|, |λ_w|, |λ_c|, K) for a belief source; built on a cache miss."""
-    path = table_path(name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c)
-    if path.exists():
-        return np.load(path)
+def block_path(path: Path, block: int, n_blocks: int) -> Path:
+    return path.with_name(f"{path.stem}.block{block:03d}of{n_blocks:03d}.npy")
+
+
+def build(read, own_seg, own_prev, kappa, lam_w, lam_c, workers) -> np.ndarray:
+    """Log-policy table (N, |κ|, |λ_w|, |λ_c|, K) for these trials, float32, floored at P_FLOOR."""
     N, K, _ = read.shape
     k, w, c = kappa.reshape(-1, 1, 1, 1, 1, 1), lam_w.reshape(1, -1, 1, 1, 1, 1), lam_c.reshape(1, 1, -1, 1, 1, 1)
     post = k * (read + w * own_seg + c * own_prev)                                       # (|κ|, |λ_w|, |λ_c|, N, K, 2)
     p = p_win_all(post.reshape(-1, K, 2), workers=workers).reshape(len(kappa), len(lam_w), len(lam_c), N, K)
     assert np.abs(p.sum(-1) - 1).max() < 1e-6, "quadrature lost mass"
-    out = np.log(np.clip(p, P_FLOOR, None)).transpose(3, 0, 1, 2, 4).astype(np.float32)   # (N, |κ|, |λ_w|, |λ_c|, K)
+    return np.log(np.clip(p, P_FLOOR, None)).transpose(3, 0, 1, 2, 4).astype(np.float32)
+
+
+def table(name: str, read: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path, kappa: np.ndarray = KAPPA,
+          lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = 16, block: int = None, n_blocks: int = 1) -> np.ndarray:
+    """Cached log-policy table for a belief source; built on a cache miss. The trials split into ``n_blocks`` contiguous
+    blocks: ``block=b`` builds, caches and returns block b alone (one cluster array task); ``block=None`` returns the
+    full table, assembling it from the cached blocks (building any that are missing) and then deleting them."""
+    path = table_path(name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c)
+    if path.exists():
+        return np.load(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if block is not None:
+        rows, bp = np.array_split(np.arange(len(read)), n_blocks)[block], block_path(path, block, n_blocks)
+        if not bp.exists():
+            np.save(bp, build(read[rows], own_seg[rows], own_prev[rows], kappa, lam_w, lam_c, workers))
+        return np.load(bp)
+    args = (name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c, workers)
+    out = build(read, own_seg, own_prev, kappa, lam_w, lam_c, workers) if n_blocks == 1 else np.concatenate(
+        [table(*args, block=b, n_blocks=n_blocks) for b in range(n_blocks)])
     np.save(path, out)
+    for b in range(n_blocks if n_blocks > 1 else 0):
+        block_path(path, b, n_blocks).unlink()
     return out
