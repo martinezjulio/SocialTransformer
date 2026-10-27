@@ -43,15 +43,15 @@ def sample_participants(posterior: dict, draw: int, n: int, rng: np.random.Gener
     """``n`` new participants from the hierarchy at one posterior draw: per-participant sites as mu + tau · z with fresh
     z, group sites copied into every dict (their values are the truth a recovery check must find back)."""
     flat = {s: v.reshape(-1, *v.shape[2:])[draw] for s, v in posterior.items()}
-    group = {s: v for s, v in flat.items() if v.ndim == 0 and not s.startswith(("mu_", "tau_"))}
-    people = {s: flat[f"mu_{s}"] + flat[f"tau_{s}"] * rng.standard_normal(n) for s in PER_PARTICIPANT if s in flat}
+    group = {s: float(v) for s, v in flat.items() if v.ndim == 0 and not s.startswith(("mu_", "tau_"))}   # Python floats: a float32
+    people = {s: float(flat[f"mu_{s}"]) + float(flat[f"tau_{s}"]) * rng.standard_normal(n) for s in PER_PARTICIPANT if s in flat}   # scalar would keep the mixture weights in float32
     return [group | {s: float(v[i]) for s, v in people.items()} for i in range(n)]
 
 
 def draw_params(posterior: dict, draw: int, participant: int) -> dict:
     """Site -> value for one flattened draw, per-participant sites indexed at ``participant``."""
     flat = {s: v.reshape(-1, *v.shape[2:])[draw] for s, v in posterior.items()}
-    return {s: (v[participant] if s in PER_PARTICIPANT else v) for s, v in flat.items()}
+    return {s: float(v[participant] if s in PER_PARTICIPANT else v) for s, v in flat.items() if v.ndim == 0 or s in PER_PARTICIPANT}
 
 
 class FittedPolicy:
