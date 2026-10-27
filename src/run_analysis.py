@@ -54,6 +54,47 @@ def run_inference_check(p: Paths) -> None:
           f"checkpoint {Path(cfg['checkpoint_path']).name}")
 
 
+@stage("choice")
+def run_choice(p: Paths) -> None:
+    """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
+    cached, fits cached by table hash, PSIS-LOO ladder vs H+Both, S1/S2/S3/S5 verdicts, numbers.json."""
+    import json
+    import numpy as np
+    import pandas as pd
+    from analysis.compare import ladder, loo, paired
+    from analysis.data import load_sessions, trial_data
+    from analysis.fitting import run_many
+    from analysis.policies import REGISTRY, belief, grids
+    from analysis.thompson import table, table_path
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "choice"
+    out.mkdir(exist_ok=True)
+
+    def tab(source, spec):   # build on first use; return the cache path
+        k, w, c = grids(spec)
+        args = (f"{source}_{int(spec.kappa)}_{int(spec.own)}", belief(T, source), T.own_seg, T.own_prev, p.analysis_dir / "tables")
+        table(*args, kappa=k, lam_w=w, lam_c=c)
+        return table_path(*args, kappa=k, lam_w=w, lam_c=c)
+    paths = {n: (tab(m.source, m), tab("novice", m) if m.mixture != "none" else None) for n, m in REGISTRY.items()}
+    fits = {}
+    for n, (a, b) in paths.items():   # fit cache keyed by the model's own table hashes
+        fits.update(run_many([n], p.eval_dir, p.version, paths, a.stem.split("_")[-1] + (f"-{b.stem.split('_')[-1]}" if b else ""), out / "fits"))
+    loos = {n: loo(f) for n, f in fits.items() if f.passed}
+    lad = ladder(loos, "H+Both", T.part).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
+    lad.to_csv(out / "ladder.csv")
+    d = fits["Switch-by-round"].posterior["delta_N"].reshape(-1) if "Switch-by-round" in loos else np.array([np.nan])
+    rows = {"S1": dict(estimate=d.mean(), lo=np.percentile(d, 2.5), hi=np.percentile(d, 97.5), rule="95% ETI > 0")}
+    for name, a, b in [("S2", "H+Both", "src:recent"), ("S3", "H+Both", "vis:last"), ("S5a", "H+Social", "H+Own"), ("S5b", "H+Both", "H+Own"),
+                       ("switch_round_term", "Switch-by-round", "Switch"), ("own_on_top", "H+Both", "H+Social")]:
+        q = paired(loos[a], loos[b], T.part) if a in loos and b in loos else dict(delta=np.nan, se=np.nan)
+        rows[name] = dict(estimate=q["delta"], lo=q["delta"] - 2 * q["se"], hi=q["delta"] + 2 * q["se"], rule="ΔELPD > 2 SE" if name[0] == "S" else "reported")
+    for r in rows.values():
+        r["verdict"] = "" if r["rule"] == "reported" else "not evaluable" if np.isnan(r["estimate"]) else "supported" if r["lo"] > 0 else "not supported"
+    pd.DataFrame(rows).T.to_csv(out / "verdicts.csv")
+    json.dump({f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"} | {f"elpd_{n}": l.elpd for n, l in loos.items()},
+              open(out / "numbers.json", "w"), indent=1)
+    print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--version", required=True, help="e.g. pilot_E")

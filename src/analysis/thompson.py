@@ -40,11 +40,16 @@ def p_win_all(ab: np.ndarray, chunk: int = 128, workers: int = 16) -> np.ndarray
         return np.concatenate(list(ex.map(p_win, [ab[i:i + chunk] for i in range(0, len(ab), chunk)])))
 
 
+def table_path(name: str, read, own_seg, own_prev, cache_dir, kappa=KAPPA, lam_w=LAM_W, lam_c=LAM_C) -> Path:
+    """Where ``table`` caches this source and grid: ``<cache_dir>/<name>_<hash of the inputs>.npy``."""
+    key = hashlib.sha256(b"".join(np.ascontiguousarray(x).tobytes() for x in (read, own_seg, own_prev, kappa, lam_w, lam_c))).hexdigest()[:16]
+    return Path(cache_dir) / f"{name}_{key}.npy"
+
+
 def table(name: str, read: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path,
           kappa: np.ndarray = KAPPA, lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = 16) -> np.ndarray:
     """Cached log-policy table (N, |κ|, |λ_w|, |λ_c|, K) for a belief source; built on a cache miss."""
-    key = hashlib.sha256(b"".join(np.ascontiguousarray(x).tobytes() for x in (read, own_seg, own_prev, kappa, lam_w, lam_c))).hexdigest()[:16]
-    path = Path(cache_dir) / f"{name}_{key}.npy"
+    path = table_path(name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c)
     if path.exists():
         return np.load(path)
     N, K, _ = read.shape
