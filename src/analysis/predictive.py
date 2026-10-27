@@ -5,16 +5,47 @@
 the model's choice probabilities with the exact Thompson quadrature (no tables: simulated beliefs are new).
 It implements the same four steps as ``policies.model`` (belief, Thompson, habit tilt, lapse) and the
 Switch mixture. Sources available in the loop: expert, novice, recent (last watched), uniform.
+``simulated_trial_data`` turns the simulator's session frames into ``TrialData`` through the human
+builder, and ``sample_participants`` draws new participants from the fitted hierarchy.
 """
 
 import numpy as np
+import pandas as pd
 from scipy.special import expit, logsumexp
 
+from analysis.data import SEGMENTS_PER_ROUND, Sessions, TrialData, parse_betas, trial_data
 from analysis.policies import ModelSpec
 from analysis.thompson import P_FLOOR, p_win
 from inference.learners import TrialState
 
 PER_PARTICIPANT = ("log_kappa", "rho0", "rho_win", "logit_omega_E", "logit_omega_N")
+TRIAL_COLUMNS = ["session_id", "anonymous_id", "game_sequence", "round_index", "game_index", "demonstrator_type", "position", "zone_bandit"]
+
+
+def simulated_trial_data(frames, version: str = "simulated") -> TrialData:
+    """``simulate_session`` frames (shot rows in the human schema, ``expert_betas``/``novice_betas`` on play rows) →
+    ``TrialData`` through the same builder as the human data. 'recent' is the readout of the demonstrator watched
+    just before the play game; the theta readout is unused downstream and left NaN. Rows must be in shot order."""
+    shots = pd.concat(frames, ignore_index=True).sort_values(["session_id", "game_index"], kind="stable").reset_index(drop=True)
+    trials = shots[TRIAL_COLUMNS].assign(reward=shots["reward_generated"].astype(float))
+    rows = []
+    for (sid, gi), g in shots.groupby(["session_id", "game_index"], sort=True):
+        if gi % 4 in (1, 3):   # play game: cutoff right after the demonstration before it, whose type the sequence gives
+            e, n, rnd = parse_betas(g["expert_betas"].iloc[0]), parse_betas(g["novice_betas"].iloc[0]), int(g["round_index"].iloc[0])
+            last = g["game_sequence"].iloc[0].split("-")[gi % 4 - 1]
+            rows.append(dict(session_id=sid, cutoff=SEGMENTS_PER_ROUND * rnd + gi % 4 + 1, segment_type="learner", round_index=rnd,
+                             theta=np.full(len(e), np.nan), expert=e, novice=n, recent=e if last == "expert" else n))
+    per_game = int(trials.groupby(["session_id", "game_index"]).size().mode()[0])
+    return trial_data(Sessions(version, trials, pd.DataFrame(rows), per_game, ()))
+
+
+def sample_participants(posterior: dict, draw: int, n: int, rng: np.random.Generator) -> list:
+    """``n`` new participants from the hierarchy at one posterior draw: per-participant sites as mu + tau · z with fresh
+    z, group sites copied into every dict (their values are the truth a recovery check must find back)."""
+    flat = {s: v.reshape(-1, *v.shape[2:])[draw] for s, v in posterior.items()}
+    group = {s: v for s, v in flat.items() if v.ndim == 0 and not s.startswith(("mu_", "tau_"))}
+    people = {s: flat[f"mu_{s}"] + flat[f"tau_{s}"] * rng.standard_normal(n) for s in PER_PARTICIPANT if s in flat}
+    return [group | {s: float(v[i]) for s, v in people.items()} for i in range(n)]
 
 
 def draw_params(posterior: dict, draw: int, participant: int) -> dict:
