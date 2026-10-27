@@ -35,9 +35,9 @@ def test_p_win_equals_legacy_and_sums_to_one(output_data_dir):
         pytest.skip("legacy cache not present")
     c = pd.read_pickle(output_data_dir / LEGACY_CACHE)
     rows = np.random.default_rng(0).choice(len(c["A"]), 300, replace=False)
-    for j in (0, 6, 12):   # κ = 0.25, 1, 16
-        p = p_win(LEGACY_KAPPA[j] * c["A"][rows])
-        assert np.abs(p.sum(1) - 1).max() < 1e-6 and np.abs(np.log(np.clip(p, 1e-12, None)) - c["LOGP_U"][rows, j]).max() < 1e-6
+    for j in (0, 6, 12):   # κ = 0.25, 1, 16; compared in probability: the analytic tail term adds ~1e-8 of mass the
+        p = p_win(LEGACY_KAPPA[j] * c["A"][rows])   # legacy quadrature lost, which is a large log difference only at the 1e-12 floor
+        assert np.abs(p.sum(1) - 1).max() < 1e-6 and np.abs(p - np.exp(c["LOGP_U"][rows, j])).max() < 1e-6
 
 
 def test_cubic_interpolation_on_dense_grid(output_data_dir):

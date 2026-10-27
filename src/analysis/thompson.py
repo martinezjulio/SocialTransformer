@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from scipy.special import betainc, betaln, expit, log_expit
 
-KAPPA = np.geomspace(0.0625, 16, 33)                      # ratio 2^¼; 1.0 on the grid; floor below the least trusting pilot participants
+KAPPA = np.geomspace(0.125, 16, 29)                       # ratio 2^¼; 1.0 on the grid; floor below the least trusting pilot participants
 LAM_W = np.geomspace(0.1, 16, 16)                         # within-segment own weight
 LAM_C = np.concatenate([[0.0], np.geomspace(0.25, 4, 9)])  # carried own weight; 0 = reset learner
 P_FLOOR = 1e-12                                           # log p stored without the lapse; keeps -inf out
@@ -24,14 +24,17 @@ P_FLOOR = 1e-12                                           # log p stored without
 
 def p_win(ab: np.ndarray, X: int = 4096, L: float = 80.0) -> np.ndarray:
     """ab (M, K, 2) Beta counts → (M, K) win probabilities. x = sigmoid(u) removes the endpoint singularity; F
-    near 1 comes from the complement so an arm's own tail is not double counted."""
+    near 1 comes from the complement so an arm's own tail is not double counted. Beyond u = L the other arms'
+    CDFs are ~1, so an arm's density mass past the window (noticeable only for counts below ~0.2) is added
+    analytically as its win probability there."""
     u = np.linspace(-L, L, X)
     a, b = ab[..., 0, None], ab[..., 1, None]
     F = betainc(a, b, expit(u))
     S = np.clip(betainc(b, a, expit(-u)), None, 1 - 1e-16)
     logF = np.where(F < 0.5, np.log(np.clip(F, 1e-300, None)), np.log1p(-S))
     logf = a * log_expit(u) + b * log_expit(-u) - betaln(a, b)
-    return np.trapezoid(np.exp(logf + logF.sum(-2, keepdims=True) - logF), u, axis=-1)
+    body = np.trapezoid(np.exp(logf + logF.sum(-2, keepdims=True) - logF), u, axis=-1)
+    return body + S[..., -1] * np.exp(logF[..., -1].sum(-1, keepdims=True) - logF[..., -1])
 
 
 def p_win_all(ab: np.ndarray, chunk: int = 128, workers: int = 16) -> np.ndarray:
