@@ -7,6 +7,7 @@ one, so the readout entering a round's second play game sees the simulated first
 ``TrialData`` through ``simulated_trial_data`` and the fitting code runs unchanged.
 """
 
+import json
 import pickle
 import random
 from pathlib import Path
@@ -17,9 +18,9 @@ import pandas as pd
 from analysis.compare import loo, paired
 from analysis.data import TrialData
 from analysis.fitting import Fit, fit
-from analysis.games import CONDITION
+from analysis.games import CONDITION, entropy_bits
 from analysis.policies import REGISTRY, ModelSpec, belief, grids
-from analysis.predictive import FittedPolicy, sample_participants, simulated_trial_data
+from analysis.predictive import FittedPolicy, draw_params, sample_participants, simulated_trial_data
 from analysis.thompson import table
 from inference.sessions import load_shots, validate_sessions
 from inference.simulate import simulate_session
@@ -28,6 +29,7 @@ SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # ga
 N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, 25, 22   # open decision 5; the 95%-coverage rule
 COMPARISONS = {"S1": ("Switch-by-round", "Switch"), "S2": ("H+Both", "src:recent"), "S3": ("H+Both", "vis:last")}   # (A, B) behind each rule
 N_MODEL_RECOVERY = 5   # datasets per generating side
+N_PPC_DRAWS = 50       # posterior draws replayed in the free-running PPC
 
 
 def templates(preprocessed: Path) -> dict:
@@ -114,3 +116,41 @@ def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: 
 def confusion(rows: pd.DataFrame) -> pd.DataFrame:
     """Generating model × winner counts, one block per comparison."""
     return pd.crosstab([rows["comparison"], rows["generating"]], rows["winner"])
+
+
+def targets(T: TrialData) -> dict:
+    """The five PPC statistics of a ``TrialData`` (human or simulated), each a mean over participants of per-participant
+    means: after-novice payoff rise round 1 → 2 (H2), entropy fall round 1 → 2 over social play games (H3), the
+    novice-first zig-zag (payoff after the expert − after the novice within novice-first sessions), stay after a win,
+    stay after a loss (share of shots repeating the previous arm)."""
+    df = pd.DataFrame(dict(part=T.part, session=T.session, seg=T.seg, r2=T.round_pm > 0, last_exp=T.last_exp, ef=T.expert_first,
+                           pay=T.theta[np.arange(len(T.act)), T.act], act=T.act, prev=T.prev_arm, rew=T.prev_rew))
+    games = df.groupby(["part", "session", "seg"]).agg(pay=("pay", "mean"), ent=("act", lambda a: entropy_bits(a.to_numpy())),
+                                                       r2=("r2", "first"), last_exp=("last_exp", "first"), ef=("ef", "first")).reset_index()
+    m = lambda d, col: d.groupby("part")[col].mean()
+    nov, nf, shots = games[~games["last_exp"]], games[~games["ef"]], df[df["prev"] >= 0].assign(stay=lambda d: d["act"] == d["prev"])
+    return dict(after_novice_rise=float((m(nov[nov["r2"]], "pay") - m(nov[~nov["r2"]], "pay")).mean()),
+                entropy_fall=float((m(games[~games["r2"]], "ent") - m(games[games["r2"]], "ent")).mean()),
+                zigzag=float((m(nf[nf["last_exp"]], "pay") - m(nf[~nf["last_exp"]], "pay")).mean()),
+                stay_win=float(m(shots[shots["rew"] == 1], "stay").mean()), stay_loss=float(m(shots[shots["rew"] == 0], "stay").mean()))
+
+
+def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS) -> pd.DataFrame:
+    """Free-running PPC of one fitted model: at each of ``n_draws`` evenly spaced posterior draws every human participant
+    replays their own social sessions (``frames``: session id -> shot frame) with their drawn parameters; the targets of
+    each replay are cached as JSON. One row per target: human value, 95% band over draws, inside."""
+    n = next(iter(posterior.values())).shape[0] * next(iter(posterior.values())).shape[1]
+    sims = []
+    for d in np.linspace(0, n - 1, n_draws).astype(int):
+        path = Path(cache_dir) / f"{spec.name.replace(':', '-')}_draw{d:05d}.json"
+        if not path.exists():
+            rng, np_rng, out = random.Random(int(d)), np.random.default_rng(int(d)), []
+            for i in range(len(T.people)):
+                policy = FittedPolicy(spec, draw_params(posterior, int(d), i))
+                out += [simulate_session(model, normalizer, frames[sid], policy, rng, np_rng) for sid in np.unique(T.session[T.part == i])]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            json.dump(targets(simulated_trial_data(out, f"ppc{d}")), open(path, "w"))
+        sims.append(json.load(open(path)))
+    sims, human = pd.DataFrame(sims), targets(T)
+    lo, hi = sims.quantile(0.025), sims.quantile(0.975)
+    return pd.DataFrame(dict(human=pd.Series(human), lo=lo, hi=hi, mean=sims.mean())).assign(inside=lambda t: (t.lo <= t.human) & (t.human <= t.hi))
