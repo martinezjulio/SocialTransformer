@@ -59,6 +59,7 @@ def run_choice(p: Paths) -> None:
     """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
     cached, fits cached by table hash, PSIS-LOO ladder vs H+Both, S1/S2/S3/S5 verdicts, numbers.json."""
     import json
+    from concurrent.futures import ThreadPoolExecutor
     import numpy as np
     import pandas as pd
     from analysis.compare import ladder, loo, paired
@@ -69,15 +70,21 @@ def run_choice(p: Paths) -> None:
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "choice"
     out.mkdir(exist_ok=True)
 
-    def tab(source, spec):   # build on first use; return the cache path
+    builder, pending = ThreadPoolExecutor(1), {}   # builds queue on the CPU threads, in registry order, while the GPU fits
+
+    def tab(source, spec):   # queue the build on first use; return the cache path
         k, w, c = grids(spec)
         args = (f"{source}_{int(spec.kappa)}_{int(spec.own)}", belief(T, source), T.own_seg, T.own_prev, p.analysis_dir / "tables")
-        table(*args, kappa=k, lam_w=w, lam_c=c)
-        return table_path(*args, kappa=k, lam_w=w, lam_c=c)
+        path = table_path(*args, kappa=k, lam_w=w, lam_c=c)
+        if path not in pending:
+            pending[path] = builder.submit(lambda *a, **kw: table(*a, **kw).shape, *args, kappa=k, lam_w=w, lam_c=c)
+        return path
     paths = {n: (tab(m.source, m), tab("novice", m) if m.mixture != "none" else None) for n, m in REGISTRY.items()}
     fits = {}
-    for n, (a, b) in paths.items():   # fit cache keyed by the model's own table hashes
+    for n, (a, b) in paths.items():   # fit cache keyed by the model's own table hashes; wait only for this model's tables
+        pending[a].result(), b and pending[b].result()
         fits.update(run_many([n], p.eval_dir, p.version, paths, a.stem.split("_")[-1] + (f"-{b.stem.split('_')[-1]}" if b else ""), out / "fits"))
+    builder.shutdown()
     loos = {n: loo(f) for n, f in fits.items() if f.passed}
     lad = ladder(loos, "H+Both", T.part).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
     lad.to_csv(out / "ladder.csv")
