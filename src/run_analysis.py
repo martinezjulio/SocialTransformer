@@ -29,6 +29,7 @@ class Paths:
     preprocessed: Path   # all sessions, post-exclusion (src/r/preprocess_participant_data.R)
     eval_dir: Path       # inference CSVs + metadata for this version
     analysis_dir: Path   # every stage writes under here
+    checkpoint: str = None   # transformer checkpoint for the simulation checks; None = the one the inference CSVs came from
 
 
 @stage("games")
@@ -102,10 +103,54 @@ def run_choice(p: Paths) -> None:
     print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
 
 
+@stage("checks")
+def run_checks(p: Paths) -> None:
+    """Simulation checks of the fitted models: δ_N recovery, model recovery for S1–S3, free-running PPC. The transformer
+    is the one the inference CSVs came from (eval metadata) unless ``checkpoint`` overrides it. Every unit is cached
+    under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
+    ppc.csv, numbers.json."""
+    import json
+    import pickle
+    import pandas as pd
+    import torch
+    import yaml
+    from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, templates
+    from analysis.data import load_sessions, trial_data
+    from analysis.fitting import cache_path
+    from analysis.policies import REGISTRY, belief, grids
+    from analysis.thompson import table_path
+    from inference.readout import load_model
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
+    out.mkdir(exist_ok=True)
+
+    def posterior(name):   # the choice stage's cached fit, found by the same table-hash key it was stored under
+        m = REGISTRY[name]
+        k, w, c = grids(m)
+        key = "-".join(table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c).stem.split("_")[-1]
+                       for s in ((m.source, "novice") if m.mixture != "none" else (m.source,)))
+        return pickle.load(open(cache_path(name, key, p.analysis_dir / "choice" / "fits"), "rb")).posterior
+    cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
+    model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
+    pools = templates(p.preprocessed)
+    frames = {f["session_id"].iloc[0]: f for pool in pools.values() for f in pool}
+    rec = recover_delta(posterior("Switch-by-round"), pools, model, norm, out / "recovery")
+    rec.to_csv(out / "recovery.csv", index=False)
+    mr = model_recovery({n: posterior(n) for pair in COMPARISONS.values() for n in pair}, pools, model, norm, out / "model_recovery")
+    mr.to_csv(out / "model_recovery.csv", index=False)
+    confusion(mr).to_csv(out / "confusion.csv")
+    bands = pd.concat({n: ppc(REGISTRY[n], posterior(n), T, frames, model, norm, out / "ppc") for n in ("H+Both", "Switch-by-round")}, names=["model", "target"])
+    bands.to_csv(out / "ppc.csv")
+    numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
+               **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
+    json.dump(numbers, open(out / "numbers.json", "w"), indent=1)
+    print(rec.round(3).to_string(), "\n", confusion(mr).to_string(), "\n", bands.round(4).to_string(), "\n", numbers)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--version", required=True, help="e.g. pilot_E")
     ap.add_argument("--stages", default=",".join(STAGES), help=f"comma-separated subset of: {', '.join(STAGES)}")
+    ap.add_argument("--checkpoint", default=None, help="transformer checkpoint for the checks stage (default: the inference run's)")
     args = ap.parse_args()
     if "OUTPUT_DATA_DIR" not in os.environ:
         from dotenv import load_dotenv
@@ -115,7 +160,7 @@ def main() -> None:
     if unknown:
         ap.error(f"unknown stage(s) {unknown}; known: {', '.join(STAGES)}")
     p = Paths(args.version, Path(os.environ["EXPERIMENT_DATA_DIR"]) / args.version / "preprocessed_participant_data.csv",
-              Path(os.environ["OUTPUT_DATA_DIR"]) / "eval" / args.version, Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / args.version)
+              Path(os.environ["OUTPUT_DATA_DIR"]) / "eval" / args.version, Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / args.version, args.checkpoint)
     p.analysis_dir.mkdir(parents=True, exist_ok=True)
     for name in [n for n in STAGES if n in names]:   # pipeline order regardless of how they were listed
         STAGES[name](p)
