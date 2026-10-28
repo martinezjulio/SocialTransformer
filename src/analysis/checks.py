@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from analysis.compare import loo, paired
+from analysis.compare import loo, paired, subset
 from analysis.data import TrialData
 from analysis.fitting import Fit, fit
 from analysis.games import CONDITION, entropy_bits
@@ -152,5 +152,29 @@ def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, nor
             json.dump(targets(simulated_trial_data(out, f"ppc{d}")), open(path, "w"))
         sims.append(json.load(open(path)))
     sims, human = pd.DataFrame(sims), targets(T)
+    lo, hi = sims.quantile(0.025), sims.quantile(0.975)
+    return pd.DataFrame(dict(human=pd.Series(human), lo=lo, hi=hi, mean=sims.mean())).assign(inside=lambda t: (t.lo <= t.human) & (t.human <= t.hi))
+
+
+def split_half(spec: ModelSpec, T: TrialData, tabs: tuple, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS, seed: int = 0) -> pd.DataFrame:
+    """Exploratory split-half generative check: ``spec`` is fitted on a random half of the participants (rows of the
+    human tables ``tabs`` = (table, second table or None)), then at each of ``n_draws`` posterior draws every held-out
+    participant replays their own sessions with parameters drawn fresh from the fitted hierarchy. One row per target:
+    the held-out half's human value, the 95% band over draws, inside. Fit and per-draw targets cached under ``cache_dir``."""
+    rng = np.random.default_rng(seed)
+    held = np.sort(rng.choice(len(T.people), len(T.people) // 2, replace=False))
+    fit_mask = ~np.isin(T.part, held)
+    f = fit(spec, subset(T, fit_mask), tabs[0][fit_mask], f"split{seed}", Path(cache_dir) / "fits", tab2=None if tabs[1] is None else tabs[1][fit_mask])
+    n = next(iter(f.posterior.values())).shape[0] * next(iter(f.posterior.values())).shape[1]
+    sims = []
+    for d in np.linspace(0, n - 1, n_draws).astype(int):
+        path = Path(cache_dir) / f"{spec.name.replace(':', '-')}_split{seed}_draw{d:05d}.json"
+        if not path.exists():
+            people, r, np_r, out = sample_participants(f.posterior, int(d), len(held), np.random.default_rng([seed, int(d)])), random.Random(int(d)), np.random.default_rng(int(d)), []
+            for params, i in zip(people, held):
+                out += [simulate_session(model, normalizer, frames[sid], FittedPolicy(spec, params), r, np_r) for sid in np.unique(T.session[T.part == i])]
+            json.dump(targets(simulated_trial_data(out, f"split{seed}_{d}")), open(path, "w"))
+        sims.append(json.load(open(path)))
+    sims, human = pd.DataFrame(sims), targets(subset(T, ~fit_mask))
     lo, hi = sims.quantile(0.025), sims.quantile(0.975)
     return pd.DataFrame(dict(human=pd.Series(human), lo=lo, hi=hi, mean=sims.mean())).assign(inside=lambda t: (t.lo <= t.human) & (t.human <= t.hi))
