@@ -111,10 +111,11 @@ def run_checks(p: Paths) -> None:
     ppc.csv, numbers.json."""
     import json
     import pickle
+    import numpy as np
     import pandas as pd
     import torch
     import yaml
-    from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, templates
+    from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half, templates
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import cache_path
     from analysis.policies import REGISTRY, belief, grids
@@ -123,12 +124,14 @@ def run_checks(p: Paths) -> None:
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
     out.mkdir(exist_ok=True)
 
-    def posterior(name):   # the choice stage's cached fit, found by the same table-hash key it was stored under
+    def tables(name):   # the human tables a model reads, in the choice stage's cache
         m = REGISTRY[name]
         k, w, c = grids(m)
-        key = "-".join(table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c).stem.split("_")[-1]
-                       for s in ((m.source, "novice") if m.mixture != "none" else (m.source,)))
-        return pickle.load(open(cache_path(name, key, p.analysis_dir / "choice" / "fits"), "rb")).posterior
+        return [table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c)
+                for s in ((m.source, "novice") if m.mixture != "none" else (m.source,))]
+
+    def posterior(name):   # the choice stage's cached fit, found by the same table-hash key it was stored under
+        return pickle.load(open(cache_path(name, "-".join(t.stem.split("_")[-1] for t in tables(name)), p.analysis_dir / "choice" / "fits"), "rb")).posterior
     cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
     model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
     pools = templates(p.preprocessed)
@@ -139,6 +142,9 @@ def run_checks(p: Paths) -> None:
     mr.to_csv(out / "model_recovery.csv", index=False)
     confusion(mr).to_csv(out / "confusion.csv")
     bands = pd.concat({n: ppc(REGISTRY[n], posterior(n), T, frames, model, norm, out / "ppc") for n in ("H+Both", "Switch-by-round")}, names=["model", "target"])
+    halves = pd.concat({f"{n} split_half": split_half(REGISTRY[n], T, tuple(np.load(t) for t in tables(n)) + (None,) * (2 - len(tables(n))), frames, model, norm, out / "split_half")
+                        for n in ("H+Both", "Switch-by-round")}, names=["model", "target"])
+    bands = pd.concat([bands, halves])
     bands.to_csv(out / "ppc.csv")
     numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
                **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
