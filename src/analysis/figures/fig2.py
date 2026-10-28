@@ -2,7 +2,8 @@
 """Figure 2, primary results. (a) The session in order: payoff, reward and entropy of each play game as the
 descriptive model's cell estimates (95% CI), one line per session type, with the demonstrators' own six shots
 scored the same way at the watch slots; solo's exploratory slots 1 and 3 as plain means. (b) Forest plot of
-H1–H5 × outcomes from the descriptive contrasts. (c) The partner choice (H6).
+the confirmatory contrasts (H1, H2, H3, H5) × outcomes from the descriptive stage, reward beside them as a reported
+outcome without a rule. (c) The partner choice (H4).
 """
 
 from pathlib import Path
@@ -72,9 +73,10 @@ def panel_session(axes, analysis_dir: Path, preprocessed: Path) -> None:
 
 
 def panel_forest(ax_pr, ax_ent, analysis_dir: Path) -> None:
-    """(b) H1–H5 × outcomes: estimate and 95% CI, payoff and reward on one axis (probability units), entropy on its own;
-    payoff circle, reward square, entropy star; filled where the Holm-corrected verdict is supported, hollow where not."""
-    c = pd.read_csv(Path(analysis_dir) / "descriptive" / "contrasts.csv").query("role == 'confirmatory'")
+    """(b) The confirmatory contrasts × outcomes: estimate and 95% CI, payoff and reward on one axis (probability units),
+    entropy on its own; payoff circle, reward square, entropy star; filled where the Holm-corrected verdict is supported,
+    hollow where not; reward rows are reported (interval, no rule; advisor, 28 Oct) and stay hollow."""
+    c = pd.read_csv(Path(analysis_dir) / "descriptive" / "contrasts.csv").query("role in ('confirmatory', 'reported')")
     hyps = list(dict.fromkeys(c["hypothesis"]))
     y = {h: len(hyps) - i for i, h in enumerate(hyps)}
     for ax, outcomes, off in ((ax_pr, {"payoff": -0.15, "reward": 0.15}, 0), (ax_ent, {"entropy": 0.0}, 0)):
@@ -83,7 +85,7 @@ def panel_forest(ax_pr, ax_ent, analysis_dir: Path) -> None:
             yy = [y[h] + dy for h in r["hypothesis"]]
             ax.errorbar(r["estimate"], yy, xerr=[r["estimate"] - r["lower.CL"], r["upper.CL"] - r["estimate"]], linestyle="none", color=COLOR["human"], capsize=2, zorder=2)
             ax.scatter(r["estimate"], yy, marker={"payoff": "o", "reward": "s", "entropy": "*"}[outcome], s=28 if outcome != "entropy" else 60, zorder=3, color=COLOR["human"],
-                       facecolor=[COLOR["human"] if v == "supported" else "white" for v in r["verdict"]], label=outcome)
+                       facecolor=[COLOR["human"] if v == "supported" else "white" for v in r["verdict"]], label=outcome if outcome != "reward" else "reward (reported)")
         ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
         ax.set_yticks(list(y.values()), list(y))
     ax_pr.legend(loc="lower center", bbox_to_anchor=(0.62, 1.0), ncol=2, handletextpad=0.3, columnspacing=0.8)
@@ -94,7 +96,7 @@ def panel_forest(ax_pr, ax_ent, analysis_dir: Path) -> None:
 
 
 def panel_partner(ax, analysis_dir: Path, conditions_in_legend: bool = False) -> None:
-    """(c) H6: the expert-choice rate with 95% CI overall (circle) and by condition (the session-type hues), and the mixed
+    """(c) H4: the expert-choice rate with 95% CI overall (circle) and by condition (the session-type hues), and the mixed
     model's probability (diamond); rows labelled by n only, the identities carried by the legend."""
     from matplotlib.lines import Line2D
     rates = pd.read_csv(Path(analysis_dir) / "partner_choice" / "rates.csv")
