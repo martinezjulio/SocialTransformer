@@ -82,8 +82,8 @@ def test_table_assembles_from_cached_blocks(tmp_path):
     rng = np.random.default_rng(0)
     read, own_seg, own_prev = (rng.gamma(2.0, 2.0, size=(10, K, 2)) for _ in range(3))
     grid = dict(kappa=np.array([0.5, 2.0]), lam_w=np.array([0.5, 1.0]), lam_c=np.array([0.0, 1.0]))
-    args = ("toy", read, own_seg, own_prev, tmp_path)
-    direct = table("toy", read, own_seg, own_prev, tmp_path / "direct", **grid)
+    args = ("toy", np.zeros_like(read), read, own_seg, own_prev, tmp_path)
+    direct = table("toy", np.zeros_like(read), read, own_seg, own_prev, tmp_path / "direct", **grid)
     blocks = [table(*args, **grid, block=b, n_blocks=3) for b in range(3)]
     assert [len(b) for b in blocks] == [4, 3, 3] and all(block_path(table_path(*args, **grid), b, 3).exists() for b in range(3))
     assembled = table(*args, **grid, n_blocks=3)
@@ -100,7 +100,29 @@ def test_gpu_builder_matches_scipy(tmp_path):
     assert np.abs(g - p).max() < 1e-5 and np.abs(g.sum(-1) - 1).max() < 5e-5, (np.abs(g - p).max(), np.abs(g.sum(-1) - 1).max())
     read, own_seg, own_prev = (rng.gamma(2.0, 2.0, size=(6, K, 2)) for _ in range(3))
     grid = dict(kappa=np.array([0.5, 16.0]), lam_w=np.array([1.0]), lam_c=np.array([0.0, 4.0]))
-    exact, fast = (table("toy", read, own_seg, own_prev, tmp_path, **grid, builder=b) for b in ("scipy", "gpu"))
-    assert table_path("toy_gpu", read, own_seg, own_prev, tmp_path, **grid).exists() and fast.shape == exact.shape
+    exact, fast = (table("toy", np.zeros_like(read), read, own_seg, own_prev, tmp_path, **grid, builder=b) for b in ("scipy", "gpu"))
+    assert table_path("toy_gpu", np.zeros_like(read), read, own_seg, own_prev, tmp_path, **grid).exists() and fast.shape == exact.shape
     big = exact > np.log(1e-4)
     assert np.abs(fast[big] - exact[big]).max() < 5e-3, "log p within 5e-3 where p > 1e-4 (the lapse floor is 1.7e-3)"
+
+
+def test_expert_table_on_legacy_grid_equals_legacy_both_table(output_data_dir, tmp_path):
+    """The registered belief step: our table at the legacy knots reproduces the legacy BOTH table (κ · readout + λ_w · own_seg
+    + λ_c · own_prev) on trials of the sessions whose shot order the 19 Oct inference did not scramble."""
+    from analysis.policies import belief
+    from analysis.thompson import table
+    both = output_data_dir / "legacy_analysis/cached_data/policy_both_logp_pilot_E_wandb_0i8yhqm7_epoch_119_best.pkl"
+    if not (output_data_dir / LEGACY_CACHE).exists() or not both.exists() or not (output_data_dir / "eval/pilot_E/data/experiment_trial_predictions.csv").exists():
+        pytest.skip("legacy caches or pilot E CSVs not present")
+    T = trial_data(load_sessions(output_data_dir / "eval" / "pilot_E", "pilot_E"))
+    legacy, trial = pd.read_pickle(both), pd.read_pickle(output_data_dir / LEGACY_CACHE)["trial"]
+    sid, theirs_all = trial["sid"].to_numpy(), legacy["BOTH_LOGP_U"][legacy["ix_b"]["expert"]]
+    prior, social = belief(T, "expert")
+    one = np.exp(np.log(np.clip(p_win_all(prior + 2.0 * social + 0.1 * T.own_seg), 1e-12, None))) - np.exp(theirs_all[:, 6, 0, 0].astype(float))
+    scrambled = pd.Series(np.abs(one).max(1)).groupby(sid).max().pipe(lambda d: d.index[d > 1e-6])
+    assert len(scrambled) == 5, "the five sessions whose shot order the 19 Oct inference scrambled (four differ in actions, one in its readouts)"
+    rows = np.random.default_rng(1).choice(np.flatnonzero(~np.isin(sid, scrambled) & (T.own_prev.sum((1, 2)) > 0)), 40, replace=False)   # second play games: own terms active
+    ours = table("legacy_grid", prior[rows], social[rows], T.own_seg[rows], T.own_prev[rows], tmp_path, LEGACY_KAPPA, np.array([0.1, 0.25, 0.5, 1, 2, 4, 8, 16]), np.array([0., 0.25, 0.5, 1, 2, 4]))
+    theirs = legacy["BOTH_LOGP_U"][legacy["ix_b"]["expert"][rows]]
+    assert ours.shape == theirs.shape == (40, 13, 8, 6, K)
+    assert np.abs(np.exp(ours.astype(float)) - np.exp(theirs.astype(float))).max() < 1e-6

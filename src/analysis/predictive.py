@@ -3,7 +3,7 @@
 
 ``FittedPolicy`` holds one participant's parameters at one posterior draw and turns a ``TrialState`` into
 the model's choice probabilities with the exact Thompson quadrature (no tables: simulated beliefs are new).
-It implements the same four steps as ``policies.model`` (belief, Thompson, habit tilt, lapse) and the
+It implements the same four steps as ``policies.model`` (belief prior + κ·social + own terms, Thompson, habit tilt, lapse) and the
 Switch mixture. Sources available in the loop: expert, novice, recent (last watched), vis_last, uniform.
 ``simulated_trial_data`` turns the simulator's session frames into ``TrialData`` through the human
 builder, and ``sample_participants`` draws new participants from the fitted hierarchy.
@@ -58,20 +58,19 @@ class FittedPolicy:
     def __init__(self, spec: ModelSpec, params: dict):
         self.spec, self.p = spec, params
 
-    def _source(self, s: TrialState, source: str) -> np.ndarray:   # (K, 2) counts before the learner's own
-        if source == "uniform":
-            return np.ones((s.own_within.shape[1], 2))
-        if source == "vis_last":
-            return 1.0 + s.vis_last.numpy().T
+    def _source(self, s: TrialState, source: str) -> tuple:   # (prior, social) (K, 2) counts, as policies.belief
+        K = s.own_within.shape[1]
+        if source in ("uniform", "vis_last"):
+            return np.ones((K, 2)), (s.vis_last.numpy().T if source == "vis_last" else np.zeros((K, 2)))
         d = {"expert": s.expert, "novice": s.novice, "recent": s.last_watched}[source]
-        return np.stack([s.alpha_demo[d].numpy(), s.beta_demo[d].numpy()], -1)
+        return np.zeros((K, 2)), np.stack([s.alpha_demo[d].numpy(), s.beta_demo[d].numpy()], -1)
 
     def _log_policy(self, s: TrialState, source: str) -> np.ndarray:
-        belief = self._source(s, source)
+        prior, social = self._source(s, source)
+        ab = prior + (np.exp(self.p["log_kappa"]) if self.spec.kappa else 1.0) * social
         if self.spec.own:
             lam_c = 0.0 if self.spec.reset else self.p["lambda_c"]
-            belief = belief + np.exp(self.p["log_lambda_w"]) * s.own_within.numpy().T + lam_c * s.own_carry.numpy().T
-        ab = (np.exp(self.p["log_kappa"]) if self.spec.kappa else 1.0) * belief
+            ab = ab + np.exp(self.p["log_lambda_w"]) * s.own_within.numpy().T + lam_c * s.own_carry.numpy().T
         lq = np.log(np.clip(p_win(ab[None])[0], P_FLOOR, None))
         if self.spec.habit and s.prev_action is not None:
             lq[s.prev_action] += self.p["rho0"] + self.p["rho_win"] * s.prev_reward

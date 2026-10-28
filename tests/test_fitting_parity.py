@@ -20,7 +20,7 @@ from analysis.data import load_sessions, trial_data  # noqa: E402
 
 LEGACY = "legacy_analysis/cached_data/policy_{}_pilot_E_wandb_0i8yhqm7_epoch_119_best.pkl"
 MODELS = {"H+Both": ("H_Both_*.pkl", "C1:H+Both"), "Switch-by-round": ("Switch-by-round_*.pkl", "C4:switch+round")}
-GROUP = {"H+Both": {"mu_log_kappa": "mu_log_kappa", "mu_rho0": "mu_rho0", "tau_log_kappa": "tau_log_kappa"},
+GROUP = {"H+Both": {"mu_log_kappa": "mu_log_kappa", "mu_rho0": "mu_rho0", "tau_log_kappa": "tau_log_kappa", "log_lambda_w": "log_lambda_within", "lambda_c": "lambda_carry"},
          "Switch-by-round": {"mu_logit_omega_E": "mu_logit_omega_E", "mu_logit_omega_N": "mu_logit_omega_N", "delta_N": "delta_omega_N_0"}}
 PERSON = {"H+Both": ["log_kappa"], "Switch-by-round": ["log_kappa", "logit_omega_N"]}
 

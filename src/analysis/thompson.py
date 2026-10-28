@@ -3,7 +3,8 @@
 ``p_win`` is the legacy quadrature (notebooks/legacy_analysis/policy.py) unchanged: P(arm k draws the
 largest payoff) = ∫ f_k Π_{j≠k} F_j dx on the logit scale, scipy betainc, 4096 nodes, exact to ~1e-7.
 ``table`` evaluates it for one belief source on the dense (κ, λ_w, λ_c) grid: the posterior entering a
-shot is κ · (read + λ_w · own_seg + λ_c · own_prev), stored as floored log p in float32,
+shot is prior + κ · social + λ_w · own_seg + λ_c · own_prev (the registered step 1: κ scales the social
+evidence only; prior = 0 for a readout, Beta(1, 1) for a count of pulls), stored as floored log p in float32,
 shape (N, |κ|, |λ_w|, |λ_c|, K). Tables are cached by a hash of their inputs; a build is
 ~2.7k rows/s on 16 threads (pilot: ~45 min per source; full experiment: hours, once).
 The 5.6 benchmark chose tables over an in-sampler quadrature (see the plan's Runtime section).
@@ -79,9 +80,9 @@ def p_win_gpu(ab: np.ndarray, X: int = None, L: float = 80.0) -> np.ndarray:
     return out
 
 
-def table_path(name: str, read, own_seg, own_prev, cache_dir, kappa=KAPPA, lam_w=LAM_W, lam_c=LAM_C) -> Path:
+def table_path(name: str, prior, social, own_seg, own_prev, cache_dir, kappa=KAPPA, lam_w=LAM_W, lam_c=LAM_C) -> Path:
     """Where ``table`` caches this source and grid: ``<cache_dir>/<name>_<hash of the inputs>.npy``."""
-    key = hashlib.sha256(b"".join(np.ascontiguousarray(x).tobytes() for x in (read, own_seg, own_prev, kappa, lam_w, lam_c))).hexdigest()[:16]
+    key = hashlib.sha256(b"".join(np.ascontiguousarray(x).tobytes() for x in (prior, social, own_seg, own_prev, kappa, lam_w, lam_c))).hexdigest()[:16]
     return Path(cache_dir) / f"{name}_{key}.npy"
 
 
@@ -89,18 +90,18 @@ def block_path(path: Path, block: int, n_blocks: int) -> Path:
     return path.with_name(f"{path.stem}.block{block:03d}of{n_blocks:03d}.npy")
 
 
-def build(read, own_seg, own_prev, kappa, lam_w, lam_c, workers, builder="scipy") -> np.ndarray:
+def build(prior, social, own_seg, own_prev, kappa, lam_w, lam_c, workers, builder="scipy") -> np.ndarray:
     """Log-policy table (N, |κ|, |λ_w|, |λ_c|, K) for these trials, float32, floored at P_FLOOR."""
-    N, K, _ = read.shape
+    N, K, _ = social.shape
     k, w, c = kappa.reshape(-1, 1, 1, 1, 1, 1), lam_w.reshape(1, -1, 1, 1, 1, 1), lam_c.reshape(1, 1, -1, 1, 1, 1)
-    post = k * (read + w * own_seg + c * own_prev)                                       # (|κ|, |λ_w|, |λ_c|, N, K, 2)
+    post = prior + k * social + w * own_seg + c * own_prev                               # (|κ|, |λ_w|, |λ_c|, N, K, 2)
     p = (p_win_all(post.reshape(-1, K, 2), workers=workers) if builder == "scipy" else p_win_gpu(post.reshape(-1, K, 2)))
     p = p.reshape(len(kappa), len(lam_w), len(lam_c), N, K)
     assert np.abs(p.sum(-1) - 1).max() < (1e-6 if builder == "scipy" else 1e-4), "quadrature lost mass"
     return np.log(np.clip(p, P_FLOOR, None)).transpose(3, 0, 1, 2, 4).astype(np.float32)
 
 
-def table(name: str, read: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path, kappa: np.ndarray = KAPPA,
+def table(name: str, prior: np.ndarray, social: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path, kappa: np.ndarray = KAPPA,
           lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = 16, block: int = None, n_blocks: int = 1,
           builder: str = "scipy") -> np.ndarray:
     """Cached log-policy table for a belief source; built on a cache miss. The trials split into ``n_blocks`` contiguous
@@ -108,17 +109,17 @@ def table(name: str, read: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray
     full table, assembling it from the cached blocks (building any that are missing) and then deleting them.
     ``builder='gpu'`` uses ``p_win_gpu`` (1e-4 gate) and caches under ``<name>_gpu``; human fits keep the scipy builder."""
     name = name if builder == "scipy" else f"{name}_gpu"
-    path = table_path(name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c)
+    path = table_path(name, prior, social, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c)
     if path.exists():
         return np.load(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if block is not None:
-        rows, bp = np.array_split(np.arange(len(read)), n_blocks)[block], block_path(path, block, n_blocks)
+        rows, bp = np.array_split(np.arange(len(social)), n_blocks)[block], block_path(path, block, n_blocks)
         if not bp.exists():
-            np.save(bp, build(read[rows], own_seg[rows], own_prev[rows], kappa, lam_w, lam_c, workers, builder))
+            np.save(bp, build(prior[rows], social[rows], own_seg[rows], own_prev[rows], kappa, lam_w, lam_c, workers, builder))
         return np.load(bp)
-    args = (name, read, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c, workers)
-    out = build(read, own_seg, own_prev, kappa, lam_w, lam_c, workers, builder) if n_blocks == 1 else np.concatenate(
+    args = (name, prior, social, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c, workers)
+    out = build(prior, social, own_seg, own_prev, kappa, lam_w, lam_c, workers, builder) if n_blocks == 1 else np.concatenate(
         [table(*args, block=b, n_blocks=n_blocks, builder=builder) for b in range(n_blocks)])
     np.save(path, out)
     for b in range(n_blocks if n_blocks > 1 else 0):

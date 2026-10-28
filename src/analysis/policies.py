@@ -38,12 +38,14 @@ class ModelSpec:
         assert self.mixture == "none" or (self.source == "expert" and self.kappa), "Switch models mix the two readouts"
 
 
-def belief(T: TrialData, source: str) -> np.ndarray:
-    """(N, K, 2) counts the source contributes before the learner's own: a readout as is; Beta(1, 1) plus
-    the visible pulls for the copying and naive sources (naive already holds the learner's own pulls)."""
+def belief(T: TrialData, source: str) -> tuple:
+    """(prior, social) counts, each (N, K, 2): the belief entering a shot is prior + κ · social + own terms. A readout
+    is its own prior (prior 0); the copying and naive sources are Beta(1, 1) plus the visible pulls (naive already
+    holds the learner's own); uniform is Beta(1, 1) alone."""
     if source in T.read:
-        return T.read[source]
-    return 1.0 + {"naive": T.vis_round, "vis_last": T.vis_last, "vis_expert": T.vis_expert, "uniform": np.zeros_like(T.vis_round)}[source]
+        return np.zeros_like(T.read[source]), T.read[source]
+    ones = np.ones_like(T.vis_round)
+    return ones, {"naive": T.vis_round, "vis_last": T.vis_last, "vis_expert": T.vis_expert, "uniform": np.zeros_like(T.vis_round)}[source]
 
 
 REGISTRY = {m.name: m for m in [

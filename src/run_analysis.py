@@ -75,7 +75,7 @@ def run_choice(p: Paths) -> None:
 
     def tab(source, spec):   # queue the build on first use; return the cache path
         k, w, c = grids(spec)
-        args = (f"{source}_{int(spec.kappa)}_{int(spec.own)}", belief(T, source), T.own_seg, T.own_prev, p.analysis_dir / "tables")
+        args = (f"{source}_{int(spec.kappa)}_{int(spec.own)}", *belief(T, source), T.own_seg, T.own_prev, p.analysis_dir / "tables")
         path = table_path(*args, kappa=k, lam_w=w, lam_c=c)
         if path not in pending:
             pending[path] = builder.submit(lambda *a, **kw: table(*a, **kw).shape, *args, kappa=k, lam_w=w, lam_c=c)
@@ -127,7 +127,7 @@ def run_checks(p: Paths) -> None:
     def tables(name):   # the human tables a model reads, in the choice stage's cache
         m = REGISTRY[name]
         k, w, c = grids(m)
-        return [table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c)
+        return [table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c)
                 for s in ((m.source, "novice") if m.mixture != "none" else (m.source,))]
 
     def posterior(name):   # the choice stage's cached fit, found by the same table-hash key it was stored under

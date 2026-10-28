@@ -56,7 +56,7 @@ def fit_simulated(spec: ModelSpec, T: TrialData, cache_dir: Path, key: str) -> F
     """GPU-built tables for a simulated dataset (the spec's source, plus novice for a mixture) and its cached fit."""
     k, w, c = grids(spec)
     sources = (spec.source, "novice") if spec.mixture != "none" else (spec.source,)
-    tabs = [table(f"{key}_{src}_{int(spec.kappa)}_{int(spec.own)}", belief(T, src), T.own_seg, T.own_prev, cache_dir / "tables", k, w, c, builder="gpu") for src in sources]
+    tabs = [table(f"{key}_{src}_{int(spec.kappa)}_{int(spec.own)}", *belief(T, src), T.own_seg, T.own_prev, cache_dir / "tables", k, w, c, builder="gpu") for src in sources]
     return fit(spec, T, tabs[0], key, cache_dir / "fits", tab2=tabs[1] if len(tabs) > 1 else None)
 
 
