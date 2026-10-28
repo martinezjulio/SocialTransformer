@@ -86,18 +86,18 @@ def panel_omega(ax, analysis_dir: Path) -> None:
         mu, d = fit.posterior[f"mu_logit_omega_{s}"].reshape(-1), fit.posterior[f"delta_{s}"].reshape(-1)
         om = [1 / (1 + np.exp(-(mu + d * pm))) for pm in (-0.5, 0.5)]
         med, lo, hi = (np.array([np.percentile(o, q) for o in om]) for q in (50, 2.5, 97.5))
-        ax.errorbar(np.array([1, 2]) + dx, med, yerr=[med - lo, hi - med], marker="o", color=COLOR[who], capsize=2, label=f"after the {who} (ω_{s})")
+        ax.errorbar(np.array([1, 2]) + dx, med, yerr=[med - lo, hi - med], marker="o", color=COLOR[who], capsize=2, label=f"after the {who}")
     ax.set(xticks=[1, 2], xticklabels=["round 1", "round 2"], xlim=(0.6, 2.4), ylim=(0, 1), ylabel="weight on the expert's belief")
     ax.axhline(0.5, color="#BBBBBB", linewidth=0.8, zorder=0)
-    ax.legend(loc="lower right", handletextpad=0.3)
+    ax.legend(loc="lower right", handletextpad=0.3, handlelength=1.2, borderaxespad=0.2)
 
 
 def fig3(analysis_dir: Path) -> list:
     """Assemble Figure 3 (a | c, d) and save ``fig3_policy`` plus the panels on their own."""
     apply()
-    fig = plt.figure(figsize=(WIDTH["double"], 4.6))
+    fig = plt.figure(figsize=(WIDTH["double"], 3.8))   # low enough that panel a's rows sit close
     outer = fig.add_gridspec(1, 2, wspace=0.95)
-    right = outer[1].subgridspec(2, 1, height_ratios=[2.6, 2.4], hspace=0.6)
+    right = outer[1].subgridspec(2, 1, height_ratios=[2.7, 2.3], hspace=0.7)
     axes = [fig.add_subplot(outer[0]), fig.add_subplot(right[0]), fig.add_subplot(right[1])]
     panels = {"a": panel_belief, "b": panel_ablation, "c": panel_omega}
     for ax, (letter, panel) in zip(axes, panels.items()):
