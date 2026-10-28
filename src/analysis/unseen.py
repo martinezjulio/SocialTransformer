@@ -10,7 +10,9 @@ sessions of per-session means, with the SE over sessions.
 ``copying_table`` compares the unseen-expert readout with the copying belief Beta(1 + wins, 1 + losses) built from
 the novice's visible shots (rank correlation across arms of the two beliefs' means, and of each with the truth), and
 ``elpd_by_cell`` gives the ΔELPD of two fitted models on the after-novice cells (expert seen × round), from the LOO
-objects of the choice stage: expert belief vs copying (C5) here, expert vs novice belief in 7.3.
+objects of the choice stage: the expert belief vs copying (S2a's models) and the ELPD split, the expert vs the novice
+belief (S1b's models), both on the after-novice cells (output (b)). ``exploit_table`` is the model-free statistic (c):
+the share of a participant's shots on arms where the demonstration just watched succeeded, against chance.
 """
 
 import numpy as np
@@ -70,3 +72,16 @@ def cells(T: TrialData) -> dict:
 def elpd_by_cell(a: Loo, b: Loo, T: TrialData) -> pd.DataFrame:
     """ΔELPD a − b (sum, SE over participants, share of participants favouring a) on ``cells``; rows with no trials dropped."""
     return by_cell(a, b, T, {n: m for n, m in cells(T).items() if m.any()})
+
+
+def exploit_table(T: TrialData) -> pd.DataFrame:
+    """Output (c): on after-novice trials by expert_seen × round, the share of a participant's shots on arms where the
+    novice's demonstration succeeded at least once (``exploit``), beside the share of such arms (``chance``, what random
+    shooting would give) and the share of shots on arms the novice tried at all (``tried``); per-participant means, then
+    mean, SE and n over participants. Exploiting the evidence raises ``exploit`` above ``chance`` without raising ``tried``."""
+    m, rows = ~T.last_exp, np.arange(len(T.act))
+    df = pd.DataFrame(dict(part=T.part[m], expert_seen=T.expert_seen[m], round=(T.round_pm[m] > 0).astype(int) + 1,
+                           exploit=(T.vis_last[rows, T.act, 0] > 0)[m].astype(float), chance=(T.vis_last[..., 0] > 0).mean(1)[m],
+                           tried=(T.vis_last[rows, T.act].sum(1) > 0)[m].astype(float)))
+    per = df.groupby(["expert_seen", "round", "part"])[["exploit", "chance", "tried"]].mean()
+    return per.groupby(["expert_seen", "round"]).agg(["mean", "sem", "count"])
