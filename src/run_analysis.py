@@ -108,6 +108,23 @@ def run_choice(p: Paths) -> None:
     print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
 
 
+def human_tables(p: Paths, T, name: str) -> list:
+    """Paths of the human tables a registry model reads, in the choice stage's cache (its fit is keyed by their hashes)."""
+    from analysis.policies import REGISTRY, belief, grids
+    from analysis.thompson import table_path
+    m = REGISTRY[name]
+    k, w, c = grids(m)
+    return [table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c)
+            for s in ((m.source, "novice") if m.mixture != "none" else (m.source,))]
+
+
+def choice_fit(p: Paths, T, name: str):
+    """The choice stage's cached fit of a registry model."""
+    import pickle
+    from analysis.fitting import cache_path
+    return pickle.load(open(cache_path(name, "-".join(t.stem.split("_")[-1] for t in human_tables(p, T, name)), p.analysis_dir / "choice" / "fits"), "rb"))
+
+
 @stage("checks")
 def run_checks(p: Paths) -> None:
     """Simulation checks of the fitted models: δ_N recovery, model recovery for S1a, S2a and S4, free-running PPC. The transformer
@@ -115,28 +132,19 @@ def run_checks(p: Paths) -> None:
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
     ppc.csv, numbers.json."""
     import json
-    import pickle
     import numpy as np
     import pandas as pd
     import torch
     import yaml
     from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half, templates
     from analysis.data import load_sessions, trial_data
-    from analysis.fitting import cache_path
-    from analysis.policies import REGISTRY, belief, grids
-    from analysis.thompson import table_path
+    from analysis.policies import REGISTRY
     from inference.readout import load_model
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
     out.mkdir(exist_ok=True)
 
-    def tables(name):   # the human tables a model reads, in the choice stage's cache
-        m = REGISTRY[name]
-        k, w, c = grids(m)
-        return [table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", k, w, c)
-                for s in ((m.source, "novice") if m.mixture != "none" else (m.source,))]
-
-    def posterior(name):   # the choice stage's cached fit, found by the same table-hash key it was stored under
-        return pickle.load(open(cache_path(name, "-".join(t.stem.split("_")[-1] for t in tables(name)), p.analysis_dir / "choice" / "fits"), "rb")).posterior
+    tables = lambda name: human_tables(p, T, name)
+    posterior = lambda name: choice_fit(p, T, name).posterior
     cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
     model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
     pools = templates(p.preprocessed)
@@ -155,6 +163,30 @@ def run_checks(p: Paths) -> None:
                **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
     json.dump(numbers, open(out / "numbers.json", "w"), indent=1)
     print(rec.round(3).to_string(), "\n", confusion(mr).to_string(), "\n", bands.round(4).to_string(), "\n", numbers)
+
+
+@stage("unseen")
+def run_unseen(p: Paths) -> None:
+    """Unseen-expert section (exploratory): the readout-entering-play table, the copying belief against the unseen-expert
+    readout, the ELPD split (expert vs novice belief) and the expert-vs-copying ELPD on the after-novice cells from the
+    choice stage's fits, the exploit statistic; numbers.json with the headline cells."""
+    import json
+    from analysis.compare import loo
+    from analysis.data import load_sessions, trial_data
+    from analysis.unseen import copying_table, elpd_by_cell, exploit_table, readout_table
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "unseen"
+    out.mkdir(exist_ok=True)
+    tabs = dict(readout_table=readout_table(T), copying_table=copying_table(T), exploit=exploit_table(T))
+    loos = {n: loo(choice_fit(p, T, n)) for n in ("H+Both", "src:novice", "vis:last")}
+    tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["H+Both"], loos["src:novice"], T), elpd_by_cell(loos["H+Both"], loos["vis:last"], T)
+    for name, t in tabs.items():
+        t.to_csv(out / f"{name}.csv")
+    r, x = tabs["readout_table"], tabs["exploit"]
+    numbers = {f"unseen_expert_round{k}_{stat}": float(r.loc[("expert", False, k), (stat, "mean")]) for k in (1, 2) for stat in ("confidence", "rank_corr", "favourite_payoff")}
+    numbers |= {f"exploit_unseen_round{k}": float(x.loc[(False, k), ("exploit", "mean")]) for k in (1, 2)} | {"exploit_chance": float(x[("chance", "mean")].mean())}
+    numbers |= {f"split_{n.replace(' ', '_').replace(',', '')}_{f}": float(v) for n, row in tabs["elpd_split"].iterrows() for f, v in row.items() if f != "share"}
+    json.dump(numbers, open(out / "numbers.json", "w"), indent=1)
+    print(*(f"{n}\n{t.round(3).to_string()}" for n, t in tabs.items()), numbers, sep="\n\n")
 
 
 def main() -> None:
