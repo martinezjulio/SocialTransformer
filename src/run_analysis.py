@@ -64,7 +64,7 @@ def run_choice(p: Paths) -> None:
     from concurrent.futures import ThreadPoolExecutor
     import numpy as np
     import pandas as pd
-    from analysis.compare import ladder, loo, paired
+    from analysis.compare import by_cell, ladder, loo, paired
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import run_many
     from analysis.policies import REGISTRY, belief, grids
@@ -90,6 +90,8 @@ def run_choice(p: Paths) -> None:
     loos = {n: loo(f) for n, f in fits.items() if f.passed}
     lad = ladder(loos, "H+Both", T.part).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
     lad.to_csv(out / "ladder.csv")
+    rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs H+Both, paired SE, share
+    pd.concat({n: by_cell(l, loos["H+Both"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
     d = fits["Switch-by-round"].posterior["delta_N"].reshape(-1) if "Switch-by-round" in loos else np.array([np.nan])
     rows = {"S4": dict(estimate=d.mean(), lo=np.percentile(d, 2.5), hi=np.percentile(d, 97.5), rule="95% ETI > 0")}
     for name, a, b in [("S1a", "H+Both", "src:recent"), ("S1b", "H+Both", "src:novice"), ("S2a", "H+Both", "vis:last"), ("S2b", "H+Both", "vis:expert"),
