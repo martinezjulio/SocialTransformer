@@ -1,10 +1,12 @@
 # Descriptive stage: the 12-cell mixed model per outcome on the per-play-game table.
 # Input:  $OUTPUT_DATA_DIR/analysis/<version>/games/play_games.csv (src/analysis/games.py)
 # Output: .../descriptive/cell_means.csv   emmeans grid, one row per outcome x condition x play x round
-#         .../descriptive/contrasts.csv    H1-H5 (confirmatory: Holm within hypothesis, verdict) and the
-#                                          registered exploratory contrasts, as weight vectors over the 12 cells
+#         .../descriptive/contrasts.csv    H1, H2, H3, H5 (confirmatory: Holm over payoff and entropy within a
+#                                          hypothesis, verdict), their reward rows (reported: interval, no rule;
+#                                          advisor, 28 Oct) and the registered exploratory contrasts, as weight
+#                                          vectors over the 12 cells. H4 is the partner choice (partner_choice.R).
 #         .../descriptive/contrast_weights.csv  the 12-cell weight vector of every contrast (one column each)
-#         .../descriptive/robustness.csv   H1-H5 under two sensitivity fits: random slopes for round and play
+#         .../descriptive/robustness.csv   the confirmatory contrasts under two sensitivity fits: random slopes for round and play
 #                                          (reduced in a stated order if singular) and session order as a covariate
 # Model:  outcome ~ condition * play * round + (1 | participant), sum-to-zero coding, REML,
 #         Satterthwaite df (lmerTest). Solo slots 1 and 3 (exploratory) are left out.
@@ -60,40 +62,41 @@ CONTRASTS <- with(grid, list(
   H1 = list(w = m(demo == "expert") - m(demo == "novice"), outcomes = OUTCOMES, sign = c(1, 1, -1), role = "confirmatory"),
   H2 = list(w = m(demo == "novice" & round == 2) - m(demo == "novice" & round == 1), outcomes = OUTCOMES, sign = c(1, 1, -1), role = "confirmatory"),
   H3 = list(w = m(demo != "none" & round == 2) - m(demo != "none" & round == 1), outcomes = "entropy", sign = -1, role = "confirmatory"),
-  H4 = list(w = (m(demo == "novice" & round == 2) - m(demo == "novice" & round == 1)) - (m(demo == "none" & round == 2) - m(demo == "none" & round == 1)),
-            outcomes = PR, sign = c(1, 1), role = "confirmatory"),
   H5 = list(w = m(demo == "expert") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(1, 1), role = "confirmatory"),
-  # Exploratory contrasts from the registration's closed list: intervals reported, no verdict.
+  # Exploratory contrasts from the registration's closed list: intervals reported, no verdict. The former H4
+  # (after-novice improvement vs solo improvement) is exploratory on every outcome since 28 Oct.
+  novice_vs_solo_improvement = list(w = (m(demo == "novice" & round == 2) - m(demo == "novice" & round == 1)) - (m(demo == "none" & round == 2) - m(demo == "none" & round == 1)),
+                                    outcomes = OUTCOMES, sign = c(1, 1, -1), role = "exploratory"),
   expert_round_change = list(w = m(demo == "expert" & round == 2) - m(demo == "expert" & round == 1), outcomes = OUTCOMES, sign = c(1, 1, -1), role = "exploratory"),
   solo_round_change   = list(w = m(demo == "none" & round == 2) - m(demo == "none" & round == 1), outcomes = OUTCOMES, sign = c(NA, NA, NA), role = "exploratory"),
-  H4_entropy          = list(w = (m(demo == "novice" & round == 2) - m(demo == "novice" & round == 1)) - (m(demo == "none" & round == 2) - m(demo == "none" & round == 1)),
-                             outcomes = "entropy", sign = -1, role = "exploratory"),
   H5_round2           = list(w = m(demo == "expert" & round == 2) - m(demo == "none" & play == "second" & round == 2), outcomes = PR, sign = c(1, 1), role = "exploratory"),
   social_vs_solo4     = list(w = m(demo != "none") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(1, 1), role = "exploratory"),
   novice_vs_solo4     = list(w = m(demo == "novice") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(NA, NA), role = "exploratory")
 ))
 stopifnot(all(sapply(CONTRASTS, function(k) abs(sum(k$w)) < 1e-12)))
+CONFIRMATORY <- names(CONTRASTS)[sapply(CONTRASTS, `[[`, "role") == "confirmatory"]
 write_csv(bind_cols(grid, as.data.frame(lapply(CONTRASTS, `[[`, "w"))), file.path(out_dir, "contrast_weights.csv"))   # read by power_analysis.R
 
 contrast_rows <- function(emm_list, names) bind_rows(lapply(names, function(h) {
   k <- CONTRASTS[[h]]
   bind_rows(lapply(seq_along(k$outcomes), function(i) {
     est <- summary(contrast(emm_list[[k$outcomes[i]]], method = list(w = k$w)), infer = TRUE)
-    data.frame(hypothesis = h, outcome = k$outcomes[i], role = k$role, expected_sign = k$sign[i], as.data.frame(est)[, -1])
+    role <- if (k$role == "confirmatory" && k$outcomes[i] == "reward") "reported" else k$role   # reward carries no rule (28 Oct)
+    data.frame(hypothesis = h, outcome = k$outcomes[i], role = role, expected_sign = k$sign[i], as.data.frame(est)[, -1])
   }))
 }))
 contrasts <- contrast_rows(emms, names(CONTRASTS)) %>%
   group_by(hypothesis) %>%
-  mutate(p_holm = if (first(role) == "confirmatory") p.adjust(p.value, method = "holm") else NA_real_) %>%
+  mutate(p_holm = replace(rep(NA_real_, n()), role == "confirmatory", p.adjust(p.value[role == "confirmatory"], method = "holm"))) %>%
   ungroup() %>%
   mutate(verdict = case_when(role != "confirmatory" ~ NA_character_,
                              p_holm < 0.05 & sign(estimate) == expected_sign ~ "supported",
                              p_holm < 0.05 ~ "contradicted",
                              TRUE ~ "not supported"))
 write_csv(contrasts, file.path(out_dir, "contrasts.csv"))
-print(as.data.frame(contrasts[contrasts$role == "confirmatory", c("hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value", "p_holm", "verdict")]), digits = 3)
+print(as.data.frame(contrasts[contrasts$role != "exploratory", c("hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value", "p_holm", "verdict")]), digits = 3)
 
-# 5) Robustness fits (exploratory sensitivity, H1-H5 only, no Holm or verdict). Random slopes for round and
+# 5) Robustness fits (exploratory sensitivity, the confirmatory contrasts only, no Holm or verdict). Random slopes for round and
 #    play by participant are reduced in a fixed order when the fit is singular or does not converge:
 #    correlated slopes -> uncorrelated slopes -> intercept only (the main model). The random part uses
 #    +-0.5 codings of round and play (lme4's || would expand a factor into one column per level). Session
@@ -117,7 +120,7 @@ ROBUST <- list(
 robustness <- bind_rows(lapply(names(ROBUST), function(f) {
   emm_f <- lapply(ROBUST[[f]], function(r) emmeans(r$fit, ~ condition * play * round, lmer.df = "satterthwaite"))
   spec_of <- sapply(ROBUST[[f]], function(r) r$spec)
-  contrast_rows(emm_f, c("H1", "H2", "H3", "H4", "H5")) %>% mutate(fit = f, spec = spec_of[outcome], .before = 1) %>% select(-role)
+  contrast_rows(emm_f, CONFIRMATORY) %>% mutate(fit = f, spec = spec_of[outcome], .before = 1) %>% select(-role)
 }))
 write_csv(robustness, file.path(out_dir, "robustness.csv"))
 print(as.data.frame(robustness[, c("fit", "spec", "hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value")]), digits = 3)

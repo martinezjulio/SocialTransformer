@@ -35,12 +35,12 @@ demographics <- read_csv(demographics_path)
 # 3) Filter Out Invalid Participants. `excl` is the ledger of counts per rule, written as exclusions.csv.
 excl <- tibble(level = character(), rule = character(), n = integer())
 note <- function(level, rule, ids) excl <<- add_row(excl, level = level, rule = rule, n = length(unique(ids)))
-note("participant", "prolific_returned_or_timed_out", demographics$anonymous_id[demographics$Status %in% c("RETURNED", "TIMED-OUT")])
+# X1: returned on Prolific only. A Prolific time-out is not a rule: a timed-out finisher is kept if the
+# logged rules below pass (the span ceiling and the three-session rule catch the pilot E case).
+note("participant", "returned", demographics$anonymous_id[demographics$Status == "RETURNED"])
 note("participant", "colour_vision", demographics$anonymous_id[grepl("^Yes", demographics$Colourblindness)])
 demographics <- demographics |>
-  dplyr::filter(
-    !(Status == "RETURNED" | Status == "TIMED-OUT" | grepl("^Yes", Colourblindness))
-  )
+  dplyr::filter(!(Status == "RETURNED" | grepl("^Yes", Colourblindness)))
 
 # 3) Read the anonymised trial logs
 mongologs <- read_csv(mongologs_path,
@@ -50,7 +50,10 @@ mongologs <- read_csv(mongologs_path,
 # the whole study, instructions and practice included, took 4 min 30 s; a participant under 5 min
 # was not attending to the task. Measured on the logged span (first to last event, practice
 # included), which is shorter than the stopwatch time. Pilot E minimum: 416 s (nobody excluded).
+# Mirror ceiling: a logged span over 60 min means the study was left and resumed (slowest ordinary
+# pilot E completer: 14 min of logged play).
 SPEED_FLOOR_S <- 300
+SPAN_CEILING_S <- 3600
 study_span <- mongologs %>%
   group_by(anonymous_id) %>%
   summarise(span_s = as.numeric(difftime(max(ymd_hms(timestamp)), min(ymd_hms(timestamp)), units = "secs")),
@@ -58,8 +61,11 @@ study_span <- mongologs %>%
 too_fast <- study_span %>% filter(span_s < SPEED_FLOOR_S) %>% pull(anonymous_id)
 cat(sprintf("Speed floor %d s: dropping %d participant(s); fastest logged span %.0f s\n",
             SPEED_FLOOR_S, length(too_fast), min(study_span$span_s)))
-note("participant", "speed_floor", too_fast)
-mongologs <- mongologs %>% filter(!anonymous_id %in% too_fast)
+too_slow <- study_span %>% filter(span_s > SPAN_CEILING_S) %>% pull(anonymous_id)
+cat(sprintf("Span ceiling %d s: dropping %d participant(s); longest logged span %.0f s\n",
+            SPAN_CEILING_S, length(too_slow), max(study_span$span_s)))
+note("participant", "speed_floor", too_fast); note("participant", "span_ceiling", too_slow)
+mongologs <- mongologs %>% filter(!anonymous_id %in% c(too_fast, too_slow))
 
 # 4) Filter Mongologs Data
 mongologs <- mongologs %>%
