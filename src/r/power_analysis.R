@@ -4,7 +4,7 @@
 # Output: .../power/decision_rates.csv   N x effect x hypothesis x outcome: rate of "supported", n_sims, n_failed
 #         .../power/closed_form_n.csv    per contrast: the paired-difference N for 90% power at the pilot and half effect
 #         (one-sample t on per-participant contrast scores, alpha 0.05, no Holm), the simple reference beside the simulation
-# S4 rides along as hypothesis "S4", outcome "choice": pilot = the resampled participants' observed picks; half = picks
+# H6 rides along as hypothesis "H6", outcome "choice": pilot = the resampled participants' observed picks; half = picks
 # regenerated from the pilot logistic fit with the common preference halved and each participant's deviation kept.
 # Effect levels: "pilot" = the resampled data as is; "half" = every outcome shrunk toward its grand mean by half
 # of the pilot cell effect, which halves every contrast and keeps the participant structure and the noise.
@@ -54,7 +54,7 @@ decide_s4 <- function(N, effect) {
   d <- bind_rows(lapply(seq_along(ids), function(i) mutate(choices[choices$participant == ids[i], ], participant = i)))
   if (effect == "half") d$chose_expert <- rbinom(nrow(d), 1, plogis(0.5 * s4_b0 + s4_blup[ids[d$participant]]))
   co <- coef(summary(glmer(chose_expert ~ 1 + (1 | participant), data = d, family = binomial)))[1, ]
-  tibble(hypothesis = "S4", outcome = "choice", expected_sign = 1, estimate = co[["Estimate"]], p.value = co[["Pr(>|z|)"]], p_holm = co[["Pr(>|z|)"]],
+  tibble(hypothesis = "H6", outcome = "choice", expected_sign = 1, estimate = co[["Estimate"]], p.value = co[["Pr(>|z|)"]], p_holm = co[["Pr(>|z|)"]],
          supported = p_holm < 0.05 & estimate > 0, N = N, effect = effect)
 }
 one_sim <- function(s) bind_rows(lapply(N_GRID, function(N) bind_rows(lapply(c("pilot", "half"), function(e)

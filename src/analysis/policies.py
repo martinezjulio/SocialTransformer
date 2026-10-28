@@ -31,7 +31,7 @@ class ModelSpec:
     mixture: str = "none"       # MIXTURES: two = ω_E, ω_N per participant; by_round = + δ_E, δ_N; eight = group weights
     kappa_trend: bool = False   # δ_κ: round slope on log κ (robustness)
     lapse: float | None = 0.02  # fixed lapse rate; None fits ε at group level, Beta(1, 9) (lapse robustness)
-    role: str = "reported"      # full | S2 | S3 | S1 | reported | robustness | exploratory
+    role: str = "reported"      # full | S1a S1b (whose belief) | S2a S2b S2c (a readout, not counts) | S4 (the weight rises) | reported | robustness | exploratory
 
     def __post_init__(self):
         assert self.source in SOURCES and self.mixture in MIXTURES and (self.own or not self.reset)
@@ -50,16 +50,16 @@ def belief(T: TrialData, source: str) -> tuple:
 
 REGISTRY = {m.name: m for m in [
     ModelSpec("H+Both", habit=True, role="full"),
-    ModelSpec("src:recent", source="recent", habit=True, role="S2"),
-    ModelSpec("src:novice", source="novice", habit=True),
-    ModelSpec("src:naive", source="naive", own=False, habit=True),
-    ModelSpec("vis:last", source="vis_last", habit=True, role="S3"),
-    ModelSpec("vis:expert", source="vis_expert", habit=True),
+    ModelSpec("src:recent", source="recent", habit=True, role="S1a"),
+    ModelSpec("src:novice", source="novice", habit=True, role="S1b"),
+    ModelSpec("src:naive", source="naive", own=False, habit=True, role="S2c"),
+    ModelSpec("vis:last", source="vis_last", habit=True, role="S2a"),
+    ModelSpec("vis:expert", source="vis_expert", habit=True, role="S2b"),
     ModelSpec("Both"), ModelSpec("H+Social", own=False, habit=True), ModelSpec("H+Own", source="uniform", kappa=False, habit=True),
     ModelSpec("H", source="uniform", kappa=False, own=False, habit=True), ModelSpec("Own", source="uniform", kappa=False),
     ModelSpec("Social", own=False), ModelSpec("Random", source="uniform", kappa=False, own=False),
     ModelSpec("Switch", habit=True, mixture="two"),
-    ModelSpec("Switch-by-round", habit=True, mixture="by_round", role="S1"),
+    ModelSpec("Switch-by-round", habit=True, mixture="by_round", role="S4"),
     ModelSpec("Switch-by-round+ktrend", habit=True, mixture="by_round", kappa_trend=True, role="robustness"),
     ModelSpec("Switch-8", habit=True, mixture="eight", role="exploratory"),
     ModelSpec("H+Both+persev", habit=True, persev=True, role="exploratory"),

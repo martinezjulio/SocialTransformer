@@ -1,5 +1,5 @@
 # %% checks
-"""Simulation-based checks: δ_N parameter recovery, model recovery for S1–S3, free-running PPC, split-half.
+"""Simulation-based checks: δ_N parameter recovery, model recovery for S1a, S2a and S4, free-running PPC, split-half.
 
 A simulated dataset replays human social sessions (templates, one per condition per simulated participant,
 drawn with replacement) with a fitted policy playing every play game and the transformer re-read before each
@@ -27,7 +27,7 @@ from inference.simulate import simulate_session
 
 SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # game sequence -> expert-first / novice-first
 N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, 25, 22   # open decision 5; the 95%-coverage rule
-COMPARISONS = {"S1": ("Switch-by-round", "Switch"), "S2": ("H+Both", "src:recent"), "S3": ("H+Both", "vis:last")}   # (A, B) behind each rule
+COMPARISONS = {"S1a": ("H+Both", "src:recent"), "S2a": ("H+Both", "vis:last"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
 N_MODEL_RECOVERY = 5   # datasets per generating side
 N_PPC_DRAWS = 50       # posterior draws replayed in the free-running PPC
 
@@ -88,7 +88,7 @@ def recovery_verdict(rows: pd.DataFrame) -> dict:
 
 def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: Path, n_per_side: int = N_MODEL_RECOVERY,
                    n_people: int = N_RECOVERY, seed: int = 0, units=None) -> pd.DataFrame:
-    """Model recovery for S1–S3. Dataset (comparison, side, d) is generated from ``side``'s fitted model at a posterior
+    """Model recovery for the comparisons in COMPARISONS. Dataset (comparison, side, d) is generated from ``side``'s fitted model at a posterior
     draw seeded by its indices, both models of the comparison are fitted on it, and the 2 SE rule names the winner
     (A, B or undecided). One row per dataset; ``units`` = [(comparison, side, d), ...] restricts an array task.
     Simulation, tables and fits are cached under ``cache_dir`` like ``recover_delta``'s."""

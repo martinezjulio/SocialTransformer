@@ -5,7 +5,7 @@ ELPD is summed over trials; a difference between two models gets its SE over par
 sums are the paired units), so a participant's 48 trials never count as independent. Pareto k > 0.7 marks
 trials whose importance weights are unreliable; a model behind a registered claim with such trials falls
 back to exact leave-one-session-out refits (``loso``). ``by_cell`` splits a difference over trial subsets
-(round, last demonstrator, expert seen) for S3 by round and the unseen-expert ELPD split.
+(round, last demonstrator, expert seen) for S2 by round and the unseen-expert ELPD split.
 """
 
 from dataclasses import dataclass, replace

@@ -1,10 +1,10 @@
-# Partner choice (S4): every social session ends with one pick, expert or novice.
+# Partner choice (H6): every social session ends with one pick, expert or novice.
 # Input:  $EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv (the choice game is
 #         not tokenised, so it appears in no inference CSV)
 # Output: $OUTPUT_DATA_DIR/analysis/<version>/partner_choice/choices.csv  one row per session: participant, condition, chose_expert
 #         .../partner_choice/rates.csv   expert-choice rate with
 #         Wilson 95% intervals: all sessions, expert-first (novice seen last), novice-first (expert seen last)
-#         .../partner_choice/model.csv  S4: P(choose expert) > 0.5 from a mixed logistic model with a participant
+#         .../partner_choice/model.csv  H6: P(choose expert) > 0.5 from a mixed logistic model with a participant
 #         intercept, two-sided alpha 0.05 with sign (confirmatory); the recency check (exploratory): the
 #         condition term of the same model with sum-to-zero coding, expected ~0 under expertise-following
 # Run:    VERSION=pilot_E Rscript src/r/partner_choice.R
@@ -38,7 +38,7 @@ rates <- bind_rows(
     mutate(last_seen = ifelse(group == "expert-first", "novice", "expert"), .after = group))
 write_csv(rates, file.path(out_dir, "rates.csv"))
 
-# 3) S4 (intercept) and the recency check (condition term), one mixed logistic model each.
+# 3) H6 (intercept) and the recency check (condition term), one mixed logistic model each.
 options(contrasts = c("contr.sum", "contr.poly"))
 fit_row <- function(formula, term, role, expected_sign) {
   fit <- glmer(formula, data = choices, family = binomial)
@@ -50,7 +50,7 @@ fit_row <- function(formula, term, role, expected_sign) {
          verdict = ifelse(role != "confirmatory", NA, ifelse(p >= 0.05, "not supported", ifelse(sign(est) == expected_sign, "supported", "contradicted"))))
 }
 model <- bind_rows(
-  fit_row(chose_expert ~ 1 + (1 | participant), "(Intercept)", "confirmatory", 1),             # S4: logit P(expert) > 0
+  fit_row(chose_expert ~ 1 + (1 | participant), "(Intercept)", "confirmatory", 1),             # H6: logit P(expert) > 0
   fit_row(chose_expert ~ condition + (1 | participant), "condition1", "exploratory", NA))     # recency: expert-first minus grand mean
 model <- mutate(model, across(c(estimate, lower, upper), ~ ifelse(term == "(Intercept)", plogis(.x), NA), .names = "prob_{.col}"), .after = upper)
 write_csv(model, file.path(out_dir, "model.csv"))
