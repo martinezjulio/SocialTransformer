@@ -1,11 +1,12 @@
 # %% fig3
-"""Figure 3, policy models. (a) Whose belief: ΔELPD of H+Both over the recent-readout (S1a) and novice-readout (S1b)
-models, whole data. (b) A readout, not counts: ΔELPD of H+Both over the visible-pulls models of the last demonstration
-(S2a) and of the expert (S2b) and over the naive pooled count (S2c), by round. (c) Ablations: ΔELPD of H+Both over
-each rung, with H+Social minus H+Own (S3a) as its own row. (d) The weight on the expert's belief after the expert (ω_E)
+"""Figure 3, policy models. Names: H habit, O own experience, S social belief; HOS is the full model (registry H+Both).
+(a) Whose belief, and a readout, not counts: every model is HOS with a different belief; the
+expert readout minus the recent (S1a) and novice (S1b) readouts, and minus the visible-pulls models of the last demonstration
+(S2a) and of the expert (S2b) and over the naive pooled count (S2c); one panel, all trials, as the claims are judged. (b) Ablations: ΔELPD of H+Both over
+each rung, with H+Social minus H+Own (S3a) as its own row. (c) The weight on the expert's belief after the expert (ω_E)
 and after the novice (ω_N) in round 1 and 2 under Switch-by-round, group level: median and 95% ETI (S4 is the rise in
-ω_N). Marks in (a–c): point at the paired ΔELPD with a 2 SE bar, the registered margin; filled where the margin is cleared.
-Inputs: ``choice/{ladder,ladder_by_round,verdicts}.csv`` and the cached Switch-by-round fit.
+ω_N). Marks in (a, b): a point at the paired ΔELPD with a 2 SE bar, the registered margin; filled where the margin is cleared.
+Inputs: ``choice/{ladder,verdicts}.csv`` and the cached Switch-by-round fit.
 """
 
 from pathlib import Path
@@ -18,12 +19,10 @@ import pandas as pd
 
 from analysis.figures.style import COLOR, WIDTH, apply, save
 
-SOURCES = {"src:recent": "recent readout (S1a)", "src:novice": "novice readout (S1b)"}
-COUNTS = {"vis:last": "last demonstration's\npulls (S2a)", "vis:expert": "expert's pulls (S2b)", "src:naive": "every pull seen (S2c)"}
-ROUND = {"round 1": dict(marker="o", dy=0.18), "round 2": dict(marker="s", dy=-0.18)}
-RUNGS = {"H+Social": "H+Social (no own)", "H+Own": "H+Own (no social, S3b)", "H": "H (habit only)", "Both": "Both (no habit)",
-         "Social": "Social", "Own": "Own", "Random": "Random"}
-XLABEL = "ΔELPD, H+Both minus the rival"
+SOURCES = {"src:recent": "recent", "src:novice": "novice"}   # figure names: the readout the belief comes from
+COUNTS = {"src:naive": "naive", "vis:last": "naive-recent", "vis:expert": "naive-expert"}   # Beta counts of the pulls seen
+SHORT = {"H+Both": "HOS", "H+Social": "HS", "H+Own": "HO", "H": "H", "Both": "OS", "Social": "S", "Own": "O", "Random": "Random"}   # H habit, O own, S social
+RUNGS = {m: f"HOS − {SHORT[m]}" for m in ("H+Social", "H+Own", "H", "Both", "Social", "Own", "Random")}
 
 
 def dot_whisker(ax, y, delta, se, marker="o", label=None):
@@ -32,39 +31,52 @@ def dot_whisker(ax, y, delta, se, marker="o", label=None):
     ax.scatter(delta, y, marker=marker, s=28, color=COLOR["human"], facecolor=COLOR["human"] if delta > 2 * se else "white", zorder=3, label=label)
 
 
-def panel_source(ax, analysis_dir: Path) -> None:
-    """(a) H+Both minus each other readout source, whole data."""
+GROUPS = {"readout source": SOURCES, "Beta counts": COUNTS}
+
+
+def panel_belief(ax, analysis_dir: Path) -> None:
+    """(a) Every model is H+Both with a different belief: the expert readout minus each rival on all trials, with the
+    2 SE whisker, as the S1 and S2 parts are judged (the by-round split is a supplementary figure)."""
     lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0)
-    for y, (m, lab) in enumerate(reversed(SOURCES.items())):
+    ys = headed_rows(ax, {g: list(labs.values()) for g, labs in GROUPS.items()})
+    for y, m in zip(ys, [m for g in GROUPS.values() for m in g]):
         dot_whisker(ax, y, -lad.loc[m, "delta"], lad.loc[m, "se"])
-    ax.set_yticks(range(len(SOURCES)), [lab for lab in reversed(SOURCES.values())])
-    ax.set_ylim(-0.6, len(SOURCES) - 0.4)
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    ax.set_xlabel(XLABEL)
+    ax.set_xlabel("ΔELPD, expert readout minus the rival belief (all HOS)")
 
 
-def panel_counts(ax, analysis_dir: Path) -> None:
-    """(b) H+Both minus each counting model, round 1 (circle) and round 2 (square)."""
-    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder_by_round.csv", index_col=[0, 1])
-    for y, (m, lab) in enumerate(reversed(COUNTS.items())):
-        for r, st in ROUND.items():
-            dot_whisker(ax, y + st["dy"], -lad.loc[(m, r), "delta"], lad.loc[(m, r), "se"], st["marker"], r if y == 0 else None)
-    ax.set_yticks(range(len(COUNTS)), [lab for lab in reversed(COUNTS.values())])
-    ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    ax.set_xlabel(XLABEL)
-    ax.legend(loc="lower right", handletextpad=0.3)
+def headed_rows(ax, groups: dict) -> list:
+    """y positions for rows under italic group headers (a gap holds each later header); returns the rows' y values."""
+    ys, heads, y = [], {}, 0.0
+    for g, labels in groups.items():
+        heads[y - 0.9] = g
+        ys += [y + i for i in range(len(labels))]
+        y += len(labels) + 1.2
+    ticks = sorted(list(heads) + ys)
+    labels = [lab for labs in groups.values() for lab in labs]
+    ax.set_yticks(ticks, [heads.get(t, "") or labels[ys.index(t)].replace("\n", " ") for t in ticks])
+    for t, lab in zip(ax.get_yticklabels(), ticks):
+        t.set_ha("left")   # left-aligned column: every name starts at the same x
+        if lab in heads:
+            t.set_fontstyle("italic"), t.set_fontweight("bold")
+    ax.figure.canvas.draw()   # the pad is the widest label, measured
+    widest = max(t.get_window_extent().width for t in ax.get_yticklabels()) * 72 / ax.figure.dpi
+    ax.tick_params(axis="y", length=0, pad=widest + 4)
+    ax.spines["left"].set_visible(False)   # the zero line is the reference, not the axis edge
+    ax.set_ylim(max(ys) + 0.6, -1.4)
+    return ys
 
 
 def panel_ablation(ax, analysis_dir: Path) -> None:
-    """(c) H+Both minus each rung of the ladder, and H+Social minus H+Own (S3a) from the verdicts."""
+    """(b) HOS minus each rung of the ladder (S3b is the HO row), and HS minus HO (S3a) from the verdicts."""
     lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0)
     v = pd.read_csv(Path(analysis_dir) / "choice" / "verdicts.csv", index_col=0).loc["S3a"]
-    rows = [(lab, -lad.loc[m, "delta"], lad.loc[m, "se"]) for m, lab in RUNGS.items()] + [("H+Social minus H+Own (S3a)", v["estimate"], (v["hi"] - v["lo"]) / 4)]
-    for y, (lab, delta, se) in enumerate(reversed(rows)):
+    rows = [(-lad.loc[m, "delta"], lad.loc[m, "se"]) for m in RUNGS] + [(v["estimate"], (v["hi"] - v["lo"]) / 4)]
+    ys = headed_rows(ax, {"ablations": list(RUNGS.values()), "social > own": ["HS − HO"]})
+    for y, (delta, se) in zip(ys, rows):
         dot_whisker(ax, y, delta, se)
-    ax.set_yticks(range(len(rows)), [lab for lab, *_ in reversed(rows)])
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    ax.set_xlabel(XLABEL)
+    ax.set_xlabel("ΔELPD")
 
 
 def panel_omega(ax, analysis_dir: Path) -> None:
@@ -81,18 +93,18 @@ def panel_omega(ax, analysis_dir: Path) -> None:
 
 
 def fig3(analysis_dir: Path) -> list:
-    """Assemble Figure 3 (a, b | c, d) and save ``fig3_policy`` plus the panels on their own."""
+    """Assemble Figure 3 (a | c, d) and save ``fig3_policy`` plus the panels on their own."""
     apply()
     fig = plt.figure(figsize=(WIDTH["double"], 4.6))
-    outer = fig.add_gridspec(1, 2, wspace=0.95)   # each column splits its rows to its panels' needs: a is short, c is tall
-    cols = [outer[0].subgridspec(2, 1, height_ratios=[1.3, 3], hspace=0.8), outer[1].subgridspec(2, 1, height_ratios=[2.6, 2.4], hspace=0.6)]
-    axes = [fig.add_subplot(g[i]) for g in cols for i in range(2)]
-    panels = {"a": panel_source, "b": panel_counts, "c": panel_ablation, "d": panel_omega}
+    outer = fig.add_gridspec(1, 2, wspace=0.95)
+    right = outer[1].subgridspec(2, 1, height_ratios=[2.6, 2.4], hspace=0.6)
+    axes = [fig.add_subplot(outer[0]), fig.add_subplot(right[0]), fig.add_subplot(right[1])]
+    panels = {"a": panel_belief, "b": panel_ablation, "c": panel_omega}
     for ax, (letter, panel) in zip(axes, panels.items()):
         panel(ax, analysis_dir)
         ax.set_title(letter, loc="left", fontweight="bold")
     paths = save(fig, "fig3_policy", analysis_dir)
-    for letter, panel, name, h in (("a", panel_source, "fig3a_source", 1.6), ("b", panel_counts, "fig3b_counts", 2.4), ("c", panel_ablation, "fig3c_ablation", 2.6), ("d", panel_omega, "fig3d_omega", 2.4)):
+    for panel, name, h in ((panel_belief, "fig3a_belief", 3.0), (panel_ablation, "fig3b_ablation", 2.6), (panel_omega, "fig3c_omega", 2.4)):
         f, ax = plt.subplots(figsize=(WIDTH["single"], h))
         panel(ax, analysis_dir)
         paths += save(f, name, analysis_dir)
