@@ -10,8 +10,8 @@ sessions of per-session means, with the SE over sessions.
 ``copying_table`` compares the unseen-expert readout with the copying belief Beta(1 + wins, 1 + losses) built from
 the novice's visible shots (rank correlation across arms of the two beliefs' means, and of each with the truth), and
 ``elpd_by_cell`` gives the ΔELPD of two fitted models on the after-novice cells (expert seen × round), from the LOO
-objects of the choice stage: the expert belief vs copying (S2a's models) and the ELPD split, the expert vs the novice
-belief (S1b's models), both on the after-novice cells (output (b)). ``exploit_table`` is the model-free statistic (c):
+objects of the choice stage: the expert belief vs copying (S2a's models) and the ELPD split, the expert readout vs the recent readout (the novice's
+on the after-novice trials: S1a's models, so the cells add up to S1a), both on the after-novice cells (output (b)). ``exploit_table`` is the model-free statistic (c):
 the share of a participant's shots on arms where the demonstration just watched succeeded, against chance.
 """
 

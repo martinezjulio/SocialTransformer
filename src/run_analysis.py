@@ -168,7 +168,7 @@ def run_checks(p: Paths) -> None:
 @stage("unseen")
 def run_unseen(p: Paths) -> None:
     """Unseen-expert section (exploratory): the readout-entering-play table, the copying belief against the unseen-expert
-    readout, the ELPD split (expert vs novice belief) and the expert-vs-copying ELPD on the after-novice cells from the
+    readout, the ELPD split (expert readout vs recent readout, i.e. the novice's on these trials: S1a's models, cut into cells) and the expert-vs-copying ELPD on the after-novice cells from the
     choice stage's fits, the exploit statistic; numbers.json with the headline cells."""
     import json
     from analysis.compare import loo
@@ -177,8 +177,8 @@ def run_unseen(p: Paths) -> None:
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "unseen"
     out.mkdir(exist_ok=True)
     tabs = dict(readout_table=readout_table(T), copying_table=copying_table(T), exploit=exploit_table(T))
-    loos = {n: loo(choice_fit(p, T, n)) for n in ("H+Both", "src:novice", "vis:last")}
-    tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["H+Both"], loos["src:novice"], T), elpd_by_cell(loos["H+Both"], loos["vis:last"], T)
+    loos = {n: loo(choice_fit(p, T, n)) for n in ("H+Both", "src:recent", "vis:last")}
+    tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["H+Both"], loos["src:recent"], T), elpd_by_cell(loos["H+Both"], loos["vis:last"], T)
     for name, t in tabs.items():
         t.to_csv(out / f"{name}.csv")
     r, x = tabs["readout_table"], tabs["exploit"]

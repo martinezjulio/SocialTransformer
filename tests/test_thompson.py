@@ -50,12 +50,12 @@ def test_cubic_interpolation_on_dense_grid(output_data_dir):
     rng = np.random.default_rng(1)
     idx = rng.choice(len(T.act), 60, replace=False)
     read, own_s, own_p, act = T.read["expert"][idx], T.own_seg[idx], T.own_prev[idx], T.act[idx]
-    for i, (kj, wj, cj) in enumerate([(0, 0, 0), (12, 8, 5), (24, 15, 9)]):   # grid cells equal the exact quadrature
-        exact = np.log(np.clip(p_win(KAPPA[kj] * (read + LAM_W[wj] * own_s + LAM_C[cj] * own_p)), 1e-12, None))
+    for i, (kj, wj, cj) in enumerate([(0, 0, 0), (12, 8, 5), (24, 15, 9)]):   # grid cells equal the exact quadrature; registered
+        exact = np.log(np.clip(p_win(KAPPA[kj] * read + LAM_W[wj] * own_s + LAM_C[cj] * own_p), 1e-12, None))   # belief step (5.23): κ scales the readout only
         assert np.abs(tab[idx, kj, wj, cj] - exact).max() < 1e-5
     lk, lw, lc = np.log(KAPPA), np.log(LAM_W), np.log(LAM_C[1:])
     q = np.column_stack([rng.uniform(lk[1], lk[-2], 40), rng.uniform(lw[1], lw[-2], 40), rng.uniform(lc[1], lc[-2], 40)])
-    post = np.concatenate([np.exp(a) * (read + np.exp(b) * own_s + np.exp(c) * own_p) for a, b, c in q])
+    post = np.concatenate([np.exp(a) * read + np.exp(b) * own_s + np.exp(c) * own_p for a, b, c in q])
     exact = mix(p_win_all(post)).reshape(40, len(idx), K)
     sub = tab[idx][:, :, :, 1:]   # nonzero λ_c rungs only
     err = []
@@ -70,7 +70,7 @@ def test_cubic_interpolation_on_dense_grid(output_data_dir):
     # below the first nonzero λ_c knot the model uses a cubic on the linear axis through the zero knot
     (ia, wa), (ib, wb) = lagrange4(lk, lk[16]), lagrange4(lw, lw[7])   # κ = 1, λ_w on a knot: only the λ_c axis is interpolated
     for c in (0.03, 0.137, 0.2):
-        exact = mix(p_win_all(np.exp(lk[16]) * (read + np.exp(lw[7]) * own_s + c * own_p)))
+        exact = mix(p_win_all(np.exp(lk[16]) * read + np.exp(lw[7]) * own_s + c * own_p))
         ic, wc = lagrange4(LAM_C[:4], c)
         logp = np.einsum("i,j,k,nijka->na", wa, wb, wc, tab[idx][:, ia:ia + 4, ib:ib + 4, ic:ic + 4])
         e = np.abs(mix(np.exp(logp)) - exact)
