@@ -1,4 +1,4 @@
-"""The new H+Both and Switch-by-round fits reproduce the legacy pilot E fits within Monte Carlo error.
+"""The new HOS and Switch-by-round fits reproduce the legacy pilot E fits within Monte Carlo error.
 
 Legacy trial frames came from the 19 Oct inference, which scrambled the shot order of four social sessions,
 so pointwise log densities are compared only on sessions whose action sequences match; participant ids are
@@ -19,10 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from analysis.data import load_sessions, trial_data  # noqa: E402
 
 LEGACY = "legacy_analysis/cached_data/policy_{}_pilot_E_wandb_0i8yhqm7_epoch_119_best.pkl"
-MODELS = {"H+Both": ("H_Both_*.pkl", "C1:H+Both"), "Switch-by-round": ("Switch-by-round_*.pkl", "C4:switch+round")}
-GROUP = {"H+Both": {"mu_log_kappa": "mu_log_kappa", "mu_rho0": "mu_rho0", "tau_log_kappa": "tau_log_kappa", "log_lambda_w": "log_lambda_within", "lambda_c": "lambda_carry"},
+MODELS = {"HOS": ("HOS_*.pkl", "C1:H+Both"), "Switch-by-round": ("Switch-by-round_*.pkl", "C4:switch+round")}
+GROUP = {"HOS": {"mu_log_kappa": "mu_log_kappa", "mu_rho0": "mu_rho0", "tau_log_kappa": "tau_log_kappa", "log_lambda_w": "log_lambda_within", "lambda_c": "lambda_carry"},
          "Switch-by-round": {"mu_logit_omega_E": "mu_logit_omega_E", "mu_logit_omega_N": "mu_logit_omega_N", "delta_N": "delta_omega_N_0"}}
-PERSON = {"H+Both": ["log_kappa"], "Switch-by-round": ["log_kappa", "logit_omega_N"]}
+PERSON = {"HOS": ["log_kappa"], "Switch-by-round": ["log_kappa", "logit_omega_N"]}
 
 
 @pytest.fixture(scope="module")
@@ -75,5 +75,5 @@ def test_pointwise_elpd_on_unscrambled_sessions(caches):
     d = {m: waic(new[m]) - np.asarray(legacy[MODELS[m][1]]["elpd"], float) for m in MODELS}
     for m, dm in d.items():
         assert np.abs(dm[same]).max() < 1.5 and abs(dm[same].sum()) < 20, (m, np.abs(dm[same]).max(), dm[same].sum())
-    paired = pd.Series(d["Switch-by-round"][same] - d["H+Both"][same]).groupby(T.part[same]).sum()
-    assert abs(paired.sum()) < 2 * paired.std() * np.sqrt(len(paired)), "the by-round gain over H+Both matches legacy within 2 SE"
+    paired = pd.Series(d["Switch-by-round"][same] - d["HOS"][same]).groupby(T.part[same]).sum()
+    assert abs(paired.sum()) < 2 * paired.std() * np.sqrt(len(paired)), "the by-round gain over HOS matches legacy within 2 SE"

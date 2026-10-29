@@ -28,7 +28,7 @@ from inference.simulate import simulate_session
 
 SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # game sequence -> expert-first / novice-first
 N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, int(os.environ.get("N_DATASETS", 25)), 22   # open decision 5; the 95%-coverage rule
-COMPARISONS = {"S1a": ("H+Both", "src:recent"), "S2a": ("H+Both", "vis:last"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
+COMPARISONS = {"S1a": ("HOS", "recent"), "S2a": ("HOS", "naive-recent"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
 N_MODEL_RECOVERY = int(os.environ.get("N_MODEL_RECOVERY", 5))   # datasets per generating side
 N_PPC_DRAWS = int(os.environ.get("N_PPC_DRAWS", 50))            # posterior draws replayed in the free-running PPC
 # The three sizes take environment overrides for reduced development runs; the caches are keyed by dataset and draw
@@ -101,7 +101,7 @@ def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: 
             for d in range(n_per_side):
                 if units is not None and (c, side, d) not in units:
                     continue
-                key, rng = f"{c}_{side.replace(':', '-')}_{d:02d}", np.random.default_rng([seed, ci, si, d])
+                key, rng = f"{c}_{side}_{d:02d}", np.random.default_rng([seed, ci, si, d])
                 path = Path(cache_dir) / f"{key}.pkl"
                 if not path.exists():
                     post = posteriors[side]

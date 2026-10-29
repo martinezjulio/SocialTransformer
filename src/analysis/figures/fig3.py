@@ -1,9 +1,9 @@
 # %% fig3
-"""Figure 3, policy models. Names: H habit, O own experience, S social belief; HOS is the full model (registry H+Both).
+"""Figure 3, policy models. Names: H habit, O own experience, S social belief; HOS is the full model.
 (a) Whose belief, and a readout, not counts: every model is HOS with a different belief; the
 expert readout minus the recent (S1a) and novice (S1b) readouts, and minus the visible-pulls models of the last demonstration
-(S2a) and of the expert (S2b) and over the naive pooled count (S2c); one panel, all trials, as the claims are judged. (b) Ablations: ΔELPD of H+Both over
-each rung, with H+Social minus H+Own (S3a) as its own row. (c) The weight on the expert's belief after the expert (ω_E)
+(S2a) and of the expert (S2b) and over the naive pooled count (S2c); one panel, all trials, as the claims are judged. (b) Ablations: ΔELPD of HOS over
+each rung, with HS minus HO (S3a) as its own row. (c) The weight on the expert's belief after the expert (ω_E)
 and after the novice (ω_N) in round 1 and 2 under Switch-by-round, group level: median and 95% ETI (S4 is the rise in
 ω_N). Marks in (a, b): a point at the paired ΔELPD with a 2 SE bar, the registered margin; filled where the margin is cleared.
 Inputs: ``choice/{ladder,verdicts}.csv`` and the cached Switch-by-round fit.
@@ -19,10 +19,9 @@ import pandas as pd
 from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, WIDTH, apply, save
 
-SOURCES = {"src:recent": "recent", "src:novice": "novice"}   # figure names: the readout the belief comes from
-COUNTS = {"src:naive": "naive", "vis:last": "naive-recent", "vis:expert": "naive-expert"}   # Beta counts of the pulls seen
-SHORT = {"H+Both": "HOS", "H+Social": "HS", "H+Own": "HO", "H": "H", "Both": "OS", "Social": "S", "Own": "O", "Random": "Random"}   # H habit, O own, S social
-RUNGS = {m: f"HOS − {SHORT[m]}" for m in ("H+Social", "H+Own", "H", "Both", "Social", "Own", "Random")}
+SOURCES = ["recent", "novice"]                        # belief rivals whose belief is a readout
+COUNTS = ["naive", "naive-recent", "naive-expert"]    # belief rivals whose belief is a Beta count of the pulls seen
+RUNGS = {m: f"HOS − {m}" for m in ("HS", "HO", "H", "OS", "S", "O", "Random")}   # ablation rows: HOS minus the rung
 
 
 def dot_whisker(ax, y, delta, se, marker="o", label=None):
@@ -35,10 +34,10 @@ GROUPS = {"readout source": SOURCES, "Beta counts": COUNTS}
 
 
 def panel_belief(ax, analysis_dir: Path) -> None:
-    """(a) Every model is H+Both with a different belief: the expert readout minus each rival on all trials, with the
+    """(a) Every model is HOS with a different belief: the expert readout minus each rival on all trials, with the
     2 SE whisker, as the S1 and S2 parts are judged (the by-round split is a supplementary figure)."""
     lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0)
-    ys = headed_rows(ax, {g: list(labs.values()) for g, labs in GROUPS.items()})
+    ys = headed_rows(ax, {g: list(labs) for g, labs in GROUPS.items()})
     for y, m in zip(ys, [m for g in GROUPS.values() for m in g]):
         dot_whisker(ax, y, -lad.loc[m, "delta"], lad.loc[m, "se"])
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)

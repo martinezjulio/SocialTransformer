@@ -1,7 +1,7 @@
 # %% policies
 """Choice-model specifications and the registry of fitted models (plan 'Models' table; preregistration.md).
 
-Every model is H+Both with terms switched on or off: a belief source scaled by κ_i, the learner's own
+Every model is HOS (habit, own experience, social belief) with terms switched on or off: a belief source scaled by κ_i, the learner's own
 counts weighted by λ_w (this play game) and λ_c (the round's earlier play game), Thompson sampling, a
 win-stay lose-shift tilt, an optional perseveration bonus, a fixed lapse; the Switch models mix the
 expert-readout and novice-readout policies with a weight ω per trial. ``belief`` gives the counts a
@@ -49,22 +49,22 @@ def belief(T: TrialData, source: str) -> tuple:
 
 
 REGISTRY = {m.name: m for m in [
-    ModelSpec("H+Both", habit=True, role="full"),
-    ModelSpec("src:recent", source="recent", habit=True, role="S1a"),
-    ModelSpec("src:novice", source="novice", habit=True, role="S1b"),
-    ModelSpec("src:naive", source="naive", own=False, habit=True, role="S2c"),
-    ModelSpec("vis:last", source="vis_last", habit=True, role="S2a"),
-    ModelSpec("vis:expert", source="vis_expert", habit=True, role="S2b"),
-    ModelSpec("Both"), ModelSpec("H+Social", own=False, habit=True), ModelSpec("H+Own", source="uniform", kappa=False, habit=True),
-    ModelSpec("H", source="uniform", kappa=False, own=False, habit=True), ModelSpec("Own", source="uniform", kappa=False),
-    ModelSpec("Social", own=False), ModelSpec("Random", source="uniform", kappa=False, own=False),
+    ModelSpec("HOS", habit=True, role="full"),
+    ModelSpec("recent", source="recent", habit=True, role="S1a"),
+    ModelSpec("novice", source="novice", habit=True, role="S1b"),
+    ModelSpec("naive", source="naive", own=False, habit=True, role="S2c"),
+    ModelSpec("naive-recent", source="vis_last", habit=True, role="S2a"),
+    ModelSpec("naive-expert", source="vis_expert", habit=True, role="S2b"),
+    ModelSpec("OS"), ModelSpec("HS", own=False, habit=True), ModelSpec("HO", source="uniform", kappa=False, habit=True),
+    ModelSpec("H", source="uniform", kappa=False, own=False, habit=True), ModelSpec("O", source="uniform", kappa=False),
+    ModelSpec("S", own=False), ModelSpec("Random", source="uniform", kappa=False, own=False),
     ModelSpec("Switch", habit=True, mixture="two"),
     ModelSpec("Switch-by-round", habit=True, mixture="by_round", role="S4"),
     ModelSpec("Switch-by-round+ktrend", habit=True, mixture="by_round", kappa_trend=True, role="robustness"),
     ModelSpec("Switch-8", habit=True, mixture="eight", role="exploratory"),
-    ModelSpec("H+Both+persev", habit=True, persev=True, role="exploratory"),
-    ModelSpec("H+Both-reset", habit=True, reset=True, role="exploratory"),
-    ModelSpec("H+Both+eps", habit=True, lapse=None, role="robustness"),
+    ModelSpec("HOS+persev", habit=True, persev=True, role="exploratory"),
+    ModelSpec("HOS-reset", habit=True, reset=True, role="exploratory"),
+    ModelSpec("HOS+eps", habit=True, lapse=None, role="robustness"),
     ModelSpec("Switch-by-round+eps", habit=True, mixture="by_round", lapse=None, role="robustness"),
 ]}
 

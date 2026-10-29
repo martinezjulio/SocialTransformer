@@ -7,7 +7,7 @@ fits; decision rates by N at the pilot and half effect; exclusion counts per rul
 round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3, from the cached fits:
 the group-level posteriors of HOS and Switch-by-round (κ, λ_w, λ_c, ρ0, ρ_win, ω_E, ω_N, δ_E, δ_N) and the lapse ε of
 the two free-lapse fits, as 95% ETI bars with the median.
-Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social (HOS = H+Both).
+Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social.
 """
 
 from pathlib import Path
@@ -16,26 +16,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from analysis.figures.fig3 import COUNTS, SHORT, SOURCES, dot_whisker, headed_rows
+from analysis.figures.fig3 import COUNTS, SOURCES, dot_whisker, headed_rows
 from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, FONT, WIDTH, apply, save
 
-NAME = {**SOURCES, **COUNTS, **{m: s for m, s in SHORT.items() if m != "H+Both"}, "H+Both+persev": "HOS + perseveration", "H+Both-reset": "HOS, no reset",
-        "H+Both+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free", "Switch-by-round+ktrend": "Switch-by-round + κ trend"}   # registry name -> figure name
-REGISTERED = {"recent": ("src:recent",), "novice": ("src:novice",), "naive": ("src:naive",), "naive-recent": ("vis:last",), "naive-expert": ("vis:expert",),
-              "HOS − HO": ("H+Own",), "HS − HO": ("H+Social", "H+Own")}   # per-participant ΔELPD: HOS minus the model, or the difference of two
+NAME = {"HOS+persev": "HOS + perseveration", "HOS-reset": "HOS, no reset", "HOS+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free",
+        "Switch-by-round+ktrend": "Switch-by-round + κ trend"}   # registry name -> figure name where they differ
+REGISTERED = {**{m: (m,) for m in SOURCES + COUNTS}, "HOS − HO": ("HO",), "HS − HO": ("HS", "HO")}   # per-participant ΔELPD: HOS minus the model, or the difference of two
 
 
 def fig_ladder(analysis_dir: Path) -> list:
     """Every model against HOS on all trials (left), and the S1/S2 rivals by round (right)."""
-    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0).drop(index="H+Both")
+    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0).drop(index="HOS")
     byr = pd.read_csv(Path(analysis_dir) / "choice" / "ladder_by_round.csv", index_col=[0, 1])
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(WIDTH["double"], 4.0), width_ratios=[1.3, 1], gridspec_kw=dict(wspace=0.9))
     ys = headed_rows(ax1, {"HOS minus the model": [NAME.get(m, m) for m in lad.index]})
     for y, m in zip(ys, lad.index):
         dot_whisker(ax1, y, -lad.loc[m, "delta"], lad.loc[m, "se"])
-    rivals = list(SOURCES) + list(COUNTS)
-    ys = headed_rows(ax2, {"by round": [NAME[m] for m in rivals]})
+    rivals = SOURCES + COUNTS
+    ys = headed_rows(ax2, {"by round": rivals})
     for y, m in zip(ys, rivals):
         for r, dy, mk in (("round 1", -0.18, "o"), ("round 2", 0.18, "s")):
             dot_whisker(ax2, y + dy, -byr.loc[(m, r), "delta"], byr.loc[(m, r), "se"], mk, r if m == rivals[0] else None)
@@ -158,7 +157,7 @@ def fig_recency(analysis_dir: Path) -> list:
 PARAMS = {"κ (group)": ("mu_log_kappa", np.exp), "λ_w": ("log_lambda_w", np.exp), "λ_c": ("lambda_c", None), "ρ0 (group)": ("mu_rho0", None), "ρ_win (group)": ("mu_rho_win", None),
           "ω_E (group)": ("mu_logit_omega_E", lambda x: 1 / (1 + np.exp(-x))), "ω_N (group)": ("mu_logit_omega_N", lambda x: 1 / (1 + np.exp(-x))), "δ_E": ("delta_E", None), "δ_N": ("delta_N", None),
           "ε (free lapse)": ("eps", None)}
-POST_MODELS = {"H+Both": "HOS", "Switch-by-round": "Switch-by-round", "H+Both+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free"}
+POST_MODELS = ["HOS", "Switch-by-round", "HOS+eps", "Switch-by-round+eps"]
 
 
 def fig_posteriors(analysis_dir: Path) -> list:
@@ -172,7 +171,7 @@ def fig_posteriors(analysis_dir: Path) -> list:
                 v = fit.posterior[site].reshape(-1)
                 lo, med, hi = np.percentile(f(v) if f else v, [2.5, 50, 97.5])
                 ax.errorbar(med, y, xerr=[[med - lo], [hi - med]], marker="o", color=COLOR["human"], capsize=2, linestyle="none")
-        ax.set(yticks=range(len(fits)), yticklabels=list(POST_MODELS.values()), ylim=(len(fits) - 0.4, -0.6), title=lab)
+        ax.set(yticks=range(len(fits)), yticklabels=[NAME.get(m, m) for m in POST_MODELS], ylim=(len(fits) - 0.4, -0.6), title=lab)
         ax.tick_params(labelleft=ax in axes[:, 0], length=0, axis="y")
         if site.startswith("delta"):
             ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=0)
@@ -181,8 +180,8 @@ def fig_posteriors(analysis_dir: Path) -> list:
 
 TARGETS = {"after_novice_rise": "after-novice\npayoff rise", "entropy_fall": "entropy fall\nround 1 − 2", "zigzag": "novice-first\nzig-zag",
            "stay_win": "stay after\na win", "stay_loss": "stay after\na loss"}
-PPC_MODELS = {"H+Both": "HOS", "Switch-by-round": "Switch-by-round"}
-COMPARISON_A = {"S1a": "H+Both", "S2a": "H+Both", "S4": "Switch-by-round"}   # model A of checks.COMPARISONS (not imported: JAX)
+PPC_MODELS = ["HOS", "Switch-by-round"]
+COMPARISON_A = {"S1a": "HOS", "S2a": "HOS", "S4": "Switch-by-round"}   # model A of checks.COMPARISONS (not imported: JAX)
 
 
 def fig_ppc(analysis_dir: Path) -> list:
@@ -193,13 +192,13 @@ def fig_ppc(analysis_dir: Path) -> list:
     fig, axes = plt.subplots(2, len(TARGETS), figsize=(WIDTH["double"], 2.4), gridspec_kw=dict(wspace=0.35, hspace=0.55))
     for row, (suffix, label) in enumerate((("", "all data"), (" split_half", "split half"))):
         for ax, (t, name) in zip(axes[row], TARGETS.items()):
-            for y, (m, short) in enumerate(PPC_MODELS.items()):
+            for y, m in enumerate(PPC_MODELS):
                 q = r.loc[(m + suffix, t)]
                 ax.plot([q["lo"], q["hi"]], [y, y], color=COLOR["model"], linewidth=2.2, solid_capstyle="butt", zorder=2)
                 ax.scatter(q["mean"], y, s=22, color=COLOR["human"], facecolor=COLOR["human"] if q["inside"] else "white", zorder=3)
                 ax.axvline(q["human"], color=COLOR["human"], linewidth=1.0, zorder=1)
             lo, hi = r.loc[[(m + suffix, t) for m in PPC_MODELS]][["lo", "human"]].min().min(), r.loc[[(m + suffix, t) for m in PPC_MODELS]][["hi", "human"]].max().max()
-            ax.set(xlim=(lo - 0.08 * (hi - lo), hi + 0.08 * (hi - lo)), ylim=(-0.6, 1.6), yticks=[0, 1], yticklabels=list(PPC_MODELS.values()) if ax is axes[row][0] else [])
+            ax.set(xlim=(lo - 0.08 * (hi - lo), hi + 0.08 * (hi - lo)), ylim=(-0.6, 1.6), yticks=[0, 1], yticklabels=PPC_MODELS if ax is axes[row][0] else [])
             ax.tick_params(axis="x", labelsize=FONT - 2)
             if row == 0:
                 ax.set_title(name, fontsize=FONT)
@@ -224,7 +223,7 @@ def fig_recovery(analysis_dir: Path) -> list:
         for _, q in rows.iterrows():                       # ΔELPD is A − B; flipped for B-generated rows so "right of zero" is always correct
             dot_whisker(b, y, q["delta"] if g == COMPARISON_A[c] else -q["delta"], q["se"])
     b.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    b.set(yticks=range(len(groups)), yticklabels=[f"{c}: {NAME.get(g, 'HOS' if g == 'H+Both' else g)}" for (c, g), _ in groups],
+    b.set(yticks=range(len(groups)), yticklabels=[f"{c}: {NAME.get(g, g)}" for (c, g), _ in groups],
           xlabel="ΔELPD towards the generating model (2 SE)", title=f"{int(mr['correct'].sum())} of {len(mr)} recovered")
     b.invert_yaxis()
     return save(fig, "figS_recovery", analysis_dir)
