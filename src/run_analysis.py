@@ -60,10 +60,10 @@ def run_choice(p: Paths) -> None:
     """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
     cached, fits cached by table hash, PSIS-LOO ladder vs HOS, verdicts for S1a–S3b (2 SE each), the claims S1–S3 (all parts
     required) and S4 (δ_N 95% ETI), numbers.json."""
-    import json
     from concurrent.futures import ThreadPoolExecutor
     import numpy as np
     import pandas as pd
+    from analysis.numbers import write_numbers
     from analysis.compare import by_cell, ladder, loo, paired
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import run_many
@@ -106,8 +106,7 @@ def run_choice(p: Paths) -> None:
         parts = [r["verdict"] for k, r in rows.items() if k.startswith(claim) and len(k) == 3]
         rows[claim] = dict(estimate=np.nan, lo=np.nan, hi=np.nan, rule="all parts > 2 SE", verdict="supported" if all(v == "supported" for v in parts) else "not evaluable" if "not evaluable" in parts else "not supported")
     pd.DataFrame(rows).T.to_csv(out / "verdicts.csv")
-    json.dump({f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"} | {f"elpd_{n}": l.elpd for n, l in loos.items()},
-              open(out / "numbers.json", "w"), indent=1)
+    write_numbers(out, {f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"} | {f"elpd_{n}": l.elpd for n, l in loos.items()})
     print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
 
 
@@ -134,12 +133,12 @@ def run_checks(p: Paths) -> None:
     is the one the inference CSVs came from (eval metadata) unless ``checkpoint`` overrides it. Every unit is cached
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
     ppc.csv, numbers.json."""
-    import json
     import numpy as np
     import pandas as pd
     import torch
     import yaml
     from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half, templates
+    from analysis.numbers import write_numbers
     from analysis.data import load_sessions, trial_data
     from analysis.policies import REGISTRY
     from inference.readout import load_model
@@ -164,7 +163,7 @@ def run_checks(p: Paths) -> None:
     bands.to_csv(out / "ppc.csv")
     numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
                **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
-    json.dump(numbers, open(out / "numbers.json", "w"), indent=1)
+    write_numbers(out, numbers)
     print(rec.round(3).to_string(), "\n", confusion(mr).to_string(), "\n", bands.round(4).to_string(), "\n", numbers)
 
 
@@ -173,9 +172,9 @@ def run_unseen(p: Paths) -> None:
     """Unseen-expert section (exploratory): the readout-entering-play table, the copying belief against the unseen-expert
     readout, the ELPD split (expert readout vs recent readout, i.e. the novice's on these trials: S1a's models, cut into cells) and the expert-vs-copying ELPD on the after-novice cells from the
     choice stage's fits, the exploit statistic; numbers.json with the headline cells."""
-    import json
     from analysis.compare import loo
     from analysis.data import load_sessions, trial_data
+    from analysis.numbers import write_numbers
     from analysis.unseen import copying_table, elpd_by_cell, exploit_table, readout_table
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "unseen"
     out.mkdir(exist_ok=True)
@@ -188,7 +187,7 @@ def run_unseen(p: Paths) -> None:
     numbers = {f"unseen_expert_round{k}_{stat}": float(r.loc[("expert", False, k), (stat, "mean")]) for k in (1, 2) for stat in ("confidence", "rank_corr", "favourite_payoff")}
     numbers |= {f"exploit_unseen_round{k}": float(x.loc[(False, k), ("exploit", "mean")]) for k in (1, 2)} | {"exploit_chance": float(x[("chance", "mean")].mean())}
     numbers |= {f"split_{n.replace(' ', '_').replace(',', '')}_{f}": float(v) for n, row in tabs["elpd_split"].iterrows() for f, v in row.items() if f != "share"}
-    json.dump(numbers, open(out / "numbers.json", "w"), indent=1)
+    write_numbers(out, numbers)
     print(*(f"{n}\n{t.round(3).to_string()}" for n, t in tabs.items()), numbers, sep="\n\n")
 
 
@@ -205,6 +204,21 @@ def run_figures(p: Paths) -> None:
     paths = (fig1_inset(p.eval_dir, p.version, p.analysis_dir) + fig2(p.analysis_dir, p.preprocessed) + fig3(p.analysis_dir)
              + fig4(p.analysis_dir, p.eval_dir, p.version) + supp(p.analysis_dir, p.preprocessed.parent))
     print("figures:", len(paths), "files under", p.analysis_dir / "figures")
+
+
+@stage("report")
+def run_report(p: Paths) -> None:
+    """Last: every stage's numbers merged with the provenance block and checked against the manifest (stops naming any
+    missing or extra number), then paper/: results.tex, results.md, tables/, and a copy of figures/."""
+    import shutil
+    from analysis.data import load_sessions, trial_data
+    from analysis.report import merge_numbers, provenance, write_results, write_tables
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "paper"
+    numbers = merge_numbers(p.analysis_dir, provenance(p.preprocessed, p.eval_dir, int(T.part.max() + 1), len(set(T.session)), len(T.act)))
+    paths = write_results(numbers, out) + write_tables(p.analysis_dir, out)
+    (out / "figures").mkdir(exist_ok=True)
+    figures = [shutil.copy2(f, out / "figures" / f.name) for f in sorted((p.analysis_dir / "figures").glob("fig*"))]
+    print(f"report: {len(numbers)} numbers, {[q.name for q in paths]}, {len(figures)} figure files under {out}")
 
 
 def main() -> None:
