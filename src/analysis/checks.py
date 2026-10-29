@@ -8,6 +8,7 @@ one, so the readout entering a round's second play game sees the simulated first
 """
 
 import json
+import os
 import pickle
 import random
 from pathlib import Path
@@ -26,10 +27,12 @@ from inference.sessions import load_shots, validate_sessions
 from inference.simulate import simulate_session
 
 SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # game sequence -> expert-first / novice-first
-N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, 25, 22   # open decision 5; the 95%-coverage rule
+N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, int(os.environ.get("N_DATASETS", 25)), 22   # open decision 5; the 95%-coverage rule
 COMPARISONS = {"S1a": ("H+Both", "src:recent"), "S2a": ("H+Both", "vis:last"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
-N_MODEL_RECOVERY = 5   # datasets per generating side
-N_PPC_DRAWS = 50       # posterior draws replayed in the free-running PPC
+N_MODEL_RECOVERY = int(os.environ.get("N_MODEL_RECOVERY", 5))   # datasets per generating side
+N_PPC_DRAWS = int(os.environ.get("N_PPC_DRAWS", 50))            # posterior draws replayed in the free-running PPC
+# The three sizes take environment overrides for reduced development runs; the caches are keyed by dataset and draw
+# index with seeded draw lists, so a reduced run's units are the first units of the full run and are reused by it.
 
 
 def templates(preprocessed: Path) -> dict:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 import arviz as az
 import numpy as np
 import pandas as pd
+from scipy.special import logsumexp
 
 from analysis.data import TrialData
 from analysis.fitting import Fit
@@ -38,7 +39,12 @@ def loo(fit: Fit) -> Loo:
     elpd_i, k = ll[0, 0].copy(), np.zeros(ll.shape[-1])   # under a uniform belief) are exact: no importance weights to fit
     idata = az.from_dict(posterior={"_": np.zeros(ll.shape[:2])}, log_likelihood={"a": ll[:, :, var]})   # arviz wants a posterior group
     r = az.loo(idata, pointwise=True)
-    elpd_i[var], k[var] = r.loo_i.values, r.pareto_k.values
+    e, kk = r.loo_i.values.copy(), r.pareto_k.values.copy()
+    flat = ~(np.isfinite(e) & np.isfinite(kk))   # weight tail tied at float32 resolution: arviz's Pareto fit returns k = inf or a NaN
+    if flat.any():                               # value, but tied tails are bounded weights, so the plain importance estimate is exact
+        x = ll[:, :, var][:, :, flat].reshape(-1, int(flat.sum()))
+        e[flat], kk[flat] = np.log(x.shape[0]) - logsumexp(-x, axis=0), 0.0
+    elpd_i[var], k[var] = e, kk
     return Loo(fit.name, float(elpd_i.sum()), elpd_i, k, int((k > K_BAD).sum()))
 
 

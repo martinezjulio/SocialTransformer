@@ -192,6 +192,21 @@ def run_unseen(p: Paths) -> None:
     print(*(f"{n}\n{t.round(3).to_string()}" for n, t in tabs.items()), numbers, sep="\n\n")
 
 
+@stage("figures")
+def run_figures(p: Paths) -> None:
+    """Every figure module on the stage outputs and the cached fits: Fig 1 inset, Figs 2–4, the supplement; PDF + PNG under
+    figures/. Headless: the Agg backend unless MPLBACKEND says otherwise."""
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    from analysis.figures.fig1_inset import fig1_inset
+    from analysis.figures.fig2 import fig2
+    from analysis.figures.fig3 import fig3
+    from analysis.figures.fig4 import fig4
+    from analysis.figures.supp import supp
+    paths = (fig1_inset(p.eval_dir, p.version, p.analysis_dir) + fig2(p.analysis_dir, p.preprocessed) + fig3(p.analysis_dir)
+             + fig4(p.analysis_dir, p.eval_dir, p.version) + supp(p.analysis_dir, p.preprocessed.parent))
+    print("figures:", len(paths), "files under", p.analysis_dir / "figures")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--version", required=True, help="e.g. pilot_E")
