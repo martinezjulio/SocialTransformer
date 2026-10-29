@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from analysis.numbers import check_keys, fmt, kind_of, macro_name, write_numbers  # noqa: E402
+from analysis.numbers import MANIFEST, check_keys, check_manifest, fmt, kind_of, macro_name, write_numbers  # noqa: E402
 
 
 def test_macro_names_are_letters_only_with_digits_spelled():
@@ -33,3 +33,16 @@ def test_writer_rejects_collisions_and_bad_values(tmp_path):
         check_keys({"x": [1, 2]})
     p = write_numbers(tmp_path, {"a_n": np.int64(3), "b_estimate": np.float32(1.5), "c_inside": np.bool_(True)})
     assert json.load(open(p)) == {"a_n": 3, "b_estimate": 1.5, "c_inside": True}
+
+
+def test_manifest_keys_give_distinct_macros_and_the_check_names_missing_and_extra():
+    keys = [k for ks in MANIFEST.values() for k in ks]
+    assert len(keys) == len(set(keys))
+    check_keys({k: 1.0 for k in keys})                      # distinct macro names across every block
+    full = {k: 1.0 for k in keys}
+    check_manifest(full)
+    broken = {k: v for k, v in full.items() if k != "S1a_lo"} | {"stray": 2.0}
+    with pytest.raises(ValueError) as e:
+        check_manifest(broken)
+    assert "S1a_lo" in str(e.value) and "stray" in str(e.value) and "policy models" in str(e.value)
+    assert fmt("supported", kind_of("H1_payoff_verdict")) == "supported" and kind_of("excluded_returned") == "count" and kind_of("participants") == "count"
