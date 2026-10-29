@@ -475,7 +475,7 @@ Transfer one version's inputs (only the anonymised preprocessed data ever leaves
 files and the ID map stay there):
 
 ```bash
-rsync -av $EXPERIMENT_DATA_DIR/pilot_E/ sherlock:$SCRATCH/SocialTransformer/experiment_data/pilot_E/
+rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} sherlock:$SCRATCH/SocialTransformer/experiment_data/pilot_E/   # never the folder: it holds the raw files and the ID map
 rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$SCRATCH/SocialTransformer/outputs/eval/pilot_E/
 rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$SCRATCH/SocialTransformer/outputs/training_runs/<run>/checkpoints/
 ```
