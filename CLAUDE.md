@@ -2,8 +2,8 @@
 
 SocialTransformer: a transformer that observes demonstrators playing multi-armed
 bandits over several rounds and predicts arm payoffs plus each demonstrator's
-belief state as Beta distributions. Human experiment data is analyzed by the
-pipeline in `src/analysis` (new, under construction) and the frozen legacy notebook.
+belief state as Beta distributions. Human experiment data is analysed by the
+pipeline in `src/analysis` (see below); the legacy notebook is frozen.
 
 ## Environment
 
@@ -28,12 +28,25 @@ variable list.
 bash scripts/run_training.sh      # train
 bash scripts/run_eval.sh          # evaluate on synthetic test set
 bash scripts/run_inference.sh     # run model on human experiment data
+bash scripts/run_analysis.sh --version pilot_E   # analysis pipeline; see its header for stages and --dev
 pytest tests/                     # invariants on generated outputs; see tests/README.md
 wandb sweep src/Sweeps/Sweep_Version_*.yaml && wandb agent <sweep-id>
 bash scripts/setup_r_env.sh       # one-time R packages via renv
 python scripts/run_notebook.py --version pilot_E   # legacy notebook, batch; see its docstring
 bash scripts/run_quarto_analysis_report.sh         # legacy Quarto report in reports/
 ```
+
+## Analysis pipeline (`src/analysis`, driver `src/run_analysis.py`)
+
+Two inputs per version: `$EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv`
+(from `src/r/preprocess_participant_data.R`) and the inference CSVs in `$OUTPUT_DATA_DIR/eval/<version>/`.
+Stages run in a fixed order (Python in `run_analysis.py`, R in `src/r/`) and each writes one folder under
+`$OUTPUT_DATA_DIR/analysis/<version>/`. Belief tables and fits are cached by content hash and the
+simulation checks by unit, so reruns are cheap; stages overwrite their outputs unconditionally, so a
+reduced run needs `--dev`. The paper's numbers are never typed by hand: stages write `numbers.json`,
+`numbers.py` holds the manifest of every cited number, and the `report` stage emits `paper/`
+(`results.tex` macros, `results.md`, tables, figures) or fails naming any missing number. Model names
+follow the HOS convention (H habit, O own experience, S social belief) in `policies.py`'s registry.
 
 ## Design decisions (do not silently revisit)
 
