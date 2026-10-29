@@ -1,0 +1,14 @@
+# Python packages of the SocialTransformer conda env for Sherlock beyond jax and torch, which scripts/setup_sherlock.sh installs
+# for the node's CUDA build (requirements.txt is this machine's CUDA 13 freeze). Pinned to the pilot analysis' versions (29 Oct 2026).
+numpy==2.3.3
+scipy==1.17.0
+pandas==2.3.3
+matplotlib==3.10.8
+seaborn==0.13.2
+PyYAML==6.0.3
+python-dotenv==1.2.2
+numpyro==0.21.0
+arviz==0.23.4
+datasets==4.8.4
+wandb==0.23.0
+pytest==9.0.3

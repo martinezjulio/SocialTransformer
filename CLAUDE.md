@@ -29,6 +29,7 @@ bash scripts/run_training.sh      # train
 bash scripts/run_eval.sh          # evaluate on synthetic test set
 bash scripts/run_inference.sh     # run model on human experiment data
 bash scripts/run_analysis.sh --version pilot_E   # analysis pipeline; see its header for stages and --dev
+bash scripts/setup_sherlock.sh && bash scripts/slurm/submit.sh --version pilot_E   # full size on Sherlock; README §6
 pytest tests/                     # invariants on generated outputs; see tests/README.md
 wandb sweep src/Sweeps/Sweep_Version_*.yaml && wandb agent <sweep-id>
 bash scripts/setup_r_env.sh       # one-time R packages via renv

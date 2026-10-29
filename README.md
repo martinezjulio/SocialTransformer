@@ -461,3 +461,27 @@ x = (
 
 ---
 
+
+## 6. Analysis on Sherlock
+
+The analysis pipeline (`src/analysis`, driver `scripts/run_analysis.sh`) runs at full size on Sherlock as
+SLURM job arrays. One-time setup from a login node inside the clone:
+
+```bash
+bash scripts/setup_sherlock.sh     # miniforge + env under $GROUP_HOME/$USER, data roots under $SCRATCH, writes .env
+```
+
+Transfer one version's inputs (only the anonymised preprocessed data ever leaves the lab machine; the raw
+files and the ID map stay there):
+
+```bash
+rsync -av $EXPERIMENT_DATA_DIR/pilot_E/ sherlock:$SCRATCH/SocialTransformer/experiment_data/pilot_E/
+rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$SCRATCH/SocialTransformer/outputs/eval/pilot_E/
+rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$SCRATCH/SocialTransformer/outputs/training_runs/<run>/checkpoints/
+```
+
+Then submit: `bash scripts/slurm/submit.sh --version pilot_E` lists the cached units (`python src/run_analysis.py
+--list-units`), submits one array per level (table blocks and assembly on CPU, fits, simulated datasets and PPC
+draws on `owners` GPUs with `--requeue`) and the final run of every stage on `hns`; logs and unit lists land in
+`$OUTPUT_DATA_DIR/analysis/<version>/slurm/`. Preempted tasks resume from the atomic caches. `$SCRATCH` purges
+files untouched for 90 days, so copy `analysis/<version>/paper/` (and the fits, if wanted) to group storage after a run.
