@@ -10,6 +10,7 @@ Stages import what they need when they run, so the driver itself never loads tor
 """
 
 import argparse
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,11 +58,24 @@ def run_inference_check(p: Paths) -> None:
           f"checkpoint {Path(cfg['checkpoint_path']).name}")
 
 
+def verdict(estimate: float, lo: float, hi: float) -> str:
+    """The registration's four outcomes (prereg 4.3) of one interval: supported when it lies above zero, contradicted
+    below, not supported when it covers zero, not evaluable when there is no estimate (a fit failed the gate)."""
+    return "not evaluable" if math.isnan(estimate) else "supported" if lo > 0 else "contradicted" if hi < 0 else "not supported"
+
+
+def claim_verdict(parts: list) -> str:
+    """A claim from its parts: supported when every part is, else contradicted when any part is (never masked by a
+    not-evaluable part), else not evaluable when any part is, else not supported."""
+    return ("supported" if all(v == "supported" for v in parts) else "contradicted" if "contradicted" in parts
+            else "not evaluable" if "not evaluable" in parts else "not supported")
+
+
 @stage("choice")
 def run_choice(p: Paths) -> None:
     """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
-    cached, fits cached by table hash, PSIS-LOO ladder vs HOS, verdicts for S1a–S3b (2 SE each), the claims S1–S3 (all parts
-    required) and S4 (δ_N 95% ETI), numbers.json."""
+    cached, fits cached by table hash, PSIS-LOO ladder vs HOS, the registration's four-outcome verdicts for S1a–S3b (2 SE each),
+    the claims S1–S3 (from their parts) and S4 (δ_N 95% ETI), numbers.json."""
     from concurrent.futures import ThreadPoolExecutor
     import numpy as np
     import pandas as pd
@@ -103,12 +117,12 @@ def run_choice(p: Paths) -> None:
         q = paired(loos[a], loos[b], T.part) if a in loos and b in loos else dict(delta=np.nan, se=np.nan)
         rows[name] = dict(estimate=q["delta"], lo=q["delta"] - 2 * q["se"], hi=q["delta"] + 2 * q["se"], rule="ΔELPD > 2 SE" if name[0] == "S" else "reported")
     for r in rows.values():
-        r["verdict"] = "" if r["rule"] == "reported" else "not evaluable" if np.isnan(r["estimate"]) else "supported" if r["lo"] > 0 else "not supported"
-    for claim in ("S1", "S2", "S3"):   # a claim holds when every part does; per-part verdicts stay reported
-        parts = [r["verdict"] for k, r in rows.items() if k.startswith(claim) and len(k) == 3]
-        rows[claim] = dict(estimate=np.nan, lo=np.nan, hi=np.nan, rule="all parts > 2 SE", verdict="supported" if all(v == "supported" for v in parts) else "not evaluable" if "not evaluable" in parts else "not supported")
+        r["verdict"] = "" if r["rule"] == "reported" else verdict(r["estimate"], r["lo"], r["hi"])
+    for claim in ("S1", "S2", "S3"):   # per-part verdicts stay reported beside the claim's
+        rows[claim] = dict(estimate=np.nan, lo=np.nan, hi=np.nan, rule="all parts > 2 SE", verdict=claim_verdict([r["verdict"] for k, r in rows.items() if k.startswith(claim) and len(k) == 3]))
     pd.DataFrame(rows).T.to_csv(out / "verdicts.csv")
-    write_numbers(out, {f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"} | {f"elpd_{n}": l.elpd for n, l in loos.items()})
+    write_numbers(out, {f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"}
+                  | {f"{k}_verdict": r["verdict"] for k, r in rows.items() if r["verdict"]} | {f"elpd_{n}": l.elpd for n, l in loos.items()})
     print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
 
 

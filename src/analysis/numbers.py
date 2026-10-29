@@ -72,7 +72,7 @@ MANIFEST = {
     "descriptive (Fig 2, H1-H5)": [k for h, outs in OUTCOMES.items() for o in outs for k in interval(f"{h}_{o}") + ([f"{h}_{o}_p_holm", f"{h}_{o}_verdict"] if o != "reward" else [])]
                                  + [k for h, outs in EXPLORATORY.items() for o in outs for k in interval(f"{h}_{o}")],
     "partner choice (Fig 2c, H4)": interval("H4_choice") + ["H4_choice_verdict", "H4_choice_count", "H4_choice_n"] + interval("recency"),
-    "policy models (Fig 3, S1-S4)": [k for c in CLAIMS for k in interval(c, p=False)] + [f"elpd_{m}" for m in REGISTRY],
+    "policy models (Fig 3, S1-S4)": [k for c in CLAIMS for k in interval(c, p=False)] + [f"{c}_verdict" for c in CLAIMS if c[0] == "S"] + [f"elpd_{m}" for m in REGISTRY],
     "unseen expert (Fig 4)": [f"unseen_expert_round{r}_{s}" for r in (1, 2) for s in ("confidence", "rank_corr", "favourite_payoff")] + ["exploit_unseen_round1", "exploit_unseen_round2", "exploit_chance"]
                             + [f"split_{c}_{f}" for c in ("after_novice_expert_unseen_round_1", "after_novice_expert_unseen_round_2", "after_novice_expert_seen_round_1",
                                                            "after_novice_expert_seen_round_2", "round_1", "round_2") for f in ("delta", "se")],
