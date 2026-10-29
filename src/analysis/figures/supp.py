@@ -1,9 +1,11 @@
 # %% supp
 """Supplementary figures, one file each (``figS_<name>``). Part 1, from the choice and unseen stages: the full ladder
 (every model against HOS, whole data) with the S1/S2 rivals by round; the per-participant ΔELPD behind every paired SE
-of the registered comparisons; the ELPD split and the copying comparison on the after-novice cells. Part 2 (8.7.2b):
-robustness fits, power curves, exclusion counts, solo slots 1 and 3, recency. Part 3 (8.7.3): posteriors. Part 4
-(8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social (HOS = H+Both).
+of the registered comparisons; the ELPD split and the copying comparison on the after-novice cells. Part 2, from the
+descriptive, power, partner-choice, games and preprocessing outputs: the confirmatory contrasts under the robustness
+fits; decision rates by N at the pilot and half effect; exclusion counts per rule; the solo session's four slots by
+round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3 (8.7.3): posteriors.
+Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social (HOS = H+Both).
 """
 
 from pathlib import Path
@@ -70,11 +72,93 @@ def fig_split(analysis_dir: Path) -> list:
     return save(fig, "figS_unseen_split", analysis_dir)
 
 
-def supp(analysis_dir: Path) -> list:
+FITS = {"main": ("main", "o", 0.0), "random_slopes": ("random slopes", "s", -0.22), "session_order": ("session order", "^", 0.22)}
+
+
+def fig_robustness(analysis_dir: Path) -> list:
+    """The confirmatory contrasts (payoff, entropy; reward beside them, reported) under the main fit and the two
+    sensitivity fits: estimate and 95% CI. The random-slope fit falls back to the intercept-only model when singular."""
+    d = Path(analysis_dir) / "descriptive"
+    main = pd.read_csv(d / "contrasts.csv").query("role != 'exploratory'").assign(fit="main")
+    rob = pd.read_csv(d / "robustness.csv")
+    both = pd.concat([main, rob]).query("outcome != 'reward'")
+    hyps = list(dict.fromkeys(main["hypothesis"]))
+    fig, (ax_p, ax_e) = plt.subplots(1, 2, figsize=(WIDTH["single"], 2.6), width_ratios=[1.2, 1], gridspec_kw=dict(wspace=0.15))
+    for ax, outcome in ((ax_p, "payoff"), (ax_e, "entropy")):
+        for fit, (lab, mk, dy) in FITS.items():
+            r = both.query("outcome == @outcome and fit == @fit")
+            yy = [hyps.index(h) + dy for h in r["hypothesis"]]
+            ax.errorbar(r["estimate"], yy, xerr=[r["estimate"] - r["lower.CL"], r["upper.CL"] - r["estimate"]], marker=mk, linestyle="none", color=COLOR["human"], capsize=2, markersize=4, label=lab if ax is ax_p else None)
+        ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
+        ax.set(yticks=range(len(hyps)), yticklabels=hyps, xlabel=f"Δ {outcome}" + (" (bits)" if outcome == "entropy" else ""))
+        ax.invert_yaxis()
+    ax_e.tick_params(labelleft=False)
+    ax_p.legend(loc="lower center", bbox_to_anchor=(0.95, 1.0), ncol=3, handletextpad=0.3, columnspacing=0.8)
+    return save(fig, "figS_robustness", analysis_dir)
+
+
+def fig_power(analysis_dir: Path) -> list:
+    """Decision rate of each confirmatory test by N, at the pilot effect and at half of it; the 0.9 target."""
+    r = pd.read_csv(Path(analysis_dir) / "power" / "decision_rates.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.6), sharey=True, gridspec_kw=dict(wspace=0.15))
+    for ax, effect in zip(axes, ("pilot", "half")):
+        for (h, o), g in r[r["effect"] == effect].groupby(["hypothesis", "outcome"]):   # the weakest test in black, the rest grey
+            weakest = (h, o) == ("H2", "payoff")
+            ax.plot(g["N"], g["rate"], marker="o", markersize=3, linewidth=1.0, color=COLOR["human"] if weakest else COLOR["band"], zorder=3 if weakest else 2,
+                    label=f"{h} {o}" if weakest else ("the other tests" if (h, o) == ("H1", "entropy") else None))
+        ax.axhline(0.9, color="#BBBBBB", linewidth=0.8, zorder=0)
+        ax.set(title=f"{effect} effect", xlabel="N participants", ylim=(0, 1.02))
+    axes[0].set_ylabel("rate of 'supported' (500 simulations)")
+    axes[1].legend(loc="lower right", ncol=2, handletextpad=0.3, columnspacing=0.8)
+    return save(fig, "figS_power", analysis_dir)
+
+
+def fig_exclusions(experiment_dir: Path, analysis_dir: Path) -> list:
+    """Participants and sessions dropped per rule, from the preprocessing ledger."""
+    e = pd.read_csv(Path(experiment_dir) / "exclusions.csv")
+    e = e[e["rule"] != "kept"]
+    fig, ax = plt.subplots(figsize=(WIDTH["single"], 2.4))
+    ax.barh(range(len(e)), e["n"], color=[COLOR["human"] if l == "participant" else COLOR["model"] for l in e["level"]], height=0.6)
+    ax.set(yticks=range(len(e)), yticklabels=[f"{r.replace('_', ' ')} ({l})" for l, r in zip(e["level"], e["rule"])], xlabel="excluded (participants in black, sessions in grey)")
+    ax.invert_yaxis()
+    return save(fig, "figS_exclusions", analysis_dir)
+
+
+def fig_solo(analysis_dir: Path) -> list:
+    """The solo session's four play games by round: mean payoff and entropy with 95% CI over participants; slots 2 and 4
+    (the ones in the descriptive model) filled, slots 1 and 3 (exploratory) hollow."""
+    g = pd.read_csv(Path(analysis_dir) / "games" / "play_games.csv").query("condition == 'solo'")
+    fig, axes = plt.subplots(1, 2, figsize=(WIDTH["single"], 2.2), gridspec_kw=dict(wspace=0.5))
+    for ax, outcome in zip(axes, ("payoff", "entropy")):
+        for rnd, ls in ((1, "-"), (2, "--")):
+            m = g[g["round"] == rnd].groupby("slot")[outcome].agg(["mean", "sem"])
+            ax.errorbar(m.index, m["mean"], yerr=1.96 * m["sem"], linestyle=ls, color=COLOR["solo"], capsize=2, marker="none", label=f"round {rnd}")
+            ax.scatter(m.index, m["mean"], marker="o", s=22, color=COLOR["solo"], facecolor=[COLOR["solo"] if sl in (2, 4) else "white" for sl in m.index], zorder=3)
+        ax.set(xticks=[1, 2, 3, 4], xlabel="play game (slot)", ylabel=outcome + (" (bits)" if outcome == "entropy" else ""))
+    axes[0].legend(loc="lower right", handletextpad=0.3, handlelength=1.6)
+    return save(fig, "figS_solo", analysis_dir)
+
+
+def fig_recency(analysis_dir: Path) -> list:
+    """The partner choice's mixed logistic model: the intercept (H4, log-odds of choosing the expert) and the recency
+    term (the condition effect: expert-first minus novice-first), estimate and 95% CI."""
+    m = pd.read_csv(Path(analysis_dir) / "partner_choice" / "model.csv")
+    fig, ax = plt.subplots(figsize=(WIDTH["single"], 1.4))
+    labels = {"(Intercept)": "chose the expert (log-odds)", "condition1": "recency: condition term"}
+    for y, (_, r) in enumerate(m.iterrows()):
+        ax.errorbar(r["estimate"], y, xerr=[[r["estimate"] - r["lower"]], [r["upper"] - r["estimate"]]], marker="o", color=COLOR["human"], capsize=2, linestyle="none")
+    ax.set(yticks=range(len(m)), yticklabels=[labels.get(t, t) for t in m["term"]], xlabel="log-odds, 95% CI", ylim=(len(m) - 0.4, -0.6))
+    ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
+    return save(fig, "figS_recency", analysis_dir)
+
+
+def supp(analysis_dir: Path, experiment_dir: Path) -> list:
     apply()
-    return fig_ladder(analysis_dir) + fig_per_participant(analysis_dir) + fig_split(analysis_dir)
+    return (fig_ladder(analysis_dir) + fig_per_participant(analysis_dir) + fig_split(analysis_dir) + fig_robustness(analysis_dir) + fig_power(analysis_dir)
+            + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir))
 
 
 if __name__ == "__main__":
     import os
-    print(supp(Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / os.environ["VERSION"]))
+    v = os.environ["VERSION"]
+    print(supp(Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / v, Path(os.environ["EXPERIMENT_DATA_DIR"]) / v))
