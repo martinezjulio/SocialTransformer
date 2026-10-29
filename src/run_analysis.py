@@ -92,6 +92,7 @@ def run_choice(p: Paths) -> None:
     lad.to_csv(out / "ladder.csv")
     rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs H+Both, paired SE, share
     pd.concat({n: by_cell(l, loos["H+Both"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
+    pd.DataFrame({n: paired(l, loos["H+Both"], T.part)["per_participant"] for n, l in loos.items()}).rename_axis("participant").to_csv(out / "elpd_per_participant.csv")   # Fig S: dots behind every paired SE
     d = fits["Switch-by-round"].posterior["delta_N"].reshape(-1) if "Switch-by-round" in loos else np.array([np.nan])
     rows = {"S4": dict(estimate=d.mean(), lo=np.percentile(d, 2.5), hi=np.percentile(d, 97.5), rule="95% ETI > 0")}
     for name, a, b in [("S1a", "H+Both", "src:recent"), ("S1b", "H+Both", "src:novice"), ("S2a", "H+Both", "vis:last"), ("S2b", "H+Both", "vis:expert"),
