@@ -1,6 +1,7 @@
 """Driver of the analysis pipeline: run registered stages for one experiment version.
 
     python src/run_analysis.py --version pilot_E [--stages games,inference-check]
+    python src/run_analysis.py --version pilot_E --list-units | --unit fit:HOS    # one cluster unit (scripts/slurm)
 
 Inputs:  $EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv and $OUTPUT_DATA_DIR/eval/<version>/
          (run_inference.py). Outputs: $OUTPUT_DATA_DIR/analysis/<version>/<stage>/. The R stages
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 STAGES = {}   # name -> function(Paths); insertion order is pipeline order
+N_TABLE_BLOCKS = int(os.environ.get("N_TABLE_BLOCKS", 1))   # row blocks per human table in the cluster units (scripts/slurm)
 
 
 def stage(name):
@@ -127,38 +129,48 @@ def choice_fit(p: Paths, T, name: str):
     return pickle.load(open(cache_path(name, "-".join(t.stem.split("_")[-1] for t in human_tables(p, T, name)), p.analysis_dir / "choice" / "fits"), "rb"))
 
 
+def table_arrays(p: Paths, T, name: str) -> tuple:
+    """The model's human tables loaded, padded to (table, second table or None) as ``split_half`` takes them."""
+    import numpy as np
+    tabs = [np.load(t) for t in human_tables(p, T, name)]
+    return (tabs[0], tabs[1] if len(tabs) > 1 else None)
+
+
+def checks_setup(p: Paths) -> tuple:
+    """What the checks stage and its units share: trials, the checks dir, the choice stage's posterior by model name, the
+    transformer (the inference run's unless ``checkpoint`` overrides it) and its normaliser, the session template pools
+    by condition and the human shot frames by session id."""
+    import torch
+    import yaml
+    from analysis.checks import templates
+    from analysis.data import load_sessions, trial_data
+    from inference.readout import load_model
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
+    out.mkdir(exist_ok=True)
+    cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
+    model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
+    pools = templates(p.preprocessed)
+    return T, out, lambda name: choice_fit(p, T, name).posterior, model, norm, pools, {f["session_id"].iloc[0]: f for pool in pools.values() for f in pool}
+
+
 @stage("checks")
 def run_checks(p: Paths) -> None:
     """Simulation checks of the fitted models: δ_N recovery, model recovery for S1a, S2a and S4, free-running PPC. The transformer
     is the one the inference CSVs came from (eval metadata) unless ``checkpoint`` overrides it. Every unit is cached
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
     ppc.csv, numbers.json."""
-    import numpy as np
     import pandas as pd
-    import torch
-    import yaml
-    from analysis.checks import COMPARISONS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half, templates
+    from analysis.checks import COMPARISONS, PPC_MODELS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half
     from analysis.numbers import write_numbers
-    from analysis.data import load_sessions, trial_data
     from analysis.policies import REGISTRY
-    from inference.readout import load_model
-    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
-    out.mkdir(exist_ok=True)
-
-    tables = lambda name: human_tables(p, T, name)
-    posterior = lambda name: choice_fit(p, T, name).posterior
-    cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
-    model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
-    pools = templates(p.preprocessed)
-    frames = {f["session_id"].iloc[0]: f for pool in pools.values() for f in pool}
+    T, out, posterior, model, norm, pools, frames = checks_setup(p)
     rec = recover_delta(posterior("Switch-by-round"), pools, model, norm, out / "recovery")
     rec.to_csv(out / "recovery.csv", index=False)
     mr = model_recovery({n: posterior(n) for pair in COMPARISONS.values() for n in pair}, pools, model, norm, out / "model_recovery")
     mr.to_csv(out / "model_recovery.csv", index=False)
     confusion(mr).to_csv(out / "confusion.csv")
-    bands = pd.concat({n: ppc(REGISTRY[n], posterior(n), T, frames, model, norm, out / "ppc") for n in ("HOS", "Switch-by-round")}, names=["model", "target"])
-    halves = pd.concat({f"{n} split_half": split_half(REGISTRY[n], T, tuple(np.load(t) for t in tables(n)) + (None,) * (2 - len(tables(n))), frames, model, norm, out / "split_half")
-                        for n in ("HOS", "Switch-by-round")}, names=["model", "target"])
+    bands = pd.concat({n: ppc(REGISTRY[n], posterior(n), T, frames, model, norm, out / "ppc") for n in PPC_MODELS}, names=["model", "target"])
+    halves = pd.concat({f"{n} split_half": split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half") for n in PPC_MODELS}, names=["model", "target"])
     bands = pd.concat([bands, halves])
     bands.to_csv(out / "ppc.csv")
     numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
@@ -221,11 +233,47 @@ def run_report(p: Paths) -> None:
     print(f"report: {len(numbers)} numbers, {[q.name for q in paths]}, {len(figures)} figure files under {out}")
 
 
+def units(p: Paths) -> dict:
+    """Every cluster unit (scripts/slurm) as name -> (level, thunk), in dependency order: 0 table blocks (CPU), 1 table
+    assembly, 2 human fits, 3 recovery and model-recovery datasets, split-half fits and PPC draws (GPU), 4 split-half
+    draws. Each fills one cache piece (one writer per file); the stages then run on the full caches."""
+    from analysis.checks import COMPARISONS, N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS, PPC_MODELS, model_recovery, ppc, recover_delta, split_half
+    from analysis.data import load_sessions, trial_data
+    from analysis.fitting import run_many
+    from analysis.policies import REGISTRY, belief, grids
+    from analysis.thompson import table
+    T, u = trial_data(load_sessions(p.eval_dir, p.version)), {}
+    tab = lambda s, m, **kw: table(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", *grids(m), n_blocks=N_TABLE_BLOCKS, **kw).shape
+    check = lambda call: call(*checks_setup(p))   # a checks unit: the stage's setup, then one call restricted to the unit
+    for n, m in REGISTRY.items():
+        for s in (m.source, "novice") if m.mixture != "none" else (m.source,):
+            for b in range(N_TABLE_BLOCKS):
+                u[f"table:{s}_{int(m.kappa)}_{int(m.own)}:{b}/{N_TABLE_BLOCKS}"] = (0, lambda s=s, m=m, b=b: tab(s, m, block=b))
+            u[f"assemble:{s}_{int(m.kappa)}_{int(m.own)}"] = (1, lambda s=s, m=m: tab(s, m))
+        t = human_tables(p, T, n)
+        u[f"fit:{n}"] = (2, lambda n=n, t=t: run_many([n], p.eval_dir, p.version, {n: (t[0], t[1] if len(t) > 1 else None)}, "-".join(x.stem.split("_")[-1] for x in t), p.analysis_dir / "choice" / "fits")[n].diagnostics)
+    for d in range(N_DATASETS):
+        u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])))
+    for c, pair in COMPARISONS.items():
+        for side in pair:
+            for d in range(N_MODEL_RECOVERY):
+                u[f"model_recovery:{c}:{side}:{d}"] = (3, lambda c=c, side=side, d=d, pair=pair: check(lambda T, out, post, model, norm, pools, frames: model_recovery(
+                    {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", units=[(c, side, d)])))
+    for n in PPC_MODELS:
+        u[f"split_fit:{n}"] = (3, lambda n=n: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[])))
+        for i in range(N_PPC_DRAWS):
+            u[f"ppc:{n}:{i}"] = (3, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: ppc(REGISTRY[n], post(n), T, frames, model, norm, out / "ppc", draws=[i])))
+            u[f"split_half:{n}:{i}"] = (4, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[i])))
+    return u
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--version", required=True, help="e.g. pilot_E")
     ap.add_argument("--stages", default=",".join(STAGES), help=f"comma-separated subset of: {', '.join(STAGES)}")
     ap.add_argument("--checkpoint", default=None, help="transformer checkpoint for the checks stage (default: the inference run's)")
+    ap.add_argument("--list-units", action="store_true", help="print the cluster units as level<TAB>name and exit (scripts/slurm)")
+    ap.add_argument("--unit", default=None, help="run one cluster unit by name (see --list-units) and exit")
     args = ap.parse_args()
     if "OUTPUT_DATA_DIR" not in os.environ:
         from dotenv import load_dotenv
@@ -237,6 +285,12 @@ def main() -> None:
     p = Paths(args.version, Path(os.environ["EXPERIMENT_DATA_DIR"]) / args.version / "preprocessed_participant_data.csv",
               Path(os.environ["OUTPUT_DATA_DIR"]) / "eval" / args.version, Path(os.environ["OUTPUT_DATA_DIR"]) / "analysis" / args.version, args.checkpoint)
     p.analysis_dir.mkdir(parents=True, exist_ok=True)
+    if args.list_units or args.unit:
+        u = units(p)
+        if args.unit is not None and args.unit not in u:
+            ap.error(f"unknown unit {args.unit!r}; see --list-units")
+        print(*(f"{level}\t{name}" for name, (level, _) in u.items()), sep="\n") if args.list_units else print(args.unit, u[args.unit][1]())
+        return
     for name in [n for n in STAGES if n in names]:   # pipeline order regardless of how they were listed
         STAGES[name](p)
 

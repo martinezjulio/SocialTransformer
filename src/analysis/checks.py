@@ -31,6 +31,7 @@ N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, int(os.environ.get("N_DATASETS", 2
 COMPARISONS = {"S1a": ("HOS", "recent"), "S2a": ("HOS", "naive-recent"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
 N_MODEL_RECOVERY = int(os.environ.get("N_MODEL_RECOVERY", 5))   # datasets per generating side
 N_PPC_DRAWS = int(os.environ.get("N_PPC_DRAWS", 50))            # posterior draws replayed in the free-running PPC
+PPC_MODELS = ("HOS", "Switch-by-round")                          # the models given the free-running PPC and the split-half check
 # The three sizes take environment overrides for reduced development runs; the caches are keyed by dataset and draw
 # index with seeded draw lists, so a reduced run's units are the first units of the full run and are reused by it.
 
