@@ -468,16 +468,16 @@ The analysis pipeline (`src/analysis`, driver `scripts/run_analysis.sh`) runs at
 SLURM job arrays. One-time setup from a login node inside the clone:
 
 ```bash
-bash scripts/setup_sherlock.sh     # miniforge + env under $GROUP_HOME/$USER, data roots under $SCRATCH, writes .env
+bash scripts/setup_sherlock.sh     # miniforge + env beside the clone under $GROUP_HOME/$USER/SocialBanditsProject, data roots under $SCRATCH/SocialBanditsProject, writes .env
 ```
 
 Transfer one version's inputs (only the anonymised preprocessed data ever leaves the lab machine; the raw
 files and the ID map stay there):
 
 ```bash
-rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} sherlock:$SCRATCH/SocialTransformer/experiment_data/pilot_E/   # never the folder: it holds the raw files and the ID map
-rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$SCRATCH/SocialTransformer/outputs/eval/pilot_E/
-rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$SCRATCH/SocialTransformer/outputs/training_runs/<run>/checkpoints/
+rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} sherlock:$SCRATCH/SocialBanditsProject/experiments/pilot_E/   # never the folder: it holds the raw files and the ID map
+rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$SCRATCH/SocialBanditsProject/output/eval/pilot_E/
+rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$SCRATCH/SocialBanditsProject/output/training_runs/<run>/checkpoints/
 ```
 
 Then submit: `bash scripts/slurm/submit.sh --version pilot_E` lists the cached units (`python src/run_analysis.py

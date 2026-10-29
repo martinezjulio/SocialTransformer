@@ -1,20 +1,22 @@
 #!/bin/bash
 # One-time setup of the analysis pipeline on Sherlock: miniforge and the SocialTransformer env (Python, R, tectonic)
-# under group storage, the data roots under $SCRATCH, and the repo's .env. Run from a login node inside the clone:
+# beside the clone under group storage, the data roots under $SCRATCH (the lab layout, split by storage tier:
+# $GROUP_HOME/$USER/SocialBanditsProject/{SocialTransformer,miniforge} and $SCRATCH/SocialBanditsProject/{data,experiments,output}),
+# and the repo's .env. Run from a login or dev node inside the clone:
 #   bash scripts/setup_sherlock.sh
-# Variables (all optional): ENV_ROOT (default $GROUP_HOME/$USER: persistent, 1 TB shared with the group; conda env ~10 GB),
-# DATA_ROOT (default $SCRATCH/SocialTransformer: 100 TB, files untouched for 90 days are purged, so copy paper/ out after
+# Variables (all optional): ENV_ROOT (default $GROUP_HOME/$USER/SocialBanditsProject: persistent, 1 TB shared with the group; the env ~10 GB),
+# DATA_ROOT (default $SCRATCH/SocialBanditsProject: 100 TB, files untouched for 90 days are purged, so copy paper/ out after
 # a run), CUDA_MAJOR (12, the build every current driver supports; 13 needs a driver >= 580 on the GPU nodes).
 # Then copy, per version, $EXPERIMENT_DATA_DIR/<version>/ (the anonymised preprocessed file and exclusions.csv only),
 # $OUTPUT_DATA_DIR/eval/<version>/ and the checkpoint named in its metadata/inference_config.yaml, and submit with
 # scripts/slurm/submit.sh. See README "Analysis on Sherlock".
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-ENV_ROOT="${ENV_ROOT:-${GROUP_HOME:?GROUP_HOME is not set: not a Sherlock login shell}/$USER}"
-DATA_ROOT="${DATA_ROOT:-${SCRATCH:?SCRATCH is not set}/SocialTransformer}"
+ENV_ROOT="${ENV_ROOT:-${GROUP_HOME:?GROUP_HOME is not set: not a Sherlock shell}/$USER/SocialBanditsProject}"
+DATA_ROOT="${DATA_ROOT:-${SCRATCH:?SCRATCH is not set}/SocialBanditsProject}"
 CUDA_MAJOR="${CUDA_MAJOR:-12}"
 TORCH_INDEX="https://download.pytorch.org/whl/cu$([ "$CUDA_MAJOR" = 13 ] && echo 130 || echo 126)"
-mkdir -p "$ENV_ROOT" "$DATA_ROOT"/{experiment_data,outputs,training_data}
+mkdir -p "$ENV_ROOT" "$DATA_ROOT"/{data,experiments,output}
 
 if [ ! -x "$ENV_ROOT/miniforge/bin/conda" ]; then
   curl -L -o "$ENV_ROOT/Miniforge3.sh" https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
@@ -30,9 +32,9 @@ pip install -r requirements-sherlock.txt
 
 cat > .env <<ENV
 export CONDA_SETUP=$ENV_ROOT/miniforge/etc/profile.d/conda.sh
-export TRAINING_DATA_ROOT_DIR=$DATA_ROOT/training_data
-export OUTPUT_DATA_DIR=$DATA_ROOT/outputs
-export EXPERIMENT_DATA_DIR=$DATA_ROOT/experiment_data
+export TRAINING_DATA_ROOT_DIR=$DATA_ROOT/data
+export OUTPUT_DATA_DIR=$DATA_ROOT/output
+export EXPERIMENT_DATA_DIR=$DATA_ROOT/experiments
 export WANDB_MODE=offline
 export SLURM_CPU_PARTITION=normal
 export SLURM_GPU_PARTITION=owners
