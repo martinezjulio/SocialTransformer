@@ -9,7 +9,6 @@ tried at all; mean and 95% CI over participants.
 Inputs: the cached Switch-8 fit, ``unseen/{readout_table,exploit}.csv`` and the inference CSVs (inset).
 """
 
-import pickle
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -20,6 +19,7 @@ from scipy.stats import beta
 
 from analysis.data import TrialData, load_sessions, trial_data
 from analysis.figures.fig1_inset import PAYOFFS, SHADES, three_arms
+from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, ORDER, WIDTH, apply, save
 
 GAMES = {"expert-first": "ENEN", "novice-first": "NENE"}   # the demonstrator watched before play games 1–4
@@ -34,7 +34,7 @@ def omega8(fit) -> np.ndarray:
 
 def panel_weights(ax, analysis_dir: Path) -> None:
     """(a) Median and 95% ETI of each game's weight, in session order, by condition."""
-    fit = pickle.load(open(max((Path(analysis_dir) / "choice" / "fits").glob("Switch-8_*.pkl"), key=lambda q: q.stat().st_mtime), "rb"))
+    fit = load_fit(analysis_dir, "Switch-8")
     om = omega8(fit)
     for cond, dx, ls in (("expert-first", -0.08, "-"), ("novice-first", 0.08, "--")):
         idx = [(w == "E") * 4 + (g >= 3) * 2 + (cond == "expert-first") for g, w in enumerate(GAMES[cond], 1)]

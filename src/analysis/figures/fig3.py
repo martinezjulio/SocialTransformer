@@ -11,12 +11,12 @@ Inputs: ``choice/{ladder,verdicts}.csv`` and the cached Switch-by-round fit.
 
 from pathlib import Path
 
-import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, WIDTH, apply, save
 
 SOURCES = {"src:recent": "recent", "src:novice": "novice"}   # figure names: the readout the belief comes from
@@ -81,7 +81,7 @@ def panel_ablation(ax, analysis_dir: Path) -> None:
 
 def panel_omega(ax, analysis_dir: Path) -> None:
     """(d) Group-level ω after the expert and after the novice by round: logit ω_s(r) = μ_s + δ_s · (±½); median, 95% ETI."""
-    fit = pickle.load(open(max((Path(analysis_dir) / "choice" / "fits").glob("Switch-by-round_*.pkl"), key=lambda q: q.stat().st_mtime), "rb"))
+    fit = load_fit(analysis_dir, "Switch-by-round")
     for s, who, dx in (("E", "expert", -0.06), ("N", "novice", 0.06)):
         mu, d = fit.posterior[f"mu_logit_omega_{s}"].reshape(-1), fit.posterior[f"delta_{s}"].reshape(-1)
         om = [1 / (1 + np.exp(-(mu + d * pm))) for pm in (-0.5, 0.5)]

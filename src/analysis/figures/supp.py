@@ -4,7 +4,9 @@
 of the registered comparisons; the ELPD split and the copying comparison on the after-novice cells. Part 2, from the
 descriptive, power, partner-choice, games and preprocessing outputs: the confirmatory contrasts under the robustness
 fits; decision rates by N at the pilot and half effect; exclusion counts per rule; the solo session's four slots by
-round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3 (8.7.3): posteriors.
+round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3, from the cached fits:
+the group-level posteriors of HOS and Switch-by-round (κ, λ_w, λ_c, ρ0, ρ_win, ω_E, ω_N, δ_E, δ_N) and the lapse ε of
+the two free-lapse fits, as 95% ETI bars with the median.
 Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social (HOS = H+Both).
 """
 
@@ -15,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from analysis.figures.fig3 import COUNTS, SHORT, SOURCES, dot_whisker, headed_rows
+from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, WIDTH, apply, save
 
 NAME = {**SOURCES, **COUNTS, **{m: s for m, s in SHORT.items() if m != "H+Both"}, "H+Both+persev": "HOS + perseveration", "H+Both-reset": "HOS, no reset",
@@ -152,10 +155,34 @@ def fig_recency(analysis_dir: Path) -> list:
     return save(fig, "figS_recency", analysis_dir)
 
 
+PARAMS = {"κ (group)": ("mu_log_kappa", np.exp), "λ_w": ("log_lambda_w", np.exp), "λ_c": ("lambda_c", None), "ρ0 (group)": ("mu_rho0", None), "ρ_win (group)": ("mu_rho_win", None),
+          "ω_E (group)": ("mu_logit_omega_E", lambda x: 1 / (1 + np.exp(-x))), "ω_N (group)": ("mu_logit_omega_N", lambda x: 1 / (1 + np.exp(-x))), "δ_E": ("delta_E", None), "δ_N": ("delta_N", None),
+          "ε (free lapse)": ("eps", None)}
+POST_MODELS = {"H+Both": "HOS", "Switch-by-round": "Switch-by-round", "H+Both+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free"}
+
+
+def fig_posteriors(analysis_dir: Path) -> list:
+    """Group-level posteriors: median and 95% ETI per parameter (columns) and model (rows, the same in every panel;
+    blank where the model has no such parameter)."""
+    fits = {m: load_fit(analysis_dir, m) for m in POST_MODELS}
+    fig, axes = plt.subplots(2, 5, figsize=(WIDTH["double"], 3.2), gridspec_kw=dict(hspace=0.8, wspace=0.35))
+    for ax, (lab, (site, f)) in zip(axes.ravel(), PARAMS.items()):
+        for y, (m, fit) in enumerate(fits.items()):
+            if site in fit.posterior:
+                v = fit.posterior[site].reshape(-1)
+                lo, med, hi = np.percentile(f(v) if f else v, [2.5, 50, 97.5])
+                ax.errorbar(med, y, xerr=[[med - lo], [hi - med]], marker="o", color=COLOR["human"], capsize=2, linestyle="none")
+        ax.set(yticks=range(len(fits)), yticklabels=list(POST_MODELS.values()), ylim=(len(fits) - 0.4, -0.6), title=lab)
+        ax.tick_params(labelleft=ax in axes[:, 0], length=0, axis="y")
+        if site.startswith("delta"):
+            ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=0)
+    return save(fig, "figS_posteriors", analysis_dir)
+
+
 def supp(analysis_dir: Path, experiment_dir: Path) -> list:
     apply()
     return (fig_ladder(analysis_dir) + fig_per_participant(analysis_dir) + fig_split(analysis_dir) + fig_robustness(analysis_dir) + fig_power(analysis_dir)
-            + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir))
+            + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir) + fig_posteriors(analysis_dir))
 
 
 if __name__ == "__main__":
