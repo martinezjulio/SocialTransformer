@@ -18,7 +18,7 @@ import pandas as pd
 
 from analysis.figures.fig3 import COUNTS, SHORT, SOURCES, dot_whisker, headed_rows
 from analysis.figures.fits import load_fit
-from analysis.figures.style import COLOR, WIDTH, apply, save
+from analysis.figures.style import COLOR, FONT, WIDTH, apply, save
 
 NAME = {**SOURCES, **COUNTS, **{m: s for m, s in SHORT.items() if m != "H+Both"}, "H+Both+persev": "HOS + perseveration", "H+Both-reset": "HOS, no reset",
         "H+Both+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free", "Switch-by-round+ktrend": "Switch-by-round + κ trend"}   # registry name -> figure name
@@ -179,10 +179,62 @@ def fig_posteriors(analysis_dir: Path) -> list:
     return save(fig, "figS_posteriors", analysis_dir)
 
 
+TARGETS = {"after_novice_rise": "after-novice\npayoff rise", "entropy_fall": "entropy fall\nround 1 − 2", "zigzag": "novice-first\nzig-zag",
+           "stay_win": "stay after\na win", "stay_loss": "stay after\na loss"}
+PPC_MODELS = {"H+Both": "HOS", "Switch-by-round": "Switch-by-round"}
+COMPARISON_A = {"S1a": "H+Both", "S2a": "H+Both", "S4": "Switch-by-round"}   # model A of checks.COMPARISONS (not imported: JAX)
+
+
+def fig_ppc(analysis_dir: Path) -> list:
+    """Free-running PPC of the two headline models on the five target statistics: the 95% band over posterior draws
+    (whisker), its mean (dot, hollow when the human value falls outside) and the human value (black line). Top row
+    on all data; bottom row split-half (fitted on one half of the participants, the band and human value on the other)."""
+    r = pd.read_csv(Path(analysis_dir) / "checks" / "ppc.csv").set_index(["model", "target"])
+    fig, axes = plt.subplots(2, len(TARGETS), figsize=(WIDTH["double"], 2.4), gridspec_kw=dict(wspace=0.35, hspace=0.55))
+    for row, (suffix, label) in enumerate((("", "all data"), (" split_half", "split half"))):
+        for ax, (t, name) in zip(axes[row], TARGETS.items()):
+            for y, (m, short) in enumerate(PPC_MODELS.items()):
+                q = r.loc[(m + suffix, t)]
+                ax.plot([q["lo"], q["hi"]], [y, y], color=COLOR["model"], linewidth=2.2, solid_capstyle="butt", zorder=2)
+                ax.scatter(q["mean"], y, s=22, color=COLOR["human"], facecolor=COLOR["human"] if q["inside"] else "white", zorder=3)
+                ax.axvline(q["human"], color=COLOR["human"], linewidth=1.0, zorder=1)
+            lo, hi = r.loc[[(m + suffix, t) for m in PPC_MODELS]][["lo", "human"]].min().min(), r.loc[[(m + suffix, t) for m in PPC_MODELS]][["hi", "human"]].max().max()
+            ax.set(xlim=(lo - 0.08 * (hi - lo), hi + 0.08 * (hi - lo)), ylim=(-0.6, 1.6), yticks=[0, 1], yticklabels=list(PPC_MODELS.values()) if ax is axes[row][0] else [])
+            ax.tick_params(axis="x", labelsize=FONT - 2)
+            if row == 0:
+                ax.set_title(name, fontsize=FONT)
+        axes[row][0].set_ylabel(label, fontsize=FONT)
+    return save(fig, "figS_ppc", analysis_dir)
+
+
+def fig_recovery(analysis_dir: Path) -> list:
+    """(a) δ_N recovery: posterior mean and 95% ETI against the simulated truth, one dataset per mark (hollow when the
+    interval misses the truth). (b) Model recovery: ΔELPD (A − B, 2 SE) of each simulated dataset, rows by comparison and
+    generating model; a mark on the generating model's side of zero that clears the margin is a correct recovery."""
+    rec, mr = (pd.read_csv(Path(analysis_dir) / "checks" / f"{f}.csv") for f in ("recovery", "model_recovery"))
+    fig, (a, b) = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.6), gridspec_kw=dict(width_ratios=[1, 1.4], wspace=0.5))
+    for _, q in rec.iterrows():
+        a.errorbar(q["truth"], q["mean"], yerr=[[q["mean"] - q["lo"]], [q["hi"] - q["mean"]]], linestyle="none", color=COLOR["human"], capsize=2, zorder=2)
+        a.scatter(q["truth"], q["mean"], s=22, color=COLOR["human"], facecolor=COLOR["human"] if q["covered"] else "white", zorder=3)
+    lim = (min(rec["truth"].min(), rec["lo"].min()) - 0.3, max(rec["truth"].max(), rec["hi"].max()) + 0.3)
+    a.plot(lim, lim, color="#BBBBBB", linewidth=0.8, zorder=1)
+    a.set(xlim=lim, ylim=lim, xlabel="δ_N simulated", ylabel="δ_N recovered (95% ETI)", title=f"{int(rec['covered'].sum())} of {len(rec)} covered")
+    groups = list(mr.groupby(["comparison", "generating"], sort=False))
+    for y, ((c, g), rows) in enumerate(groups):
+        for _, q in rows.iterrows():                       # ΔELPD is A − B; flipped for B-generated rows so "right of zero" is always correct
+            dot_whisker(b, y, q["delta"] if g == COMPARISON_A[c] else -q["delta"], q["se"])
+    b.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
+    b.set(yticks=range(len(groups)), yticklabels=[f"{c}: {NAME.get(g, 'HOS' if g == 'H+Both' else g)}" for (c, g), _ in groups],
+          xlabel="ΔELPD towards the generating model (2 SE)", title=f"{int(mr['correct'].sum())} of {len(mr)} recovered")
+    b.invert_yaxis()
+    return save(fig, "figS_recovery", analysis_dir)
+
+
 def supp(analysis_dir: Path, experiment_dir: Path) -> list:
     apply()
     return (fig_ladder(analysis_dir) + fig_per_participant(analysis_dir) + fig_split(analysis_dir) + fig_robustness(analysis_dir) + fig_power(analysis_dir)
-            + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir) + fig_posteriors(analysis_dir))
+            + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir) + fig_posteriors(analysis_dir)
+            + fig_ppc(analysis_dir) + fig_recovery(analysis_dir))
 
 
 if __name__ == "__main__":
