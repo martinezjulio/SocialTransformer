@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from analysis.data import load_sessions, trial_data  # noqa: E402
+from analysis.data import checkpoint_path, load_sessions, trial_data  # noqa: E402
 
 LEGACY_CACHE = "legacy_analysis/cached_data/policy_logp_pilot_E_wandb_0i8yhqm7_epoch_119_best.pkl"
 
@@ -49,3 +49,14 @@ def test_current_structure(output_data_dir):
     assert (T.vis_expert[~T.expert_seen] == 0).all() and np.array_equal(T.vis_last[T.last_exp], T.vis_expert[T.last_exp])
     assert T.vis_last.sum((1, 2)).min() == 6 and set(np.unique(T.round_pm)) == {-0.5, 0.5} and set(np.unique(T.seg)) == {1, 2, 3, 4}
     assert ((T.theta >= 0) & (T.theta <= 1)).all() and 0.5 < T.theta[np.arange(N), T.act].mean() < 0.7
+
+
+def test_checkpoint_path_rerooted(tmp_path):
+    """The metadata records another machine's paths; the checkpoint is found at the same relative place under this output root."""
+    eval_dir = tmp_path / "outputs" / "eval" / "pilot_E"
+    (eval_dir / "metadata").mkdir(parents=True)
+    write = lambda ckpt: (eval_dir / "metadata" / "inference_config.yaml").write_text(f"checkpoint_path: {ckpt}\neval_dir: /lab/output/eval/pilot_E\n")
+    write("/lab/output/training_runs/wandb_abc/checkpoints/epoch_119_best.pt")
+    assert checkpoint_path(eval_dir) == tmp_path / "outputs" / "training_runs" / "wandb_abc" / "checkpoints" / "epoch_119_best.pt"
+    write("/elsewhere/epoch_119_best.pt")   # outside the recorded output root: returned as recorded
+    assert checkpoint_path(eval_dir) == Path("/elsewhere/epoch_119_best.pt")

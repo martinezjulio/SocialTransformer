@@ -13,8 +13,8 @@ import subprocess
 from pathlib import Path
 
 import pandas as pd
-import yaml
 
+from analysis.data import checkpoint_path
 from analysis.numbers import MANIFEST, check_manifest, fmt, kind_of, macro_name
 from analysis.policies import REGISTRY
 
@@ -24,7 +24,7 @@ STAGES_WITH_NUMBERS = ("descriptive", "partner_choice", "choice", "checks", "uns
 def provenance(preprocessed: Path, eval_dir: Path, n_participants: int, n_sessions: int, n_trials: int) -> dict:
     """Commit (``-dirty`` when the tree has changes), checkpoint sha256, run date, the sizes, and the exclusion ledger."""
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, cwd=Path(__file__).parent).stdout.strip()
-    ckpt = yaml.safe_load((Path(eval_dir) / "metadata" / "inference_config.yaml").read_text())["checkpoint_path"]
+    ckpt = checkpoint_path(eval_dir)
     ledger = pd.read_csv(Path(preprocessed).parent / "exclusions.csv")
     return {"commit": git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain") else ""), "checkpoint_sha256": hashlib.sha256(open(ckpt, "rb").read()).hexdigest(),
             "run_date": datetime.date.today().isoformat(), "participants": n_participants, "sessions": n_sessions, "trials": n_trials,

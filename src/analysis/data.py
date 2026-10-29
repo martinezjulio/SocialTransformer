@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 N_ROUNDS, GAMES_PER_ROUND, SEGMENTS_PER_ROUND = 2, 4, 6
 SOLO = "play-play-play-play"
@@ -40,6 +41,15 @@ class Sessions:
     readouts: pd.DataFrame      # one row per (session_id, cutoff): theta (K,), and expert/novice/recent (K, 2) arrays
     trials_per_game: int
     dropped: tuple              # incomplete session ids
+
+
+def checkpoint_path(eval_dir: Path) -> Path:
+    """The checkpoint the inference run used, under this machine's output root. The run's metadata records the paths of
+    the machine it ran on; the checkpoint's place relative to that machine's output root (the grandparent of the recorded
+    eval dir) is taken under the current one (the grandparent of ``eval_dir``), so the metadata stays a record."""
+    cfg = yaml.safe_load((Path(eval_dir) / "metadata" / "inference_config.yaml").read_text())
+    recorded, old_root = Path(cfg["checkpoint_path"]), Path(cfg["eval_dir"]).parents[1]
+    return Path(eval_dir).parents[1] / recorded.relative_to(old_root) if recorded.is_relative_to(old_root) else recorded
 
 
 def load_sessions(eval_dir: Path, version: str) -> Sessions:

@@ -47,8 +47,9 @@ def run_inference_check(p: Paths) -> None:
     import pandas as pd
     import yaml
     cfg = yaml.safe_load((p.eval_dir / "metadata" / "inference_config.yaml").read_text())
-    assert Path(cfg["experiment_data_path"]).resolve() == p.preprocessed.resolve(), \
-        f"inference ran on {cfg['experiment_data_path']}, not {p.preprocessed}: rerun scripts/run_inference.sh"
+    recorded = Path(cfg["experiment_data_path"])   # the metadata records the inference machine's paths: compare file and version folder
+    assert (recorded.parent.name, recorded.name) == (p.preprocessed.parent.name, p.preprocessed.name), \
+        f"inference ran on {recorded}, not {p.preprocessed}: rerun scripts/run_inference.sh"
     shots = pd.read_csv(p.preprocessed, usecols=["anonymous_id", "session_id", "game_sequence"], low_memory=False)
     social = shots[shots["game_sequence"] != "play-play-play-play"]
     trial = pd.read_csv(p.eval_dir / "data" / "experiment_trial_predictions.csv", usecols=["anonymous_id", "session_id"])
@@ -157,12 +158,12 @@ def checks_setup(p: Paths) -> tuple:
     import torch
     import yaml
     from analysis.checks import templates
-    from analysis.data import load_sessions, trial_data
+    from analysis.data import checkpoint_path, load_sessions, trial_data
     from inference.readout import load_model
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "checks"
     out.mkdir(exist_ok=True)
     cfg = yaml.safe_load(open(p.eval_dir / "metadata" / "inference_config.yaml"))
-    model, _, norm = load_model(p.checkpoint or cfg["checkpoint_path"], None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
+    model, _, norm = load_model(p.checkpoint or str(checkpoint_path(p.eval_dir)), None if p.checkpoint else cfg["wandb_artifact"], None, "cuda" if torch.cuda.is_available() else "cpu")
     pools = templates(p.preprocessed)
     return T, out, lambda name: choice_fit(p, T, name).posterior, model, norm, pools, {f["session_id"].iloc[0]: f for pool in pools.values() for f in pool}
 
