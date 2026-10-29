@@ -8,6 +8,8 @@
 #         .../descriptive/contrast_weights.csv  the 12-cell weight vector of every contrast (one column each)
 #         .../descriptive/robustness.csv   the confirmatory contrasts under two sensitivity fits: random slopes for round and play
 #                                          (reduced in a stated order if singular) and session order as a covariate
+#         .../descriptive/numbers.json   every contrast's estimate, CI, p (Holm p and verdict on confirmatory rows), keyed as
+#                                          the report stage's manifest lists them (src/analysis/numbers.py)
 # Model:  outcome ~ condition * play * round + (1 | participant), sum-to-zero coding, REML,
 #         Satterthwaite df (lmerTest). Solo slots 1 and 3 (exploratory) are left out.
 # Run:    VERSION=pilot_E Rscript src/r/descriptive.R
@@ -94,6 +96,13 @@ contrasts <- contrast_rows(emms, names(CONTRASTS)) %>%
                              p_holm < 0.05 ~ "contradicted",
                              TRUE ~ "not supported"))
 write_csv(contrasts, file.path(out_dir, "contrasts.csv"))
+numbers <- list()   # the keys of the report stage's manifest: <hypothesis>_<outcome>_{estimate,lo,hi,p}, + _p_holm and _verdict when confirmatory
+for (i in seq_len(nrow(contrasts))) {
+  r <- contrasts[i, ]; stem <- paste(r$hypothesis, r$outcome, sep = "_")
+  numbers[paste0(stem, c("_estimate", "_lo", "_hi", "_p"))] <- list(r$estimate, r$lower.CL, r$upper.CL, r$p.value)
+  if (r$role == "confirmatory") numbers[paste0(stem, c("_p_holm", "_verdict"))] <- list(r$p_holm, r$verdict)
+}
+jsonlite::write_json(numbers, file.path(out_dir, "numbers.json"), auto_unbox = TRUE, digits = NA, pretty = TRUE)
 print(as.data.frame(contrasts[contrasts$role != "exploratory", c("hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value", "p_holm", "verdict")]), digits = 3)
 
 # 5) Robustness fits (exploratory sensitivity, the confirmatory contrasts only, no Holm or verdict). Random slopes for round and

@@ -7,6 +7,8 @@
 #         .../partner_choice/model.csv  H4: P(choose expert) > 0.5 from a mixed logistic model with a participant
 #         intercept, two-sided alpha 0.05 with sign (confirmatory); the recency check (exploratory): the
 #         condition term of the same model with sum-to-zero coding, expected ~0 under expertise-following
+#         .../partner_choice/numbers.json  H4 rate, interval, p, verdict, count and n; the recency term: keys as the report
+#         stage's manifest lists them (src/analysis/numbers.py)
 # Run:    VERSION=pilot_E Rscript src/r/partner_choice.R
 
 suppressPackageStartupMessages({ library(here); library(dplyr); library(readr); library(lme4) })
@@ -54,4 +56,9 @@ model <- bind_rows(
   fit_row(chose_expert ~ condition + (1 | participant), "condition1", "exploratory", NA))     # recency: expert-first minus grand mean
 model <- mutate(model, across(c(estimate, lower, upper), ~ ifelse(term == "(Intercept)", plogis(.x), NA), .names = "prob_{.col}"), .after = upper)
 write_csv(model, file.path(out_dir, "model.csv"))
+h4 <- model[model$role == "confirmatory", ]; rc <- model[model$role == "exploratory", ]; all <- rates[rates$group == "all", ]
+numbers <- list(H4_choice_estimate = h4$prob_estimate, H4_choice_lo = h4$prob_lower, H4_choice_hi = h4$prob_upper, H4_choice_p = h4$p.value,
+                H4_choice_verdict = h4$verdict, H4_choice_count = all$k, H4_choice_n = all$n,
+                recency_estimate = rc$estimate, recency_lo = rc$lower, recency_hi = rc$upper, recency_p = rc$p.value)
+jsonlite::write_json(numbers, file.path(out_dir, "numbers.json"), auto_unbox = TRUE, digits = NA, pretty = TRUE)
 print(as.data.frame(rates), digits = 3); print(as.data.frame(model[, c("role", "term", "estimate", "lower", "upper", "p.value", "prob_estimate", "singular", "verdict")]), digits = 3)
