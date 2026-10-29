@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 from scipy.special import betainc, betaln, expit, log_expit
 
+from analysis.data import atomic_write
+
 KAPPA = np.geomspace(0.125, 16, 29)                       # ratio 2^¼; 1.0 on the grid; floor below the least trusting pilot participants
 LAM_W = np.geomspace(0.1, 16, 16)                         # within-segment own weight
 LAM_C = np.concatenate([[0.0], np.geomspace(0.25, 4, 9)])  # carried own weight; 0 = reset learner
@@ -116,12 +118,12 @@ def table(name: str, prior: np.ndarray, social: np.ndarray, own_seg: np.ndarray,
     if block is not None:
         rows, bp = np.array_split(np.arange(len(social)), n_blocks)[block], block_path(path, block, n_blocks)
         if not bp.exists():
-            np.save(bp, build(prior[rows], social[rows], own_seg[rows], own_prev[rows], kappa, lam_w, lam_c, workers, builder))
+            atomic_write(bp, lambda t: np.save(t, build(prior[rows], social[rows], own_seg[rows], own_prev[rows], kappa, lam_w, lam_c, workers, builder)))
         return np.load(bp)
     args = (name, prior, social, own_seg, own_prev, cache_dir, kappa, lam_w, lam_c, workers)
     out = build(prior, social, own_seg, own_prev, kappa, lam_w, lam_c, workers, builder) if n_blocks == 1 else np.concatenate(
         [table(*args, block=b, n_blocks=n_blocks, builder=builder) for b in range(n_blocks)])
-    np.save(path, out)
+    atomic_write(path, lambda t: np.save(t, out))
     for b in range(n_blocks if n_blocks > 1 else 0):
         block_path(path, b, n_blocks).unlink()
     return out

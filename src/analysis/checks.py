@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from analysis.compare import loo, paired, subset
-from analysis.data import TrialData
+from analysis.data import TrialData, atomic_write
 from analysis.fitting import Fit, fit
 from analysis.games import CONDITION, entropy_bits
 from analysis.policies import REGISTRY, ModelSpec, belief, grids
@@ -75,7 +75,7 @@ def recover_delta(posterior: dict, pools: dict, model, normalizer, cache_dir: Pa
         if not path.exists():
             people = sample_participants(posterior, int(draws[d]), n_people, np.random.default_rng(seed + d))
             path.parent.mkdir(parents=True, exist_ok=True)
-            pickle.dump((simulate_dataset(spec, people, pools, model, normalizer, seed + d), people[0]["delta_N"]), open(path, "wb"))
+            atomic_write(path, lambda t: pickle.dump((simulate_dataset(spec, people, pools, model, normalizer, seed + d), people[0]["delta_N"]), open(t, "wb")))
         T, truth = pickle.load(open(path, "rb"))
         f = fit_simulated(spec, T, Path(cache_dir), f"dataset_{d:02d}")
         dn = np.asarray(f.posterior["delta_N"]).reshape(-1)
@@ -107,7 +107,7 @@ def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: 
                     post = posteriors[side]
                     people = sample_participants(post, int(rng.integers(next(iter(post.values())).shape[0] * next(iter(post.values())).shape[1])), n_people, rng)
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    pickle.dump(simulate_dataset(REGISTRY[side], people, pools, model, normalizer, int(rng.integers(2**31))), open(path, "wb"))
+                    atomic_write(path, lambda t: pickle.dump(simulate_dataset(REGISTRY[side], people, pools, model, normalizer, int(rng.integers(2**31))), open(t, "wb")))
                 T = pickle.load(open(path, "rb"))
                 fa, fb = (fit_simulated(REGISTRY[m], T, Path(cache_dir), key) for m in (a, b))
                 q = paired(loo(fa), loo(fb), T.part)
@@ -152,7 +152,7 @@ def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, nor
                 policy = FittedPolicy(spec, draw_params(posterior, int(d), i))
                 out += [simulate_session(model, normalizer, frames[sid], policy, rng, np_rng) for sid in np.unique(T.session[T.part == i])]
             path.parent.mkdir(parents=True, exist_ok=True)
-            json.dump(targets(simulated_trial_data(out, f"ppc{d}")), open(path, "w"))
+            atomic_write(path, lambda t: json.dump(targets(simulated_trial_data(out, f"ppc{d}")), open(t, "w")))
         sims.append(json.load(open(path)))
     sims, human = pd.DataFrame(sims), targets(T)
     lo, hi = sims.quantile(0.025), sims.quantile(0.975)
@@ -176,7 +176,7 @@ def split_half(spec: ModelSpec, T: TrialData, tabs: tuple, frames: dict, model, 
             people, r, np_r, out = sample_participants(f.posterior, int(d), len(held), np.random.default_rng([seed, int(d)])), random.Random(int(d)), np.random.default_rng(int(d)), []
             for params, i in zip(people, held):
                 out += [simulate_session(model, normalizer, frames[sid], FittedPolicy(spec, params), r, np_r) for sid in np.unique(T.session[T.part == i])]
-            json.dump(targets(simulated_trial_data(out, f"split{seed}_{d}")), open(path, "w"))
+            atomic_write(path, lambda t: json.dump(targets(simulated_trial_data(out, f"split{seed}_{d}")), open(t, "w")))
         sims.append(json.load(open(path)))
     sims, human = pd.DataFrame(sims), targets(subset(T, ~fit_mask))
     lo, hi = sims.quantile(0.025), sims.quantile(0.975)

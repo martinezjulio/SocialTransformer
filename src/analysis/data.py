@@ -8,6 +8,7 @@ game g of round r is cutoff 6r + g + 1 for g ∈ {1, 3}, i.e. right after the de
 """
 
 import ast
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +23,14 @@ READOUTS = ("expert", "novice", "recent")   # ``<name>_betas`` columns: per-arm 
 def parse_betas(s: str) -> np.ndarray:
     """'[(a1, b1), (a2, b2), ...]' → (K, 2) float array."""
     return np.array(ast.literal_eval(s), dtype=float)
+
+
+def atomic_write(path: Path, write) -> None:
+    """``write(tmp)`` to a hidden temporary name beside ``path`` (same suffix, so ``np.save`` keeps it), then rename into
+    place: a reader sees the whole cache file or none, so a task killed mid-write (preemption) leaves nothing that looks complete."""
+    tmp = Path(path).with_name(f".{Path(path).stem}.tmp{Path(path).suffix}")
+    write(tmp)
+    os.replace(tmp, path)
 
 
 @dataclass(frozen=True)

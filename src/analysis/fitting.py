@@ -25,7 +25,7 @@ import numpy as np  # noqa: E402
 from numpyro import handlers
 from numpyro.infer import MCMC, NUTS, log_likelihood
 
-from analysis.data import TrialData, load_sessions, trial_data
+from analysis.data import TrialData, load_sessions, trial_data, atomic_write
 from analysis.policies import REGISTRY, ModelSpec, model
 
 GATE = dict(rhat=1.01, ess=400, divergences=0)
@@ -77,7 +77,7 @@ def fit(spec: ModelSpec, T: TrialData, tab, key: str, cache_dir: Path, tab2=None
         if result.passed:
             break
     path.parent.mkdir(parents=True, exist_ok=True)
-    pickle.dump(result, open(path, "wb"))
+    atomic_write(path, lambda t: pickle.dump(result, open(t, "wb")))
     return result
 
 
