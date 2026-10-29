@@ -138,13 +138,14 @@ def targets(T: TrialData) -> dict:
                 stay_win=float(m(shots[shots["rew"] == 1], "stay").mean()), stay_loss=float(m(shots[shots["rew"] == 0], "stay").mean()))
 
 
-def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS) -> pd.DataFrame:
+def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS, draws=None) -> pd.DataFrame:
     """Free-running PPC of one fitted model: at each of ``n_draws`` evenly spaced posterior draws every human participant
     replays their own social sessions (``frames``: session id -> shot frame) with their drawn parameters; the targets of
-    each replay are cached as JSON. One row per target: human value, 95% band over draws, inside."""
+    each replay are cached as JSON. One row per target: human value, 95% band over draws, inside. ``draws`` (indices into
+    the ``n_draws`` evenly spaced draws) restricts an array task to those draws; the rest assemble from the cache."""
     n = next(iter(posterior.values())).shape[0] * next(iter(posterior.values())).shape[1]
-    sims = []
-    for d in np.linspace(0, n - 1, n_draws).astype(int):
+    sims, grid = [], np.linspace(0, n - 1, n_draws).astype(int)
+    for d in grid if draws is None else grid[list(draws)]:
         path = Path(cache_dir) / f"{spec.name.replace(':', '-')}_draw{d:05d}.json"
         if not path.exists():
             rng, np_rng, out = random.Random(int(d)), np.random.default_rng(int(d)), []
@@ -159,18 +160,19 @@ def ppc(spec: ModelSpec, posterior: dict, T: TrialData, frames: dict, model, nor
     return pd.DataFrame(dict(human=pd.Series(human), lo=lo, hi=hi, mean=sims.mean())).assign(inside=lambda t: (t.lo <= t.human) & (t.human <= t.hi))
 
 
-def split_half(spec: ModelSpec, T: TrialData, tabs: tuple, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS, seed: int = 0) -> pd.DataFrame:
+def split_half(spec: ModelSpec, T: TrialData, tabs: tuple, frames: dict, model, normalizer, cache_dir: Path, n_draws: int = N_PPC_DRAWS, seed: int = 0, draws=None) -> pd.DataFrame:
     """Exploratory split-half generative check: ``spec`` is fitted on a random half of the participants (rows of the
     human tables ``tabs`` = (table, second table or None)), then at each of ``n_draws`` posterior draws every held-out
     participant replays their own sessions with parameters drawn fresh from the fitted hierarchy. One row per target:
-    the held-out half's human value, the 95% band over draws, inside. Fit and per-draw targets cached under ``cache_dir``."""
+    the held-out half's human value, the 95% band over draws, inside. Fit and per-draw targets cached under ``cache_dir``;
+    ``draws`` restricts an array task as in ``ppc`` (an empty list fits only)."""
     rng = np.random.default_rng(seed)
     held = np.sort(rng.choice(len(T.people), len(T.people) // 2, replace=False))
     fit_mask = ~np.isin(T.part, held)
     f = fit(spec, subset(T, fit_mask), tabs[0][fit_mask], f"split{seed}", Path(cache_dir) / "fits", tab2=None if tabs[1] is None else tabs[1][fit_mask])
     n = next(iter(f.posterior.values())).shape[0] * next(iter(f.posterior.values())).shape[1]
-    sims = []
-    for d in np.linspace(0, n - 1, n_draws).astype(int):
+    sims, grid = [], np.linspace(0, n - 1, n_draws).astype(int)
+    for d in grid if draws is None else grid[list(draws)]:
         path = Path(cache_dir) / f"{spec.name.replace(':', '-')}_split{seed}_draw{d:05d}.json"
         if not path.exists():
             people, r, np_r, out = sample_participants(f.posterior, int(d), len(held), np.random.default_rng([seed, int(d)])), random.Random(int(d)), np.random.default_rng(int(d)), []
