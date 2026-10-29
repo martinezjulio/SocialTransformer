@@ -2,7 +2,8 @@
 """The results document (meta-plan 9): every ``numbers.json`` merged with the provenance block, checked against the
 manifest, and written as ``paper/results.tex`` (one ``\\newcommand`` per number, a composed ``…CI`` macro per
 estimate/lo/hi triple) and ``paper/results.md`` (every macro, key and value by block, regenerated each run so a diff
-shows what changed). The booktabs tables are added in 9.4; the stage that calls this is registered in 9.5.
+shows what changed), and the booktabs tables ``paper/tables/{hypotheses,ladder}.tex`` from pandas. The stage that calls this is
+registered in 9.5.
 """
 
 import datetime
@@ -15,6 +16,7 @@ import pandas as pd
 import yaml
 
 from analysis.numbers import MANIFEST, check_manifest, fmt, kind_of, macro_name
+from analysis.policies import REGISTRY
 
 STAGES_WITH_NUMBERS = ("descriptive", "partner_choice", "choice", "checks", "unseen")
 
@@ -74,3 +76,35 @@ def write_results(numbers: dict, out_dir: Path) -> list:
         md += [f"## {block}", "", "| macro | key | value |", "|---|---|---|"] + [f"| `\\{m}` | `{k}` | {v} |" for m, k, v in rows if blocks.get(k.replace("_CI", "_hi"), None) == block] + [""]
     (out_dir / "results.md").write_text("\n".join(md))
     return [out_dir / "results.tex", out_dir / "results.md"]
+
+
+def hypothesis_table(analysis_dir: Path) -> pd.DataFrame:
+    """H1–H5 as the registration states them: estimate with its 95% CI, p, Holm p (confirmatory rows) and verdict; H4 is the
+    partner-choice rate from its logistic model. Reward rows are reported without a rule."""
+    c = pd.read_csv(Path(analysis_dir) / "descriptive" / "contrasts.csv").query("role != 'exploratory'").rename(columns={"lower.CL": "lo", "upper.CL": "hi", "p.value": "p"})
+    h4 = pd.read_csv(Path(analysis_dir) / "partner_choice" / "model.csv").query("role == 'confirmatory'").iloc[0]
+    ci = lambda est, lo, hi: f"{fmt(est, 'two')} [{fmt(lo, 'two')}, {fmt(hi, 'two')}]"
+    rows = [dict(Hypothesis=r.hypothesis, Outcome=r.outcome, Estimate=ci(r.estimate, r.lo, r.hi), p=fmt(r.p, "pvalue"),
+                 holm=fmt(r.p_holm, "pvalue") if r.role == "confirmatory" else "", Verdict=r.verdict if r.role == "confirmatory" else "reported") for r in c.itertuples()]
+    rows.append(dict(Hypothesis="H4", Outcome="choice", Estimate=ci(h4.prob_estimate, h4.prob_lower, h4.prob_upper), p=fmt(h4["p.value"], "pvalue"), holm="", Verdict=h4.verdict))
+    return pd.DataFrame(rows).sort_values("Hypothesis", kind="stable").rename(columns={"Estimate": "Estimate [95\\% CI]", "p": "$p$", "holm": "Holm $p$"})
+
+
+def ladder_table(analysis_dir: Path) -> pd.DataFrame:
+    """Every registry model: role, ELPD, difference from HOS with its SE, trials with Pareto k > 0.7."""
+    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0)
+    return pd.DataFrame([dict(Model=m, Role=REGISTRY[m].role or "", ELPD=fmt(lad.loc[m, "elpd"], "integer"),
+                              delta="" if m == "HOS" else f"{fmt(lad.loc[m, 'delta'], 'integer')} ({fmt(lad.loc[m, 'se'], 'integer')})", bad_k=int(lad.loc[m, "n_bad_k"]))
+                         for m in REGISTRY if m in lad.index]).rename(columns={"delta": "$\\Delta$ELPD (SE)", "bad_k": "$k > 0.7$"})
+
+
+def write_tables(analysis_dir: Path, out_dir: Path) -> list:
+    """``tables/hypotheses.tex`` and ``tables/ladder.tex`` under ``out_dir`` (booktabs, cells already formatted)."""
+    out = Path(out_dir) / "tables"
+    out.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, table in (("hypotheses", hypothesis_table(analysis_dir)), ("ladder", ladder_table(analysis_dir))):
+        cells = table.astype(str).map(lambda v: v.replace("-", "\\ensuremath{-}").replace("<", "\\ensuremath{<}") if v[:1].isdigit() or v[:1] == "-" or v[:1] == "<" else v)
+        paths.append(out / f"{name}.tex")
+        paths[-1].write_text(cells.style.hide(axis="index").to_latex(hrules=True, column_format="l" * 2 + "r" * (cells.shape[1] - 2)))
+    return paths

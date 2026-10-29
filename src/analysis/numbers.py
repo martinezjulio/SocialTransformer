@@ -39,7 +39,7 @@ def fmt(value, kind: str) -> str:
         return "—"
     if kind == "pvalue":
         return "< .001" if value < 0.001 else f"{value:.3f}"
-    return f"{value:.0f}" if kind in ("integer", "count") else f"{value:.2f}"
+    return re.sub(r"^-(0(\.0+)?)$", r"\1", f"{value:.0f}" if kind in ("integer", "count") else f"{value:.2f}")   # no negative zero
 
 
 def macro_name(key: str) -> str:
