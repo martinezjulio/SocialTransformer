@@ -237,7 +237,7 @@ def run_unseen(p: Paths) -> None:
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "unseen"
     out.mkdir(exist_ok=True)
     tabs = dict(readout_table=readout_table(T), copying_table=copying_table(T), exploit=exploit_table(T))
-    loos = {n: loo(choice_fit(p, T, n)) for n in ("HOS", "recent", "naive-recent")}
+    loos = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))) for n in ("HOS", "recent", "naive-recent")}   # the choice stage's fallback-corrected LOO (cache)
     tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["HOS"], loos["recent"], T), elpd_by_cell(loos["HOS"], loos["naive-recent"], T)
     for name, t in tabs.items():
         t.to_csv(out / f"{name}.csv")
