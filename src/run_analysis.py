@@ -274,8 +274,9 @@ def run_report(p: Paths) -> None:
 def units(p: Paths) -> dict:
     """Every cluster unit (scripts/slurm) as name -> (level, thunk), in dependency order: 0 table blocks (CPU), 1 table
     assembly, 2 human fits, 3 recovery and model-recovery datasets, split-half fits and PPC draws (GPU), 4 split-half
-    draws. Each fills one cache piece (one writer per file); the stages then run on the full caches."""
+    draws, with the loso refits of the S1/S2 models at level 3. Each fills one cache piece (one writer per file); the stages then run on the full caches."""
     from analysis.checks import COMPARISONS, N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS, PPC_MODELS, model_recovery, ppc, recover_delta, split_half
+    from analysis.compare import loo
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import run_many
     from analysis.policies import REGISTRY, belief, grids
@@ -290,6 +291,8 @@ def units(p: Paths) -> dict:
             u[f"assemble:{s}_{int(m.kappa)}_{int(m.own)}"] = (1, lambda s=s, m=m: tab(s, m))
         t = human_tables(p, T, n)
         u[f"fit:{n}"] = (2, lambda n=n, t=t: run_many([n], p.eval_dir, p.version, {n: (t[0], t[1] if len(t) > 1 else None)}, "-".join(x.stem.split("_")[-1] for x in t), p.analysis_dir / "choice" / "fits")[n].diagnostics)
+    for n in FALLBACK_MODELS:   # the Pareto-k fallback refits (loso_loo) after the fits, on a GPU; the choice stage then reads the cache
+        u[f"loso:{n}"] = (3, lambda n=n: (lambda l: dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, n, l).elpd))(loo(choice_fit(p, T, n))))
     for d in range(N_DATASETS):
         u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])))
     for c, pair in COMPARISONS.items():
