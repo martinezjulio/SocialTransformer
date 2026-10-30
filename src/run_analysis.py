@@ -113,15 +113,20 @@ def run_choice(p: Paths) -> None:
     rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs HOS, paired SE, share
     pd.concat({n: by_cell(l, loos["HOS"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
     pd.DataFrame({n: paired(l, loos["HOS"], T.part)["per_participant"] for n, l in loos.items()}).rename_axis("participant").to_csv(out / "elpd_per_participant.csv")   # Fig S: dots behind every paired SE
-    d = fits["Switch-by-round"].posterior["delta_N"].reshape(-1) if "Switch-by-round" in loos else np.array([np.nan])
-    rows = {"S4": dict(estimate=d.mean(), lo=np.percentile(d, 2.5), hi=np.percentile(d, 97.5), rule="95% ETI > 0")}
+    def post(name, site, f=lambda x: x):   # posterior mean and 95% ETI of a site (or a function of it); NaN when the fit failed the gate
+        x = f(fits[name].posterior[site].reshape(-1)) if name in loos else np.array([np.nan])
+        return dict(estimate=x.mean(), lo=np.percentile(x, 2.5), hi=np.percentile(x, 97.5), rule="posterior")
+    rows = {"S4": post("Switch-by-round", "delta_N") | dict(rule="95% ETI > 0")}
     for name, a, b in [("S1a", "HOS", "recent"), ("S1b", "HOS", "novice"), ("S2a", "HOS", "naive-recent"), ("S2b", "HOS", "naive-expert"),
                        ("S2c", "HOS", "naive"), ("S3a", "HS", "HO"), ("S3b", "HOS", "HO"),
-                       ("switch_round_term", "Switch-by-round", "Switch"), ("own_on_top", "HOS", "HS")]:
+                       ("switch_round_term", "Switch-by-round", "Switch"), ("own_on_top", "HOS", "HS"), ("social_vs_own", "S", "O")]:
         q = paired(loos[a], loos[b], T.part) if a in loos and b in loos else dict(delta=np.nan, se=np.nan)
         rows[name] = dict(estimate=q["delta"], lo=q["delta"] - 2 * q["se"], hi=q["delta"] + 2 * q["se"], rule="ΔELPD > 2 SE" if name[0] == "S" else "reported")
+    rows |= {"delta_E": post("Switch-by-round", "delta_E"), "ktrend_delta_kappa": post("Switch-by-round+ktrend", "delta_kappa"),   # E8, E10 (numbers.POSTERIORS)
+             "ktrend_delta_N": post("Switch-by-round+ktrend", "delta_N"), "eps_HOS_eps": post("HOS+eps", "eps"), "eps_HOS_kappa": post("HOS+eps", "mu_log_kappa", np.exp),
+             "eps_switch_eps": post("Switch-by-round+eps", "eps"), "eps_switch_delta_N": post("Switch-by-round+eps", "delta_N")}
     for r in rows.values():
-        r["verdict"] = "" if r["rule"] == "reported" else verdict(r["estimate"], r["lo"], r["hi"])
+        r["verdict"] = "" if r["rule"] in ("reported", "posterior") else verdict(r["estimate"], r["lo"], r["hi"])
     for claim in ("S1", "S2", "S3"):   # per-part verdicts stay reported beside the claim's
         rows[claim] = dict(estimate=np.nan, lo=np.nan, hi=np.nan, rule="all parts > 2 SE", verdict=claim_verdict([r["verdict"] for k, r in rows.items() if k.startswith(claim) and len(k) == 3]))
     pd.DataFrame(rows).T.to_csv(out / "verdicts.csv")
