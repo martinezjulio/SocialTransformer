@@ -31,7 +31,7 @@ done
 export VERSION N_TABLE_BLOCKS="${N_TABLE_BLOCKS:-8}" REPO_DIR="$PWD"
 CPU="--partition=${SLURM_CPU_PARTITION:-normal}"; GPU="--partition=${SLURM_GPU_PARTITION:-owners} --gpus=1 --cpus-per-task=4 --mem=32G --time=2:00:00"
 ACCOUNT="${SLURM_ACCOUNT:+--account=$SLURM_ACCOUNT}"
-LEVELS=("$CPU --cpus-per-task=16 --mem=64G --time=4:00:00" "$CPU --cpus-per-task=4 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")
+LEVELS=("$CPU --cpus-per-task=16 --mem=64G --time=4:00:00" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
 DIR="$OUTPUT_DATA_DIR/analysis/$VERSION/slurm"; mkdir -p "$DIR"
 bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units > "$DIR/units.tsv"   # inside the image on Sherlock
 submit() { local name="$1"; shift; if [ "$DRY" -eq 1 ]; then echo "sbatch $*" >&2; echo "dry-$name"; else sbatch --parsable "$@"; fi; }
