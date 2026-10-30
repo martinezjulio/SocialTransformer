@@ -198,7 +198,7 @@ def run_checks(p: Paths) -> None:
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
     ppc.csv, numbers.json."""
     import pandas as pd
-    from analysis.checks import COMPARISONS, PPC_MODELS, confusion, model_recovery, ppc, recover_delta, recovery_verdict, split_half
+    from analysis.checks import COMPARISONS, PPC_MODELS, confusion, model_recovery, model_recovery_verdict, ppc, recover_delta, recovery_verdict, split_half
     from analysis.numbers import write_numbers
     from analysis.policies import REGISTRY
     T, out, posterior, model, norm, pools, frames = checks_setup(p)
@@ -211,7 +211,10 @@ def run_checks(p: Paths) -> None:
     halves = pd.concat({f"{n} split_half": split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half") for n in PPC_MODELS}, names=["model", "target"])
     bands = pd.concat([bands, halves])
     bands.to_csv(out / "ppc.csv")
+    mrv = model_recovery_verdict(mr)   # per-comparison pass flags; S1a and S2a gate their claims (report stage), S4's is reported
+    pd.DataFrame(mrv).T.to_csv(out / "model_recovery_verdict.csv")
     numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
+               **{f"model_recovery_{c}_passed": v["passed"] for c, v in mrv.items()},
                **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
     write_numbers(out, numbers)
     print(rec.round(3).to_string(), "\n", confusion(mr).to_string(), "\n", bands.round(4).to_string(), "\n", numbers)

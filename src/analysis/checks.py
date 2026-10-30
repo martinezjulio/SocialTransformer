@@ -81,13 +81,32 @@ def recover_delta(posterior: dict, pools: dict, model, normalizer, cache_dir: Pa
         f = fit_simulated(spec, T, Path(cache_dir), f"dataset_{d:02d}")
         dn = np.asarray(f.posterior["delta_N"]).reshape(-1)
         lo, hi = np.percentile(dn, [2.5, 97.5])
-        rows.append(dict(dataset=d, truth=truth, mean=dn.mean(), lo=lo, hi=hi, covered=bool(lo <= truth <= hi), sign=bool(lo > 0), passed=f.passed))
+        rows.append(dict(dataset=d, truth=truth, mean=dn.mean(), lo=lo, hi=hi, covered=bool(lo <= truth <= hi),
+                         sign=bool(lo > 0 if truth > 0 else hi < 0), passed=f.passed))   # sign: the interval excludes zero on the truth's side
     return pd.DataFrame(rows)
 
 
 def recovery_verdict(rows: pd.DataFrame) -> dict:
-    """Coverage count, sign count and the pass flag of the 95%-coverage rule (≥ COVER_AT_LEAST of N_DATASETS)."""
-    return dict(covered=int(rows["covered"].sum()), sign=int(rows["sign"].sum()), n=len(rows), passed=bool(rows["covered"].sum() >= COVER_AT_LEAST))
+    """Coverage count, sign count and the pass flag (prereg 4.7.3): the 95% intervals cover the truth, and exclude zero on
+    its side, in at least COVER_AT_LEAST of N_DATASETS datasets."""
+    covered, sign = int(rows["covered"].sum()), int(rows["sign"].sum())
+    return dict(covered=covered, sign=sign, n=len(rows), passed=bool(covered >= COVER_AT_LEAST and sign >= COVER_AT_LEAST))
+
+
+GATING = ("S1a", "S2a")   # the model-recovery comparisons that gate a claim; S4's is reported beside E9 (29 Oct): S4 is decided on δ_N
+
+
+def model_recovery_verdict(rows: pd.DataFrame) -> dict:
+    """Per comparison: A's wins on A-generated and on B-generated datasets, and the pass flag (prereg 4.7.3): A wins a
+    majority of the datasets generated from A and at most a minority of those generated from B (undecided counts as
+    correct on B's side, since the nested S4 pair cannot have Switch win outright)."""
+    out = {}
+    for c, (a, b) in COMPARISONS.items():
+        on_a, on_b = rows[(rows["comparison"] == c) & (rows["generating"] == a)], rows[(rows["comparison"] == c) & (rows["generating"] == b)]
+        wins_a, wins_b = int((on_a["winner"] == a).sum()), int((on_b["winner"] == a).sum())
+        out[c] = dict(a_wins_on_a=wins_a, n_a=len(on_a), a_wins_on_b=wins_b, n_b=len(on_b), gating=c in GATING,
+                      passed=bool(len(on_a) and len(on_b) and wins_a > len(on_a) / 2 and wins_b < len(on_b) / 2))
+    return out
 
 
 def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: Path, n_per_side: int = N_MODEL_RECOVERY,
