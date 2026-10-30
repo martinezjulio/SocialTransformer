@@ -17,8 +17,9 @@ VALUE = {"text": "supported", "flag": True, "count": 3, "pvalue": 0.0004, "integ
 
 
 def synthetic(tmp_path):
-    """Every manifest key with a value of its kind, spread over the stages' numbers.json files; provenance apart."""
-    numbers = {k: VALUE[kind_of(k)] for ks in MANIFEST.values() for k in ks}
+    """Every manifest key with a value of its kind, spread over the stages' numbers.json files; provenance apart, the final
+    verdicts left to the report stage."""
+    numbers = {k: VALUE[kind_of(k)] for b, ks in MANIFEST.items() if not b.startswith("final") for k in ks}
     prov = {k: numbers.pop(k) for k in MANIFEST["provenance"]}
     keys = list(numbers)
     for i, stage in enumerate(STAGES_WITH_NUMBERS):

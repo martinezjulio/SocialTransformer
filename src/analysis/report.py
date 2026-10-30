@@ -32,8 +32,18 @@ def provenance(preprocessed: Path, eval_dir: Path, n_participants: int, n_sessio
             **{f"{r.level}s_kept": int(r.n) for r in ledger.itertuples() if r.rule == "kept"}}
 
 
+GATES = {"S1": ("model_recovery_S1a_passed",), "S2": ("model_recovery_S2a_passed",), "S3": (), "S4": ("recovery_passed",)}   # prereg 4.7.3: the checks each claim needs
+
+
+def final_verdicts(numbers: dict) -> dict:
+    """The check-gated verdict per claim: *not evaluable* when a check in ``GATES`` failed or is missing, else the choice stage's
+    verdict. The choice stage's own verdict stays beside it as the description of the human data."""
+    return {f"{c}_final_verdict": numbers.get(f"{c}_verdict", "not evaluable") if all(numbers.get(k, False) for k in gates) else "not evaluable" for c, gates in GATES.items()}
+
+
 def merge_numbers(analysis_dir: Path, extra: dict) -> dict:
-    """Every stage's ``numbers.json`` plus ``extra`` (the provenance), checked against the manifest; duplicate keys are an error."""
+    """Every stage's ``numbers.json`` plus ``extra`` (the provenance) and the final verdicts, checked against the manifest;
+    duplicate keys are an error."""
     numbers = dict(extra)
     for stage in STAGES_WITH_NUMBERS:
         path = Path(analysis_dir) / stage / "numbers.json"
@@ -42,6 +52,9 @@ def merge_numbers(analysis_dir: Path, extra: dict) -> dict:
                 if k in numbers:
                     raise ValueError(f"{k!r} is written by two stages")
                 numbers[k] = v
+    if dup := [k for k in final_verdicts(numbers) if k in numbers]:
+        raise ValueError(f"{dup} are written by a stage; the report stage derives them")
+    numbers |= final_verdicts(numbers)
     check_manifest(numbers)
     return numbers
 
