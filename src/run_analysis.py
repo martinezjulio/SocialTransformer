@@ -75,13 +75,13 @@ def claim_verdict(parts: list) -> str:
 @stage("choice")
 def run_choice(p: Paths) -> None:
     """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
-    cached, fits cached by table hash, PSIS-LOO ladder vs HOS, the registration's four-outcome verdicts for S1a–S3b (2 SE each),
-    the claims S1–S3 (from their parts) and S4 (δ_N 95% ETI), numbers.json."""
+    cached, fits cached by table hash, PSIS-LOO with the Pareto-k fallback on the S1/S2 models (``loso_loo``), ladder vs HOS,
+    the registration's four-outcome verdicts for S1a–S3b (2 SE each), the claims S1–S3 (from their parts) and S4 (δ_N 95% ETI), numbers.json."""
     from concurrent.futures import ThreadPoolExecutor
     import numpy as np
     import pandas as pd
     from analysis.numbers import write_numbers
-    from analysis.compare import by_cell, ladder, loo, paired
+    from analysis.compare import K_BAD, by_cell, ladder, loo, paired
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import run_many
     from analysis.policies import REGISTRY, belief, grids
@@ -105,7 +105,10 @@ def run_choice(p: Paths) -> None:
         fits.update(run_many([n], p.eval_dir, p.version, paths, a.stem.split("_")[-1] + (f"-{b.stem.split('_')[-1]}" if b else ""), out / "fits"))
     builder.shutdown()
     loos = {n: loo(f) for n, f in fits.items() if f.passed}
-    lad = ladder(loos, "HOS", T.part).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
+    bad = {n: l.n_bad for n, l in loos.items()}   # the ladder reports the pre-fallback count and the sessions the fallback refits
+    refit = {n: len(set(T.session[l.pareto_k > K_BAD])) if n in FALLBACK_MODELS else 0 for n, l in loos.items()}
+    loos = {n: loso_loo(p, T, n, l) if n in FALLBACK_MODELS else l for n, l in loos.items()}
+    lad = ladder(loos, "HOS", T.part).assign(n_bad_k=pd.Series(bad), sessions_refit=pd.Series(refit)).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
     lad.to_csv(out / "ladder.csv")
     rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs HOS, paired SE, share
     pd.concat({n: by_cell(l, loos["HOS"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
@@ -149,6 +152,26 @@ def table_arrays(p: Paths, T, name: str) -> tuple:
     import numpy as np
     tabs = [np.load(t) for t in human_tables(p, T, name)]
     return (tabs[0], tabs[1] if len(tabs) > 1 else None)
+
+
+FALLBACK_MODELS = ("HOS", "recent", "novice", "naive-recent", "naive-expert", "naive")   # the registered S1/S2 comparisons (prereg 4.7.3)
+
+
+def loso_loo(p: Paths, T, name: str, l):
+    """The Pareto-k fallback of one model's ``Loo``: exact leave-one-session-out refits for the sessions holding k > 0.7
+    trials (``compare.loso``), cached under ``choice/loso/`` by the fit's key; ``l`` itself when no trial is bad."""
+    import pickle
+    from analysis.compare import loso
+    from analysis.data import atomic_write
+    from analysis.fitting import cache_path
+    from analysis.policies import REGISTRY
+    if l.n_bad == 0:
+        return l
+    path = cache_path(name, "-".join(t.stem.split("_")[-1] for t in human_tables(p, T, name)), p.analysis_dir / "choice" / "loso")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(path, lambda t: pickle.dump(loso(l, REGISTRY[name], T, *table_arrays(p, T, name)), open(t, "wb")))
+    return pickle.load(open(path, "rb"))
 
 
 def checks_setup(p: Paths) -> tuple:
