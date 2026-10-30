@@ -28,12 +28,12 @@ done
 for v in N_DATASETS N_MODEL_RECOVERY N_PPC_DRAWS; do
   if [ -n "${!v:-}" ] && [ -z "$DEV" ]; then echo "$v is set: a reduced run overwrites the full outputs; pass --dev if that is intended" >&2; exit 2; fi
 done
-export VERSION N_TABLE_BLOCKS="${N_TABLE_BLOCKS:-8}"
+export VERSION N_TABLE_BLOCKS="${N_TABLE_BLOCKS:-8}" REPO_DIR="$PWD"
 CPU="--partition=${SLURM_CPU_PARTITION:-normal}"; GPU="--partition=${SLURM_GPU_PARTITION:-owners} --gpus=1 --cpus-per-task=4 --mem=32G --time=2:00:00"
 ACCOUNT="${SLURM_ACCOUNT:+--account=$SLURM_ACCOUNT}"
 LEVELS=("$CPU --cpus-per-task=16 --mem=64G --time=4:00:00" "$CPU --cpus-per-task=4 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")
 DIR="$OUTPUT_DATA_DIR/analysis/$VERSION/slurm"; mkdir -p "$DIR"
-python src/run_analysis.py --version "$VERSION" --list-units > "$DIR/units.tsv"
+bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units > "$DIR/units.tsv"   # inside the image on Sherlock
 submit() { local name="$1"; shift; if [ "$DRY" -eq 1 ]; then echo "sbatch $*" >&2; echo "dry-$name"; else sbatch --parsable "$@"; fi; }
 DEP=""
 for level in 0 1 2 3 4; do

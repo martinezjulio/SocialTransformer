@@ -4,6 +4,8 @@
 # resources of that level (partition, GPU, CPUs, time), which override the defaults below. Every unit writes its
 # cache piece atomically and is skipped when the piece exists, so a preempted task is simply requeued (--requeue)
 # and resumes from the cache. Run one task by hand with SLURM_ARRAY_TASK_ID=<i> UNIT_LIST=<file> VERSION=<v>.
+# sbatch runs a copy of this file from its spool directory, so the repo is REPO_DIR (exported by submit.sh), falling back
+# to this file's location for runs by hand; with CONTAINER set in .env the task re-executes inside the image.
 #SBATCH --job-name=analysis-units
 #SBATCH --requeue
 #SBATCH --nodes=1
@@ -12,12 +14,13 @@
 #SBATCH --mem=32G
 #SBATCH --time=2:00:00
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${ENV_FILE:-${SCRIPT_DIR}/../../.env}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+ENV_FILE="${ENV_FILE:-${REPO_DIR}/.env}"
 set -a; source "$ENV_FILE"; set +a
+[ -z "${CONTAINER:-}" ] || [ -n "${APPTAINER_CONTAINER:-}" ] || exec bash "$REPO_DIR/scripts/with_env.sh" bash "$REPO_DIR/scripts/slurm/units.sbatch"   # Sherlock: re-run inside the image
 source "$CONDA_SETUP"
 conda activate SocialTransformer
-cd "${SCRIPT_DIR}/../.."
+cd "$REPO_DIR"
 : "${VERSION:?VERSION is not set}" "${UNIT_LIST:?UNIT_LIST is not set}" "${SLURM_ARRAY_TASK_ID:?not an array task}"
 UNIT="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$UNIT_LIST")"
 [ -n "$UNIT" ] || { echo "no unit on line $SLURM_ARRAY_TASK_ID of $UNIT_LIST" >&2; exit 2; }

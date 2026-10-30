@@ -1,0 +1,11 @@
+# Apptainer image the analysis pipeline runs inside on Sherlock (scripts/with_env.sh; CONTAINER in .env). The nodes run
+# CentOS 7 (glibc 2.17), which the pinned jax, torch, numpy and scipy wheels refuse; Rocky 9 gives glibc 2.34. Python, R
+# and tectonic come from the conda env on group home, bound into the image; only the base tools R expects at fixed paths
+# (/usr/bin/which, perl) are installed here. Built unprivileged by scripts/setup_sherlock.sh:
+#   apptainer build $ENV_ROOT/rocky9.sif scripts/sherlock.def
+Bootstrap: docker
+From: rockylinux:9
+%post
+    dnf -y install which bzip2 xz unzip zip file patch procps-ng perl-interpreter && dnf clean all
+%labels
+    Purpose SocialTransformer analysis runtime on Sherlock (glibc 2.34; Python and R come from the bound conda env)

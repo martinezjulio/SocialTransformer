@@ -468,16 +468,24 @@ The analysis pipeline (`src/analysis`, driver `scripts/run_analysis.sh`) runs at
 SLURM job arrays. One-time setup from a login node inside the clone:
 
 ```bash
+sh_dev -c 4 -m 16GB -t 2:00:00     # the installs are too heavy for a login node
 bash scripts/setup_sherlock.sh     # miniforge + env beside the clone under $GROUP_HOME/$USER/SocialBanditsProject, data roots under $SCRATCH/SocialBanditsProject, writes .env
 ```
+
+Sherlock's nodes run CentOS 7 (glibc 2.17), too old for the pinned jax, torch, numpy and scipy wheels, so the setup also
+pulls a Rocky 9 Apptainer image beside the env and `.env` names it as `CONTAINER`: `scripts/run_analysis.sh` and the SLURM
+tasks re-execute inside it, and `bash scripts/with_env.sh <command>` (or no command, for a shell) runs anything else there
+with the env active, e.g. `bash scripts/with_env.sh pytest tests/test_numbers.py -q`.
 
 Transfer one version's inputs (only the anonymised preprocessed data ever leaves the lab machine; the raw
 files and the ID map stay there):
 
 ```bash
-rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} sherlock:$SCRATCH/SocialBanditsProject/experiments/pilot_E/   # never the folder: it holds the raw files and the ID map
-rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$SCRATCH/SocialBanditsProject/output/eval/pilot_E/
-rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$SCRATCH/SocialBanditsProject/output/training_runs/<run>/checkpoints/
+S=/scratch/users/<sunet>/SocialBanditsProject   # Sherlock's $SCRATCH, spelled out: the variable is not set on the lab machine
+ssh sherlock "mkdir -p $S/experiments/pilot_E $S/output/eval/pilot_E $S/output/training_runs/<run>/checkpoints"   # rsync creates only the last path component
+rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} sherlock:$S/experiments/pilot_E/   # never the folder: it holds the raw files and the ID map
+rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$S/output/eval/pilot_E/
+rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt sherlock:$S/output/training_runs/<run>/checkpoints/
 ```
 
 Then submit: `bash scripts/slurm/submit.sh --version pilot_E` lists the cached units (`python src/run_analysis.py

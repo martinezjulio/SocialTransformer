@@ -12,6 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ENV_FILE:-${SCRIPT_DIR}/../.env}"
 set -a; source "$ENV_FILE"; set +a
+[ -z "${CONTAINER:-}" ] || [ -n "${APPTAINER_CONTAINER:-}" ] || exec bash "${SCRIPT_DIR}/with_env.sh" bash "$0" "$@"   # Sherlock: re-run inside the image
 source "$CONDA_SETUP"
 conda activate SocialTransformer
 cd "${SCRIPT_DIR}/.."
