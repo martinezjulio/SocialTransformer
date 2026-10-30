@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from analysis.numbers import MANIFEST, kind_of  # noqa: E402
 from analysis.report import STAGES_WITH_NUMBERS, merge_numbers, write_results, write_tables  # noqa: E402
 
-VALUE = {"text": "supported", "flag": True, "count": 3, "pvalue": 0.0004, "integer": -2674.0, "two": -1.25}
+VALUE = {"text": "supported", "flag": True, "count": 3, "pvalue": 0.0004, "integer": -2674.0, "two": -1.25, "three": 0.012}
 
 
 def synthetic(tmp_path):
