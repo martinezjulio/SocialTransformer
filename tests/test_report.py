@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from analysis.numbers import MANIFEST, kind_of  # noqa: E402
-from analysis.report import STAGES_WITH_NUMBERS, merge_numbers, write_results, write_tables  # noqa: E402
+from analysis.report import STAGES_WITH_NUMBERS, final_verdicts, merge_numbers, write_results, write_tables  # noqa: E402
 
 VALUE = {"text": "supported", "flag": True, "count": 3, "pvalue": 0.0004, "integer": -2674.0, "two": -1.25, "three": 0.012}
 
@@ -38,6 +38,24 @@ def test_merge_names_a_removed_and_a_duplicated_number(tmp_path):
         merge_numbers(tmp_path, prov)
     json.dump(choice | {"participants": 1}, open(tmp_path / "choice" / "numbers.json", "w"))
     with pytest.raises(ValueError, match="written by two stages"):
+        merge_numbers(tmp_path, prov)
+
+
+def test_final_verdicts_gate_claims_by_their_checks(tmp_path):
+    """Prereg 4.7.3: a failed check makes its claim not evaluable and no other; a missing check counts as failed; the report
+    stage derives the final verdicts and refuses them from a stage."""
+    base = {"S1_verdict": "supported", "S2_verdict": "contradicted", "S3_verdict": "not supported", "S4_verdict": "supported",
+            "model_recovery_S1a_passed": True, "model_recovery_S2a_passed": True, "model_recovery_S4_passed": False, "recovery_passed": True}
+    final = lambda n: [final_verdicts(n)[f"S{i}_final_verdict"] for i in (1, 2, 3, 4)]
+    assert final(base) == ["supported", "contradicted", "not supported", "supported"], "S4's model recovery is reported, not gating"
+    assert final(base | {"model_recovery_S2a_passed": False}) == ["supported", "not evaluable", "not supported", "supported"]
+    assert final(base | {"recovery_passed": False}) == ["supported", "contradicted", "not supported", "not evaluable"]
+    assert final({k: v for k, v in base.items() if "passed" not in k}) == ["not evaluable", "not evaluable", "not supported", "not evaluable"]
+    prov = synthetic(tmp_path)
+    assert {k: v for k, v in merge_numbers(tmp_path, prov).items() if k.endswith("_final_verdict")} == {f"S{i}_final_verdict": "supported" for i in (1, 2, 3, 4)}
+    choice = json.load(open(tmp_path / "choice" / "numbers.json"))
+    json.dump(choice | {"S1_final_verdict": "supported"}, open(tmp_path / "choice" / "numbers.json", "w"))
+    with pytest.raises(ValueError, match="report stage derives"):
         merge_numbers(tmp_path, prov)
 
 
