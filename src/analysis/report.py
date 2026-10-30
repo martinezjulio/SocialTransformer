@@ -15,21 +15,24 @@ from pathlib import Path
 import pandas as pd
 
 from analysis.data import checkpoint_path
-from analysis.numbers import MANIFEST, check_manifest, fmt, kind_of, macro_name
+from analysis.numbers import DEMOGRAPHICS, MANIFEST, check_manifest, fmt, kind_of, macro_name
 from analysis.policies import REGISTRY
 
 STAGES_WITH_NUMBERS = ("descriptive", "partner_choice", "choice", "checks", "unseen")
 
 
 def provenance(preprocessed: Path, eval_dir: Path, n_participants: int, n_sessions: int, n_trials: int) -> dict:
-    """Commit (``-dirty`` when the tree has changes), checkpoint sha256, run date, the sizes, and the exclusion ledger."""
+    """Commit (``-dirty`` when the tree has changes), checkpoint sha256, run date, the sizes, the exclusion ledger and the
+    demographics summary (both written beside the preprocessed file)."""
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, cwd=Path(__file__).parent).stdout.strip()
     ckpt = checkpoint_path(eval_dir)
     ledger = pd.read_csv(Path(preprocessed).parent / "exclusions.csv")
+    demographics = pd.read_csv(Path(preprocessed).parent / "demographics_summary.csv").set_index("name")["value"]
     return {"commit": git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain") else ""), "checkpoint_sha256": hashlib.sha256(open(ckpt, "rb").read()).hexdigest(),
             "run_date": datetime.date.today().isoformat(), "participants": n_participants, "sessions": n_sessions, "trials": n_trials,
             **{f"excluded_{r.rule}": int(r.n) for r in ledger.itertuples() if r.rule != "kept"},
-            **{f"{r.level}s_kept": int(r.n) for r in ledger.itertuples() if r.rule == "kept"}}
+            **{f"{r.level}s_kept": int(r.n) for r in ledger.itertuples() if r.rule == "kept"},
+            **{k: (int(demographics[k]) if kind_of(k) in ("integer", "count") else float(demographics[k])) for k in DEMOGRAPHICS}}
 
 
 GATES = {"S1": ("model_recovery_S1a_passed",), "S2": ("model_recovery_S2a_passed",), "S3": (), "S4": ("recovery_passed",)}   # prereg 4.7.3: the checks each claim needs

@@ -222,10 +222,25 @@ mongologs <- mongologs %>%
   arrange(anonymous_id, .session_start, timestamp, step) %>%
   select(-.session_start)
 write_csv(mongologs, preprocessed_path)
+# The public release of the trial data: the same rows without timestamp, which only the exclusion rules and the row
+# ordering above use. Release it with exclusions.csv, demographics_summary.csv and the aggregate outputs.
+write_csv(select(mongologs, -timestamp), sub("\\.csv$", "_public.csv", preprocessed_path))
 excl <- add_row(excl, level = "participant", rule = "kept", n = n_distinct(mongologs$anonymous_id)) |>
   add_row(level = "session", rule = "kept", n = n_distinct(mongologs$session_id))
 write_csv(excl, file.path(dirname(preprocessed_path), "exclusions.csv"))
 print(excl, n = Inf)
+# 8) Demographics summary over the analysed participants. Age and sex come from Prolific's export and
+# stay in the internal anonymised file; only these aggregates are reported or released.
+if (!all(c("Age", "Sex") %in% names(demographics)))
+  stop("Age/Sex missing from the anonymised demographics: rerun src/anonymize_participant_data.py (keeps both)")
+kept_demo <- demographics |> filter(anonymous_id %in% mongologs$anonymous_id) |> mutate(Age = as.numeric(Age))
+stopifnot(nrow(kept_demo) == n_distinct(mongologs$anonymous_id), !any(is.na(kept_demo$Age)))
+demo_summary <- tibble(
+  name  = c("age_mean", "age_sd", "age_min", "age_max", "sex_female_count", "sex_male_count", "sex_other_count"),
+  value = c(mean(kept_demo$Age), sd(kept_demo$Age), min(kept_demo$Age), max(kept_demo$Age),
+            sum(kept_demo$Sex == "Female"), sum(kept_demo$Sex == "Male"), sum(!kept_demo$Sex %in% c("Female", "Male"))))
+write_csv(demo_summary, file.path(dirname(preprocessed_path), "demographics_summary.csv"))
+print(demo_summary, n = Inf)
 cat(sprintf("Wrote %d rows, %d sessions to %s\n",
             nrow(mongologs),
             length(unique(mongologs$session_id)),

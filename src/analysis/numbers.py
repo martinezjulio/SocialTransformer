@@ -21,7 +21,7 @@ DIGITS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"
 # Quantity type by key pattern, first match wins: p-values; logit-scale posteriors (S4 is δ_N); ELPD and SE as integers;
 # yes/no flags; counts; readout confidence (a Beta concentration); everything else (payoff, correlation, share) two decimals.
 KINDS = [(r"^(commit|checkpoint_sha256|run_date)$|_verdict$", "text"), (r"(_p|_p_holm)$", "pvalue"), (r"^S4_", "two"), (r"_eps_(estimate|lo|hi)$", "three"),
-         (r"^S\d|^own_on_top|^switch_round_term|^social_vs_own|^elpd_|_delta$|_se$|_elpd$", "integer"), (r"_inside$|_passed$", "flag"),
+         (r"^S\d|^own_on_top|^switch_round_term|^social_vs_own|^elpd_|_delta$|_se$|_elpd$|^age_(min|max)$", "integer"), (r"_inside$|_passed$", "flag"),
          (r"_n$|_correct$|_sign$|_covered$|_count$|_kept$|^excluded_|^(participants|sessions|trials)$", "count"), (r"confidence$", "integer")]
 
 
@@ -64,12 +64,13 @@ EXPLORATORY = {"novice_vs_solo_improvement": OUTCOMES["H1"], "expert_round_chang
                "H5_round2": OUTCOMES["H5"], "social_vs_solo4": OUTCOMES["H5"], "novice_vs_solo4": OUTCOMES["H5"]}
 EXCLUSION_RULES = ("returned", "colour_vision", "speed_floor", "span_ceiling", "no_gameplay", "incomplete_rounds", "short_play", "reload",
                    "restarted", "never_moved", "not_three_sessions")
+DEMOGRAPHICS = ("age_mean", "age_sd", "age_min", "age_max", "sex_female_count", "sex_male_count", "sex_other_count")   # demographics_summary.csv
 CLAIMS = ("S1a", "S1b", "S2a", "S2b", "S2c", "S3a", "S3b", "S4", "S1", "S2", "S3", "switch_round_term", "own_on_top", "social_vs_own")
 POSTERIORS = ("delta_E", "ktrend_delta_kappa", "ktrend_delta_N", "eps_HOS_eps", "eps_HOS_kappa", "eps_switch_eps", "eps_switch_delta_N")   # E8, E10: mean and 95% ETI
 PPC_TARGETS = ("after_novice_rise", "entropy_fall", "zigzag", "stay_win", "stay_loss")
 interval = lambda stem, p=True: [f"{stem}_{f}" for f in ("estimate", "lo", "hi") + (("p",) if p else ())]
 MANIFEST = {
-    "provenance": ["commit", "checkpoint_sha256", "run_date", "participants", "sessions", "trials"] + [f"excluded_{r}" for r in EXCLUSION_RULES] + ["participants_kept", "sessions_kept"],
+    "provenance": ["commit", "checkpoint_sha256", "run_date", "participants", "sessions", "trials"] + [f"excluded_{r}" for r in EXCLUSION_RULES] + ["participants_kept", "sessions_kept"] + list(DEMOGRAPHICS),
     "descriptive (Fig 2, H1-H5)": [k for h, outs in OUTCOMES.items() for o in outs for k in interval(f"{h}_{o}") + ([f"{h}_{o}_p_holm", f"{h}_{o}_verdict"] if o != "reward" else [])]
                                  + [k for h, outs in EXPLORATORY.items() for o in outs for k in interval(f"{h}_{o}")],
     "partner choice (Fig 2c, H4)": interval("H4_choice") + ["H4_choice_verdict", "H4_choice_count", "H4_choice_n"] + interval("recency"),
