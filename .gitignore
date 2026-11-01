@@ -149,4 +149,12 @@ cache/
 
 /.quarto/
 
-.claude/docs/analysis_update_10_19_2026/
+# Untracked working material (kept on disk, never committed)
+notebooks/
+.claude/
+reports/*
+!reports/preregistration/
+reports/preregistration/*
+!reports/preregistration/preregistration.qmd
+!reports/preregistration/preregistration.html
+!reports/preregistration/preregistration.pdf

@@ -3,7 +3,7 @@
 SocialTransformer: a transformer that observes demonstrators playing multi-armed
 bandits over several rounds and predicts arm payoffs plus each demonstrator's
 belief state as Beta distributions. Human experiment data is analysed by the
-pipeline in `src/analysis` (see below); the legacy notebook is frozen.
+pipeline in `src/analysis` (see below).
 
 ## Environment
 
@@ -33,8 +33,6 @@ bash scripts/setup_sherlock.sh && bash scripts/slurm/submit.sh --version pilot_E
 pytest tests/                     # invariants on generated outputs; see tests/README.md
 wandb sweep src/Sweeps/Sweep_Version_*.yaml && wandb agent <sweep-id>
 bash scripts/setup_r_env.sh       # one-time R packages via renv
-python scripts/run_notebook.py --version pilot_E   # legacy notebook, batch; see its docstring
-bash scripts/run_quarto_analysis_report.sh         # legacy Quarto report in reports/
 ```
 
 ## Analysis pipeline (`src/analysis`, driver `src/run_analysis.py`)
@@ -63,10 +61,9 @@ follow the HOS convention (H habit, O own experience, S social belief) in `polic
   `src/models/__init__.py` is the only constructor used by train, eval, and
   inference; it accepts the pre-rename type strings as aliases so old
   checkpoints still load.
-- **Legacy analysis is frozen and isolated**: `notebooks/analysis.py` with its
-  package `notebooks/legacy_analysis/` writes to `$OUTPUT_DATA_DIR/legacy_analysis/`;
-  the new pipeline (`src/analysis`) writes to `$OUTPUT_DATA_DIR/analysis/`. Neither
-  imports the other (`tests/test_no_cross_imports.py`).
+- **Untracked working material**: `notebooks/`, `.claude/` and everything in
+  `reports/` except the preregistration are gitignored on purpose. They stay on
+  disk for local use only; do not add them back.
 
 ## Checkpoints
 

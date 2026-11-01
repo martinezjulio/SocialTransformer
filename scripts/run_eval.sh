@@ -2,7 +2,6 @@
 # Full evaluation pipeline:
 #   Step 1: Evaluate model on synthetic test set
 #   Step 2: Run inference on human experiment data
-#   Step 3: Render eval report (2x2 N_total comparison figure)
 # Set EVAL_ONLY=1 to stop after step 1.
 
 # Load environment configuration
@@ -16,14 +15,13 @@ conda activate SocialTransformer
 
 export PYTHONPATH="src:$PYTHONPATH"
 
-# Per-run pilot selection — inherited by run_inference.sh (and the eval report
-# if/when it gains a params block). Change these to switch pilots.
+# Per-run pilot selection — inherited by run_inference.sh. Change these to switch pilots.
 EXPERIMENT_NAME="transfer_bandits_choice_textbox"
 VERSION="pilot_D"
 export EXPERIMENT_NAME VERSION
 
 # Number of independent Thompson sampling rollouts per session. Inherited by
-# run_inference.sh and flows through to every downstream report.
+# run_inference.sh and flows through to every downstream consumer.
 NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"
 export NUM_ROLLOUTS
 
@@ -156,10 +154,10 @@ else
 fi
 
 # Stop after step 1 when EVAL_ONLY is set: synthetic test-set metrics only,
-# skipping human inference and both Quarto reports.
+# skipping human inference.
 #   EVAL_ONLY=1 bash scripts/run_eval.sh
 if [ -n "$EVAL_ONLY" ]; then
-    echo "EVAL_ONLY set - stopping after step 1 (no inference, no reports)."
+    echo "EVAL_ONLY set - stopping after step 1 (no inference)."
     exit 0
 fi
 
@@ -186,75 +184,8 @@ else
     exit 1
 fi
 
-# ==============================================================================
-# Step 3: Render eval report (2x2 N_total comparison figure)
-# ==============================================================================
 echo "=================================="
-echo "Rendering eval report..."
+echo "All steps completed successfully!"
 echo "=================================="
-
-cd "${SCRIPT_DIR}/.."
-quarto render reports/eval_report.qmd --output-dir "$OUTPUT_DATA_DIR/eval"
-
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "=================================="
-    echo "Step 3 completed: Eval report"
-    echo "=================================="
-else
-    echo ""
-    echo "=================================="
-    echo "ERROR: Eval report rendering failed!"
-    echo "=================================="
-    exit 1
-fi
-
-# ==============================================================================
-# Step 4: Render hybrid model pipeline eval report
-# ==============================================================================
-HYBRID_PIPELINE_DATA_SOURCE="${HYBRID_PIPELINE_DATA_SOURCE:-experiment}"  # experiment | test
-
-echo "=================================="
-echo "Step 4: Rendering hybrid pipeline eval report (source=$HYBRID_PIPELINE_DATA_SOURCE)..."
-echo "=================================="
-
-quarto render reports/hybrid_model_pipeline_eval.qmd \
-    --output-dir "$OUTPUT_DATA_DIR/eval" \
-    -P experiment_name:"$EXPERIMENT_NAME" \
-    -P version:"$VERSION" \
-    -P data_source:"$HYBRID_PIPELINE_DATA_SOURCE"
-
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "=================================="
-    echo "All steps completed successfully!"
-    echo "=================================="
-    echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
-    echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
-    echo "Reports:"
-    echo "  - $OUTPUT_DATA_DIR/eval/eval_report.html"
-    echo "  - $OUTPUT_DATA_DIR/eval/hybrid_model_pipeline_eval.html"
-    echo "Figures (eval_report):"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/ntot_model_beta_methods_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_reward_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/mean_entropy_comparison.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/participant_reward_correlation.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_demonstrator_watches.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/play_game_correlation_difference.png"
-    echo "  - ... (see reports/eval_report.qmd)"
-    echo "Figures (hybrid_model_pipeline_eval):"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_expert_first.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_pipeline_cross_session_novice_first.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_selection_probs_expert_first.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_selection_probs_novice_first.png"
-    echo "  - $OUTPUT_DATA_DIR/eval/figures/hybrid_model_pipeline_sessions/"
-else
-    echo ""
-    echo "=================================="
-    echo "ERROR: Hybrid pipeline eval report rendering failed!"
-    echo "=================================="
-    exit 1
-fi
-
-
+echo "Eval data:  $OUTPUT_DATA_DIR/eval/data/"
+echo "Eval plots: $OUTPUT_DATA_DIR/eval/figures/"
