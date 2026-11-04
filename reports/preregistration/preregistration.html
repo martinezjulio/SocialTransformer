@@ -3244,17 +3244,15 @@ window.Quarto = {
   <li><a href="#sec-partner-choice" id="toc-sec-partner-choice" class="nav-link" data-scroll-target="#sec-partner-choice"><span class="header-section-number">4.2</span> Mixed-effects model of partner choice</a></li>
   <li><a href="#sec-policy-models" id="toc-sec-policy-models" class="nav-link" data-scroll-target="#sec-policy-models"><span class="header-section-number">4.3</span> Policy models</a></li>
   <li><a href="#sec-fitting" id="toc-sec-fitting" class="nav-link" data-scroll-target="#sec-fitting"><span class="header-section-number">4.4</span> Fitting and model comparison</a></li>
-  <li><a href="#sec-ppc" id="toc-sec-ppc" class="nav-link" data-scroll-target="#sec-ppc"><span class="header-section-number">4.5</span> Posterior predictive checks</a></li>
   </ul></li>
-  <li><a href="#sec-exploratory-list" id="toc-sec-exploratory-list" class="nav-link" data-scroll-target="#sec-exploratory-list"><span class="header-section-number">5</span> Exploratory analyses</a></li>
-  <li><a href="#sec-sampling" id="toc-sec-sampling" class="nav-link" data-scroll-target="#sec-sampling"><span class="header-section-number">6</span> Sampling plan</a>
+  <li><a href="#sec-sampling" id="toc-sec-sampling" class="nav-link" data-scroll-target="#sec-sampling"><span class="header-section-number">5</span> Sampling plan</a>
   <ul class="collapse">
-  <li><a href="#sec-existing-data" id="toc-sec-existing-data" class="nav-link" data-scroll-target="#sec-existing-data"><span class="header-section-number">6.1</span> Existing data</a></li>
-  <li><a href="#sec-participants" id="toc-sec-participants" class="nav-link" data-scroll-target="#sec-participants"><span class="header-section-number">6.2</span> Participants and sampling</a></li>
-  <li><a href="#sec-power" id="toc-sec-power" class="nav-link" data-scroll-target="#sec-power"><span class="header-section-number">6.3</span> Power analysis and sample size</a></li>
-  <li><a href="#sec-exclusions" id="toc-sec-exclusions" class="nav-link" data-scroll-target="#sec-exclusions"><span class="header-section-number">6.4</span> Exclusions</a></li>
+  <li><a href="#sec-existing-data" id="toc-sec-existing-data" class="nav-link" data-scroll-target="#sec-existing-data"><span class="header-section-number">5.1</span> Pilot Data</a></li>
+  <li><a href="#sec-power" id="toc-sec-power" class="nav-link" data-scroll-target="#sec-power"><span class="header-section-number">5.2</span> Power analysis and sample size</a></li>
+  <li><a href="#sec-participants" id="toc-sec-participants" class="nav-link" data-scroll-target="#sec-participants"><span class="header-section-number">5.3</span> Participants and sampling</a></li>
+  <li><a href="#sec-exclusions" id="toc-sec-exclusions" class="nav-link" data-scroll-target="#sec-exclusions"><span class="header-section-number">5.4</span> Exclusions</a></li>
   </ul></li>
-  <li><a href="#sec-availability" id="toc-sec-availability" class="nav-link" data-scroll-target="#sec-availability"><span class="header-section-number">7</span> Frozen artefacts, reporting and data availability</a></li>
+  <li><a href="#sec-availability" id="toc-sec-availability" class="nav-link" data-scroll-target="#sec-availability"><span class="header-section-number">6</span> Reporting and data availability</a></li>
   </ul>
 <div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="preregistration.pdf"><i class="bi bi-file-pdf"></i>PDF</a></li></ul></div></nav>
 </div>
@@ -3364,7 +3362,7 @@ Project links
 <li>Return screen</li>
 </ol>
 <p>The practice session is a sequence of games defined above as [Play, Watch, Play] all on the same bandit for familiarization and not analyzed.</p>
-<p><strong>Conditions.</strong> There are 3 conditions. 2 are social conditions made up of watch and play games. The third is a non-social or solo condition made up of entirely play games. Every participant sees every condition in random order. Each condition is split into rounds. Each round repeats the same set of games again but in a new bandit with new payoffs. In the social conditions both an expert and a novice demonstrator are watched in each round. The order of the type of demonstrator watched first is counterbalanced across participants. The social conditions end with a choice game whereas the solo condition does not. The table below shows the structure of each condition.</p>
+<p><strong>Conditions.</strong> The design is within-participants: there are 3 conditions and every participant completes all three, in random order. 2 are social conditions made up of watch and play games. The third is a non-social or solo condition made up entirely of play games. Each condition is split into rounds. Each round repeats the same set of games again but in a new bandit with new payoffs. In the social conditions both an expert and a novice demonstrator are watched in each round. The order of the type of demonstrator watched first is counterbalanced across participants. The social conditions end with a choice game whereas the solo condition does not. The table below shows the structure of each condition.</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 18%">
@@ -3447,19 +3445,19 @@ Project links
 <ul>
 <li>Estimand: out-of-sample predictive accuracy, ΔELPD, of the full policy model reading the expert’s belief minus the same model reading the last-watched demonstrator’s belief (S1a) and minus the same model reading the novice’s belief (S1b), with the standard error paired over participants.</li>
 <li>Models: HOS of expert vs recent (S1a) and vs novice (S1b).</li>
-<li>Rule: not a test; each part ΔELPD, <a href="#eq-elpd" class="quarto-xref">Equation 7</a>, &gt; 2 paired SE, reported with its SE; both required.</li>
+<li>Rule: not a test; each part ΔELPD, <a href="#eq-elpd" class="quarto-xref">Equation 7</a>, &gt; 2 paired SE, reported with its SE.</li>
 </ul></li>
 <li><strong>S2.</strong> Arm choices are predicted better by models that use the estimate of the expert’s beliefs than by models that simply count the successes and failures of 1. the most recent demonstrator they watched (S2a), 2. the expert demonstrator they watched (S2b), or 3. every demonstrator they watched (S2c).
 <ul>
 <li>Estimand: ΔELPD of the full model minus the same model with the expert’s belief replaced by a Beta count of the visible choices of the last demonstration (S2a), of the expert’s demonstration on this bandit (S2b), and of every choice seen on this bandit this round (S2c).</li>
 <li>Models: HOS of expert vs naive-recent (S2a), vs naive-expert (S2b) and vs naive (S2c).</li>
-<li>Rule: not a test; each part ΔELPD &gt; 2 paired SE, reported with its SE; all required.</li>
+<li>Rule: not a test; each part ΔELPD &gt; 2 paired SE, reported with its SE.</li>
 </ul></li>
 <li><strong>S3.</strong> Arm choices are predicted better by models that use the estimate of the expert’s beliefs alone than by models that use only own experience (S3a). Similarly, models that use the estimate of the expert’s beliefs as well as own experience predict choices better than models that use only own experience (S3b).
 <ul>
 <li>Estimand: ΔELPD of the model with the expert’s belief and no own outcomes minus the model with own outcomes and no belief (S3a), and of the full model minus the model with own outcomes and no belief (S3b).</li>
 <li>Models: HS vs HO (S3a), HOS vs HO (S3b).</li>
-<li>Rule: not a test; each ΔELPD &gt; 2 paired SE, reported with its SE; both required.</li>
+<li>Rule: not a test; each ΔELPD &gt; 2 paired SE, reported with its SE.</li>
 </ul></li>
 <li><strong>S4.</strong> Participants are more influenced by the expert’s belief in round 2 after watching the novice than in round 1 after watching the novice.
 <ul>
@@ -3468,7 +3466,7 @@ Project links
 <li>Rule: posterior interval, not a test; 95% ETI of <span class="math inline">\(\Delta\)</span> excludes 0 on the predicted side.</li>
 </ul></li>
 </ul>
-<p><strong>Rules and verdicts.</strong> The Holm correction applies across the outcomes within a hypothesis. Verdicts are <em>supported</em>, <em>not supported</em> or <em>contradicted</em>. No smallest effect of interest is registered.</p>
+<p><strong>Rules and verdicts.</strong> The Holm correction applies across the outcomes within a hypothesis. Verdicts are <em>supported</em>, <em>not supported</em>, <em>contradicted</em> or, for the secondary claims, <em>not evaluable</em> (<a href="#sec-fitting" class="quarto-xref">Section 4.4</a>). No smallest effect of interest is registered.</p>
 </section>
 <section id="sec-analysis" class="level1" data-number="4">
 <h1 data-number="4"><span class="header-section-number">4</span> Models and analysis</h1>
@@ -3519,13 +3517,7 @@ p_k = \int_0^1 f_k(x) \prod_{j \ne k} F_j(x)\, dx,
 \pi_k = \frac{\exp \ell_k}{\sum_j \exp \ell_j}, \qquad P(a_t = k) = (1 - \varepsilon)\, \pi_k + \frac{\varepsilon}{K}, \qquad \varepsilon = 0.02.
 \tag{4}\]</span></span></p>
 <p>Without the readout, the readout term of <a href="#eq-belief" class="quarto-xref">Equation 1</a> is replaced by 1, so <span class="math inline">\(\alpha_k = 1 + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k\)</span> and likewise <span class="math inline">\(\beta_k\)</span> with the failure counts, or <span class="math inline">\(\alpha_k = \beta_k = 1\)</span> for perseveration alone. Without the win-stay lose-shift <span class="math inline">\(\ell_k = \log p_k\)</span> and <span class="math inline">\(\pi_k = p_k\)</span>.</p>
-<p>How parameters are shared across participants and conditions is described in the table below.</p>
-<ul>
-<li><span class="math inline">\(\kappa_i\)</span>, <span class="math inline">\(\rho_{0,i}\)</span>, <span class="math inline">\(\rho_{\mathrm{win},i}\)</span>: hierarchical, one value per participant drawn from a group mean, <span class="math inline">\(\kappa\)</span> on a log scale.</li>
-<li><span class="math inline">\(\lambda_{\mathrm{w}}\)</span>, <span class="math inline">\(\lambda_{\mathrm{c}}\)</span>: group-level.</li>
-<li><span class="math inline">\(\varepsilon\)</span>: fixed at 0.02.</li>
-</ul>
-<p>Every prior is listed below.</p>
+<p><strong>Hierarchical and group-level parameters.</strong> <span class="math inline">\(\kappa_i\)</span> and <span class="math inline">\(\rho_i\)</span> are fitted per participant since every trial carries evidence for them: <span class="math inline">\(\kappa_i\)</span> scales the readout, and is present on all 48 shots, and <span class="math inline">\(\rho_i\)</span> acts on the previous arm, which exists on every trial after the first. However <span class="math inline">\(\lambda_{\mathrm{w}}\)</span> and <span class="math inline">\(\lambda_{\mathrm{c}}\)</span> only act on the arms a participant has already attempted. Because there are 12 arms, 48 trials total results in a participant providing very few informative shots to estimate them. Hence why they are strictly pooled across participants. The lapse rate <span class="math inline">\(\varepsilon\)</span> is fixed at 0.02 rather than fitted. This allows every every arm to have some probability of occuring so that a single stray trials do not dominate the likelihood.</p>
 <p><strong>The ladder.</strong> Every other model is <a href="#eq-belief" class="quarto-xref">Equation 1</a> to <a href="#eq-choice" class="quarto-xref">Equation 4</a> with a term replaced or removed. HOS isthe model with all terms. Models missing the habit term drop the H, and similarly for O and S. The models of S1 to S3, each described as a change from HOS:</p>
 <table class="caption-top table">
 <colgroup>
@@ -3608,7 +3600,7 @@ P(a_t = k) = (1 - \varepsilon)\,\big[\omega_t\, \pi^{E}_k + (1 - \omega_t)\, \pi
 </tr>
 </tbody>
 </table>
-<p><strong>Priors.</strong> Hierarchical parameters are non-centred. The group mean is <span class="math inline">\(\mu\)</span>, the group spread is <span class="math inline">\(\tau\)</span> and the standard-normal participant deviation is <span class="math inline">\(z_i\)</span>. They are combined as <span class="math inline">\(\mu + \tau z_i\)</span> on the scale named in the table below. Parameters with the participant subscript <span class="math inline">\(i\)</span> are hierarchical. The rest are group-level. The exploratory variants of <a href="#sec-exploratory-list" class="quarto-xref">Section 5</a> add parameters whose priors are in the fitting code at the registered tag.</p>
+<p><strong>Priors.</strong> Hierarchical parameters are non-centred. The group mean is <span class="math inline">\(\mu\)</span>, the group spread is <span class="math inline">\(\tau\)</span> and the standard-normal participant deviation is <span class="math inline">\(z_i\)</span>. They are combined as <span class="math inline">\(\mu + \tau z_i\)</span> on the scale named in the table below. Parameters with the participant subscript <span class="math inline">\(i\)</span> are hierarchical. The rest are group-level. The exploratory variants add parameters whose priors are in the fitting code at the registered tag.</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 18%">
@@ -3668,225 +3660,28 @@ P(a_t = k) = (1 - \varepsilon)\,\big[\omega_t\, \pi^{E}_k + (1 - \omega_t)\, \pi
 </section>
 <section id="sec-fitting" class="level2" data-number="4.4">
 <h2 data-number="4.4" class="anchored" data-anchor-id="sec-fitting"><span class="header-section-number">4.4</span> Fitting and model comparison</h2>
-<p><strong>Thompson probabilities.</strong> <a href="#eq-thompson" class="quarto-xref">Equation 2</a> has no closed form. It is evaluated by trapezoidal quadrature on a uniform grid of the logit scale, over a dense grid of <span class="math inline">\(\kappa\)</span>, <span class="math inline">\(\lambda_{\mathrm{w}}\)</span> and <span class="math inline">\(\lambda_{\mathrm{c}}\)</span> (accurate to about <span class="math inline">\(10^{-7}\)</span>) and interpolated, so every model shares one likelihood.</p>
-<p><strong>Sampling and gate.</strong> Every model is fitted with NUTS in NumPyro, four chains of 1,000 warm-up and 1,000 sampling iterations at target acceptance 0.9. A fit passes when <span class="math inline">\(\hat{R} &lt; 1.01\)</span> and bulk and tail effective sample sizes are at least 400 on every parameter, with no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations at acceptance 0.95, then 4,000 + 4,000 at 0.99; a fit that fails the last rung is not reported.</p>
-<p><strong>Comparison.</strong> Models are compared by expected log predictive density estimated with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over shots. For models <span class="math inline">\(A\)</span> and <span class="math inline">\(B\)</span>, with <span class="math inline">\(d_i\)</span> the sum over participant <span class="math inline">\(i\)</span>’s shots of the pointwise difference and <span class="math inline">\(N\)</span> the number of participants,</p>
+<p><strong>Thompson probabilities.</strong> <a href="#eq-thompson" class="quarto-xref">Equation 2</a> is evaluated with trapezoidal quadrature on a uniform grid of the logit scale, over a dense grid of <span class="math inline">\(\kappa\)</span>, <span class="math inline">\(\lambda_{\mathrm{w}}\)</span> and <span class="math inline">\(\lambda_{\mathrm{c}}\)</span> and interpolated. This was checked to be accurate to about <span class="math inline">\(10^{-7}\)</span>.</p>
+<p><strong>Sampling and gate.</strong> Every model is fitted with NUTS in NumPyro. Here we use four chains of 1,000 warm-up iterations and 1,000 sampling iterations with the sampler set to target accerptance of 0.9. A fit passes when <span class="math inline">\(\hat{R} &lt; 1.01\)</span> and bulk and tail effective sample sizes are at least 400 on every parameter and no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations with target acceptance increased to 0.95, then 4,000 + 4,000 with target acceptance increase to 0.99. Any fit that fails the last rung is not reported.</p>
+<p><strong>Comparison.</strong> Models are compared by expected log predictive density estimated (ELPD) with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over trials. For any two given models <span class="math inline">\(A\)</span> and <span class="math inline">\(B\)</span>, where <span class="math inline">\(d_i\)</span> the sum over participant <span class="math inline">\(i\)</span>’s shots of the pointwise difference between the two models, and <span class="math inline">\(N\)</span> is the the number of participants we compute</p>
 <p><span id="eq-elpd"><span class="math display">\[
 \Delta\mathrm{ELPD}_{AB} = \sum_{i=1}^{N} d_i, \qquad \mathrm{SE}_{AB} = \sqrt{N}\; \mathrm{sd}(d_1, \ldots, d_N),
 \tag{7}\]</span></span></p>
-<p>so the standard error is paired over participants. A comparison supports <span class="math inline">\(A\)</span> when <span class="math inline">\(\Delta\mathrm{ELPD}_{AB} &gt; 2\, \mathrm{SE}_{AB}\)</span>. A shot whose Pareto <span class="math inline">\(k\)</span> exceeds 0.7 has an unreliable importance estimate; for HOS and its five rivals of S1 and S2, every session holding such a shot is refitted without that session and its shots enter by their exact held-out log predictive density.</p>
-<p><strong>Verdicts.</strong> A multi-part claim is <em>supported</em> only if every part clears the rule, <em>contradicted</em> if any part favours the rival by more than two standard errors, and <em>not supported</em> otherwise; every part’s verdict is reported. A claim is <em>not evaluable</em> when a fit it needs failed the gate or its recovery check below failed; the comparison is still reported.</p>
-<p><strong>Recovery checks.</strong> Two simulation checks run on the frozen code before any verdict is read. (a) Parameter recovery of <span class="math inline">\(\delta_N\)</span>: 25 datasets of 100 simulated participants are generated from posterior draws of the Switch-by-round fit to the analysed data, each played through the full experiment with the transformer re-read before every play game, and refitted with the registered pipeline; the check passes when the 95% intervals cover the true <span class="math inline">\(\delta_N\)</span> and exclude zero on its side in at least 22 of 25. (b) Model recovery for S1a (HOS vs recent) and S2a (HOS vs naive-recent): five datasets are generated from each model of the pair and both are fitted to each; the check passes when the generating model wins a majority of its own datasets and at most a minority of its rival’s, an undecided dataset counting for the rival. The S1a and S2a checks gate S1 and S2; the <span class="math inline">\(\delta_N\)</span> check gates S4.</p>
-</section>
-<section id="sec-ppc" class="level2" data-number="4.5">
-<h2 data-number="4.5" class="anchored" data-anchor-id="sec-ppc"><span class="header-section-number">4.5</span> Posterior predictive checks</h2>
-<p><strong>Free-running check.</strong> The fitted HOS and Switch-by-round models are each made to play the experiment and their behaviour compared with the participants’. At each of 50 posterior draws spaced evenly over the chains, every participant replays their own two social sessions with their drawn parameters: the fitted policy takes every shot of every play game, the demonstrations are the ones the participant saw, and the transformer is re-read before each play game so that the readout entering a round’s second play game reflects the simulated first one. Five statistics are computed on each replay exactly as on the human data, each a mean over participants of a per-participant mean:</p>
-<ol type="1">
-<li>the after-novice payoff rise from round 1 to round 2 (H2’s quantity);</li>
-<li>the entropy fall from round 1 to round 2 over the social play games (H3’s quantity);</li>
-<li>the novice-first zig-zag, payoff after the expert minus after the novice within novice-first sessions;</li>
-<li>the share of shots that repeat the previous arm after a win;</li>
-<li>the same share after a loss.</li>
-</ol>
-<p>For each statistic the 2.5th and 97.5th percentiles over the 50 replays form a 95% band, and the check passes when the human value lies inside it. A missed target does not change any verdict: the checks are registered as a description of what the winning model can and cannot reproduce, reported for every target and both models in a figure with the human value against the band, and discussed as such.</p>
-<p><strong>Split-half generative check (exploratory).</strong> The same two models are fitted on a random half of the participants (fixed seed) and the other half is replayed at each of the 50 draws with parameters drawn fresh from the fitted group-level hierarchy rather than their own posteriors, so the band shows what the population model predicts for participants it has never seen. The five statistics of the held-out half are compared with the band in the same way and reported beside the main check.</p>
+<p>so the standard error is paired over participants. A comparison supports <span class="math inline">\(A\)</span> when <span class="math inline">\(\Delta\mathrm{ELPD}_{AB} &gt; 2\, \mathrm{SE}_{AB}\)</span>. A trial whose Pareto <span class="math inline">\(k\)</span> exceeds 0.7 is an unreliable importance estimate. Every session containing such a trial is held out entirely and the model is refitted without it, and all of that session’s trials enter by their true leave-one-session-out log predictive density under that refit. The number of sessions refitted per model is reported beside each <span class="math inline">\(\Delta\mathrm{ELPD}\)</span>.</p>
+<p><strong>Verdicts.</strong> A comparison is contradicted when the rival is favoured by more than two standard errors. A claim is not evaluable when a fit it needs failed the gate or its recovery check failed; the comparison is still reported.</p>
 </section>
 </section>
-<section id="sec-exploratory-list" class="level1" data-number="5">
-<h1 data-number="5"><span class="header-section-number">5</span> Exploratory analyses</h1>
-<p><strong>The analyses below are ones that may be run, not a commitment to run every one of them.</strong> They are written down as a closed list so that whichever of them appear in the paper were planned before the data arrived rather than invented afterwards; an analysis in the list that is not run is simply not reported. None of them carries a decision rule: each is reported with its estimate and 95% interval, and where an expectation is stated it is a prior belief that frames the reading, not a test. Anything not in <a href="#sec-hypotheses" class="quarto-xref">Section 3</a> or in this list is post hoc; if it appears in the paper it is labelled post hoc and stated to have been chosen after seeing the data.</p>
-<table class="caption-top table">
-<colgroup>
-<col style="width: 3%">
-<col style="width: 32%">
-<col style="width: 41%">
-<col style="width: 22%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Analysis</th>
-<th>What is reported</th>
-<th>Expectation</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>E1</td>
-<td>after-expert round change</td>
-<td>round 2 minus round 1 in the after-expert cells, from the model of <a href="#sec-descriptive" class="quarto-xref">Section 4.1</a>, all outcomes</td>
-<td>no fall; may rise</td>
-</tr>
-<tr class="even">
-<td>E2</td>
-<td>the other social cells vs solo’s final game</td>
-<td>H5’s comparison with the after-novice cells (E2a) and with the social cells averaged over demonstrators (E2b) in place of the after-expert cells, and H5 within round 2 alone (E2c) (payoff)</td>
-<td>after-novice near zero; the average positive and smaller than H5; round 2 like H5</td>
-</tr>
-<tr class="odd">
-<td>E3</td>
-<td>the after-novice improvement vs solo practice</td>
-<td>H2’s difference minus the same round difference in solo’s first and second play, from the model of <a href="#sec-descriptive" class="quarto-xref">Section 4.1</a>, all outcomes; the solo term alone is reported as E3s</td>
-<td>payoff positive; entropy ambiguous, since solo entropy also falls with practice</td>
-</tr>
-<tr class="even">
-<td>E4</td>
-<td>reward</td>
-<td>the reward version of every contrast above, H1, H2, H5 and E1 to E3, with its 95% interval (<a href="#sec-descriptive" class="quarto-xref">Section 4.1</a>)</td>
-<td>same sign as payoff, wider intervals</td>
-</tr>
-<tr class="odd">
-<td>E5</td>
-<td>condition breakdown of the after-novice round change</td>
-<td>H2’s contrast within expert-first and within novice-first separately; in novice-first the round 2 after-novice game is on a new bandit before the expert has been seen on it, so any improvement there is carried over from round 1</td>
-<td>none stated</td>
-</tr>
-<tr class="even">
-<td>E6</td>
-<td>sensitivity of H1, H2, H3 and H5</td>
-<td>the model of <a href="#sec-descriptive" class="quarto-xref">Section 4.1</a> refitted two ways, each reporting estimate, interval and uncorrected <span class="math inline">\(p\)</span>-value without Holm or verdict: (a) random slopes for round and play by participant, coded <span class="math inline">\(-\tfrac12\)</span> and <span class="math inline">\(+\tfrac12\)</span>, reduced to uncorrelated slopes and then to the intercept-only model if singular or non-convergent, the specification reached reported; (b) session order as a numeric covariate in the fixed part, cell means taken at its mean</td>
-<td>same verdicts</td>
-</tr>
-<tr class="odd">
-<td>E7</td>
-<td>reported ladder rungs</td>
-<td>paired ΔELPD with its SE, <a href="#eq-elpd" class="quarto-xref">Equation 7</a>, as rows of the choice stage: the ladder’s difference from HOS for OS (habit), HOS+persev (perseveration) and HOS-reset (own outcomes not carried between play games), and the two paired rows HOS minus HS (own experience on top of the readout) and S minus O (social belief against own experience)</td>
-<td>habit positive; S over O positive; the rest near zero</td>
-</tr>
-<tr class="even">
-<td>E8</td>
-<td><span class="math inline">\(\delta_E\)</span></td>
-<td>the round change of the weight on the expert’s belief after the expert, <a href="#eq-switch" class="quarto-xref">Equation 6</a>, as its posterior mean and 95% ETI from the Switch-by-round fit</td>
-<td>no fall</td>
-</tr>
-<tr class="odd">
-<td>E9</td>
-<td>Switch-by-round vs Switch</td>
-<td>ΔELPD of the round term; beside it, model recovery for this pair run as in check (b) of <a href="#sec-fitting" class="quarto-xref">Section 4.4</a></td>
-<td>positive</td>
-</tr>
-<tr class="even">
-<td>E10</td>
-<td>robustness of S4</td>
-<td>three refits, each reporting posterior means with 95% ETIs: Switch-by-round with a group-level round trend on <span class="math inline">\(\log\kappa\)</span> (Switch-by-round+ktrend: <span class="math inline">\(\delta_\kappa\)</span> and <span class="math inline">\(\delta_N\)</span>); HOS with the lapse rate free at group level (HOS+eps: <span class="math inline">\(\varepsilon\)</span> and the group-level <span class="math inline">\(\kappa\)</span>); Switch-by-round with the lapse rate free (Switch-by-round+eps: <span class="math inline">\(\varepsilon\)</span> and <span class="math inline">\(\delta_N\)</span>)</td>
-<td><span class="math inline">\(\Delta\)</span> unchanged in sign and interval</td>
-</tr>
-<tr class="odd">
-<td>E11</td>
-<td>the unseen-expert readout</td>
-<td>the five analyses (a) to (e) of the table below</td>
-<td>the expert’s readout matters before the expert is seen on the bandit, in round 2</td>
-</tr>
-<tr class="even">
-<td>E12</td>
-<td>recency in the partner choice</td>
-<td>the model of <a href="#sec-partner-choice" class="quarto-xref">Section 4.2</a> with condition added, <code>chose_expert ~ condition + (1 | participant)</code> under sum-to-zero coding, so the condition term is half the expert-first minus novice-first difference on the logit scale; in expert-first the novice was watched last, in novice-first the expert, so a term near zero means the choice tracks expertise rather than recency</td>
-<td>near zero</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Contrasts of E1 to E3.</strong> Written as in the table of <a href="#sec-hypotheses" class="quarto-xref">Section 3</a>; <code>demo == &quot;none&quot;</code> selects the solo cells and <code>play == &quot;second&quot;</code> solo’s final game of a round.</p>
-<table class="caption-top table">
-<colgroup>
-<col style="width: 2%">
-<col style="width: 97%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Contrast</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>E1</td>
-<td><code>m(demo == &quot;expert&quot; &amp; round == 2) - m(demo == &quot;expert&quot; &amp; round == 1)</code></td>
-</tr>
-<tr class="even">
-<td>E2a</td>
-<td><code>m(demo == &quot;novice&quot;) - m(demo == &quot;none&quot; &amp; play == &quot;second&quot;)</code></td>
-</tr>
-<tr class="odd">
-<td>E2b</td>
-<td><code>m(demo != &quot;none&quot;) - m(demo == &quot;none&quot; &amp; play == &quot;second&quot;)</code></td>
-</tr>
-<tr class="even">
-<td>E2c</td>
-<td><code>m(demo == &quot;expert&quot; &amp; round == 2) - m(demo == &quot;none&quot; &amp; play == &quot;second&quot; &amp; round == 2)</code></td>
-</tr>
-<tr class="odd">
-<td>E3</td>
-<td><code>(m(demo == &quot;novice&quot; &amp; round == 2) - m(demo == &quot;novice&quot; &amp; round == 1)) - (m(demo == &quot;none&quot; &amp; round == 2) - m(demo == &quot;none&quot; &amp; round == 1))</code></td>
-</tr>
-<tr class="even">
-<td>E3s</td>
-<td><code>m(demo == &quot;none&quot; &amp; round == 2) - m(demo == &quot;none&quot; &amp; round == 1)</code></td>
-</tr>
-</tbody>
-</table>
-<p><strong>E11, the unseen-expert readout.</strong> In the novice-first condition, the first play game of round 2 follows the novice’s demonstration on a new bandit, before the expert has shot on it; the readout of the expert’s belief there can draw only on the expert’s earlier bandit and on the novice’s shots. Whether that readout is still the better account of choices, and what it contains, is E11. The five analyses are fixed outputs of the pipeline (<code>src/analysis/unseen.py</code> and the Switch-8 fit), carry no decision rule, and are read with the caveat registered beside S4 (<a href="#sec-policy-models" class="quarto-xref">Section 4.3</a>). The expectation is that the expert’s readout matters before the expert is seen, in round 2 but not in round 1.</p>
-<table class="caption-top table">
-<colgroup>
-<col style="width: 3%">
-<col style="width: 26%">
-<col style="width: 70%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Analysis</th>
-<th>What is computed</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>a</td>
-<td>what the readout contains</td>
-<td>per readout (expert, novice), bandit state (expert already seen on it or not) and round, the readout entering a play game is scored four ways: its confidence (the total Beta count), the Spearman rank correlation of its arm means with the true payoffs, the true payoff of its favourite arm, and the entropy of the Thompson policy on it at <span class="math inline">\(\kappa = 1\)</span>; each a mean over sessions with its standard error</td>
-</tr>
-<tr class="even">
-<td>b</td>
-<td>the readout against copying</td>
-<td>on after-novice play games, by expert-seen and round: the rank correlation across arms between the unseen-expert readout and the copying belief, <span class="math inline">\(\mathrm{Beta}(1 + \text{wins}, 1 + \text{losses})\)</span> from the novice’s visible shots, and of each with the truth</td>
-</tr>
-<tr class="odd">
-<td>c</td>
-<td>the ELPD split</td>
-<td>two paired comparisons from the fits of <a href="#sec-fitting" class="quarto-xref">Section 4.4</a>, cut into the after-novice cells of expert-seen <span class="math inline">\(\times\)</span> round with <a href="#eq-elpd" class="quarto-xref">Equation 7</a> per cell: HOS against naive-recent (S2a’s pair) and HOS against recent, which on these shots reads the novice’s belief (S1a’s pair, so the cells add up to S1a)</td>
-</tr>
-<tr class="even">
-<td>d</td>
-<td>the exploit statistic</td>
-<td>model-free, on after-novice shots by expert-seen and round: the share of a participant’s shots on arms where the novice’s demonstration succeeded at least once, beside the share of such arms among the twelve (chance) and the share of the participant’s shots on arms the novice tried at all; mean and standard error over participants. Exploiting the evidence raises the first share above chance without raising the third</td>
-</tr>
-<tr class="odd">
-<td>e</td>
-<td>the eight-weight switch model</td>
-<td>Switch-8 (<a href="#sec-policy-models" class="quarto-xref">Section 4.3</a>) gives one group-level weight on the expert’s policy per last demonstrator <span class="math inline">\(\times\)</span> round <span class="math inline">\(\times\)</span> condition, laid out in session order so that the after-novice weight in round 2 of novice-first, where the expert is unseen, can be read against the same cell in round 1 and against round 2 of expert-first, where the expert has been seen</td>
-</tr>
-</tbody>
-</table>
-</section>
-<section id="sec-sampling" class="level1" data-number="6">
-<h1 data-number="6"><span class="header-section-number">6</span> Sampling plan</h1>
-<section id="sec-existing-data" class="level2" data-number="6.1">
-<h2 data-number="6.1" class="anchored" data-anchor-id="sec-existing-data"><span class="header-section-number">6.1</span> Existing data</h2>
+<section id="sec-sampling" class="level1" data-number="5">
+<h1 data-number="5"><span class="header-section-number">5</span> Sampling plan</h1>
+<section id="sec-existing-data" class="level2" data-number="5.1">
+<h2 data-number="5.1" class="anchored" data-anchor-id="sec-existing-data"><span class="header-section-number">5.1</span> Pilot Data</h2>
 <!-- 1.1 the pilots statement (MP 5.4) -->
-<p>Registration prior to creation of the confirmatory data. Several pilots of this task were run to work out the arm payoffs, the expert demonstrators’ experience level, the framing and reward labelling, and the labelling of demonstrators, zones and expeditions throughout the game. The last pilot (pilot E, 38 participants, three sessions each) ran the final version of the task, and the models and hypotheses in this document were developed on it. Pilot E numbers appear below only as descriptive context and as the assumptions of the sample-size analysis, and are labelled as such; none of the pilot data enters the confirmatory dataset, and no pilot participant may take part in the full study. Pilot participants were not asked for consent to data sharing, so the pilot trial data are not released; the IRB protocol permits their internal use for the sample-size analysis, whose inputs, method and outputs are reported in <a href="#sec-power" class="quarto-xref">Section 6.3</a> and whose output tables are attached to the registration. A reader can check the sample-size chain from those tables but cannot re-run the simulation. No further pilot precedes the full run; if the task code changes before recruitment (for example new log fields), the new fields are checked by the experimenter, not piloted.</p>
+<p>Multiple pilots of this was were run prior to this preregistration. These were used to develop the task along with the specific framing reward labeling and clarify of partners and zones (the bandits) to clearly distinguish them from each other. These were also helpful as data for developing and debugging the models and finally in generating the hypotheses and estimating the sample size. Only the final pilot, referred to as pilot E, was used in the power analysis since only that pilot used the finalized version of the task. Pilot E was run with 38 participants after all exclusions.</p>
 </section>
-<section id="sec-participants" class="level2" data-number="6.2">
-<h2 data-number="6.2" class="anchored" data-anchor-id="sec-participants"><span class="header-section-number">6.2</span> Participants and sampling</h2>
-<!-- 3.1 population, prescreens, consent and data-sharing check; 3.3 stopping rule -->
-<p><strong>Population and recruitment.</strong> Participants are recruited on Prolific with these prescreens: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. The colour-vision prescreen is Prolific’s stored profile self-report, unverified and possibly old, so it removes people who know they are colour blind and no more; the two partner starships and the asteroids are told apart partly by colour but also by name and image, and the game asks no colour-vision question of its own (the stored answer is exclusion rule X2 of <a href="#sec-exclusions" class="quarto-xref">Section 6.4</a>). Two platform filters are added: an approval rate of 95% or higher on previous studies and at least 10 previous submissions. Anyone who took part in any pilot of this task or in the related experiments of our earlier work is excluded in advance through a Prolific participant group of their IDs. The target sample size <span class="math inline">\(N\)</span> is set in <a href="#sec-power" class="quarto-xref">Section 6.3</a>.</p>
-<p><strong>Stopping rule.</strong> Recruitment runs in batches on Prolific until <span class="math inline">\(N = 350\)</span> participants (<a href="#sec-power" class="quarto-xref">Section 6.3</a>) have all three sessions complete and survive every exclusion rule of <a href="#sec-exclusions" class="quarto-xref">Section 6.4</a>. After each batch the exclusion script is run to count survivors, and that count is the only thing looked at before the end: no confirmatory outcome, contrast or model is computed on any part of the data until recruitment has closed. Batches are sized so that the last one is expected to reach <span class="math inline">\(N\)</span> with a small overshoot; every participant in the final batch who passes the rules is analysed, so the analysed sample may exceed <span class="math inline">\(N\)</span> by a few and is never trimmed to hit it exactly. Recruitment is not stopped early for any reason other than reaching <span class="math inline">\(N\)</span>, is not bounded by a spending limit, and is not extended beyond <span class="math inline">\(N\)</span> to chase a result. Bonuses are paid after each batch.</p>
-<p><strong>Payment.</strong> A base payment of $2, which assumes completion in 10 minutes at $12 per hour, plus the performance bonus of 2 cents per point earned in play games, accumulated across sessions and shown in the game as a running total (watch games and the choice game earn nothing), paid in bulk after each batch. In pilot E the median time from start to finish was 12 minutes (quartiles 10 to 15). Participants who decline consent on the first page return their submission unpaid and are not counted toward the sample.</p>
-<p><strong>Consent and data sharing.</strong> Participants consent on the first page. The one consent covers both taking part and the de-identified public sharing of the data; there is no separate sharing item, so every analysed participant’s anonymised trial data are released (<a href="#sec-availability" class="quarto-xref">Section 7</a>). Age and sex, taken from Prolific’s profile export, are summarised by the preprocessing script over the analysed sample (mean, SD and range of age; counts by sex) and reported descriptively; they enter no analysis and are not released per participant. The consent text is in the experiment repository at the registered tag.</p>
-</section>
-<section id="sec-power" class="level2" data-number="6.3">
-<h2 data-number="6.3" class="anchored" data-anchor-id="sec-power"><span class="header-section-number">6.3</span> Power analysis and sample size</h2>
+<section id="sec-power" class="level2" data-number="5.2">
+<h2 data-number="5.2" class="anchored" data-anchor-id="sec-power"><span class="header-section-number">5.2</span> Power analysis and sample size</h2>
 <!-- 3.4 simulation on pilot E, decision rates by N, chosen N -->
-<p><strong>Method.</strong> Power for H1 to H5 is estimated by simulation on pilot E, whose 38 participants are the only source of effect sizes and noise for this task, so every number below assumes the full run resembles the pilot. At each candidate <span class="math inline">\(N\)</span> in <span class="math inline">\(\{200, 250, 300, 350, 400, 500, 600, 700, 800\}\)</span>, <span class="math inline">\(N\)</span> participants are resampled with replacement from the pilot (a participant drawn twice becomes two distinct participants), the outcome model of <a href="#sec-descriptive" class="quarto-xref">Section 4.1</a> is refitted per outcome, every confirmatory contrast is evaluated and the rule of <a href="#sec-hypotheses" class="quarto-xref">Section 3</a> applied with Holm within a hypothesis; H4 is resampled the same way and the partner-choice model refitted. The rate of <em>supported</em> over 500 simulations per cell is the power estimate; no fit failed. Two effect sizes are simulated: the <em>pilot effect</em>, the resampled data as they are, and the <em>half effect</em>, every outcome shrunk toward its grand mean by half the pilot cell effect, which halves every contrast while keeping the noise and the participant structure (for H4, choices are regenerated from the pilot logistic fit with the common preference halved and each participant’s deviation kept). The script is <code>src/r/power_analysis.R</code>; its decision-rate table is attached to the registration.</p>
-<p><strong>Decision rates at the pilot effect.</strong> Every confirmatory test is at 1.00 at every <span class="math inline">\(N\)</span> on the grid (500 simulations per cell).</p>
+<p><strong>Method.</strong> Power is estimated only for the primary confirmatory hypotheses H1 to H5. Pilot E’s 38 participants were resampled with replacement to generate 500 different simulated datasets at the following sample sizes: <span class="math inline">\(N \in \{200, 250, 300, 350, 400, 500, 600, 700, 800\}\)</span>. Every contrast is evaluated on each simulated dataset using the same models in <a href="#sec-descriptive" class="quarto-xref">Section 4.1</a> with Holm correction applied within each hypothesis. The proportion of simulations that support each hypothesis is reported as the power estimate. We also report the power for each hypothesis at half the effect size observed in pilot E. The script is <code>src/r/power_analysis.R</code>.</p>
+<p><strong>Decision rates at the pilot effect.</strong></p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 30%">
@@ -4116,13 +3911,21 @@ P(a_t = k) = (1 - \varepsilon)\,\big[\omega_t\, \pi^{E}_k + (1 - \omega_t)\, \pi
 </tr>
 </tbody>
 </table>
-<p><strong>Secondary claims.</strong> S1 to S3 are model comparisons and S4 a posterior quantity; none is powered, and each is reported with its paired standard error or posterior interval whatever <span class="math inline">\(N\)</span> delivers.</p>
-<p><strong>Chosen sample size.</strong> We plan to recruit <span class="math inline">\(N = 350\)</span> participants who survive the exclusion rules of <a href="#sec-exclusions" class="quarto-xref">Section 6.4</a>. At <span class="math inline">\(N = 350\)</span> the lowest-powered claim, H2 on payoff, is at 0.91 at half the pilot effect.</p>
+<p><strong>Secondary claims.</strong> None of the secondary claims are powered, and each is reported with its paired standard error or posterior interval.</p>
+<p><strong>Chosen sample size.</strong> We plan to recruit <span class="math inline">\(N = 350\)</span> participants who survive the exclusion rules of <a href="#sec-exclusions" class="quarto-xref">Section 5.4</a>. At <span class="math inline">\(N = 350\)</span> the lowest-powered claim, H2 on payoff, is at 0.91 at half the pilot effect.</p>
 </section>
-<section id="sec-exclusions" class="level2" data-number="6.4">
-<h2 data-number="6.4" class="anchored" data-anchor-id="sec-exclusions"><span class="header-section-number">6.4</span> Exclusions</h2>
+<section id="sec-participants" class="level2" data-number="5.3">
+<h2 data-number="5.3" class="anchored" data-anchor-id="sec-participants"><span class="header-section-number">5.3</span> Participants and sampling</h2>
+<!-- 3.1 population, prescreens, consent and data-sharing check; 3.3 stopping rule -->
+<p><strong>Recruitment.</strong> Participants are recruited on Porlific. The following prescreens are applied: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. These are all self-reported on prolific and unverified. In addition anyone who took prior pilots of this task or related experiments of our earlier work is excluded in advance through Prilific’s prescreening feature.</p>
+<p><strong>Stopping rule.</strong> Recruitment will run in batcheson Prolific until we have N=350 participants that pass all exclusion rules. After each batch only the exclusion script is run to count survivors. Batches are sized so that the last batch is expected to reach N with a small overshoot. Every participant in the final batch who passes the rules will be included in the analysis.</p>
+<p><strong>Payment.</strong> A base payment of $2 will be paid to all participants who complete the task within the 60 minute cutoff. $2 assumes a payment of $12 per hour at a 10 minute completion pace. Pilot E median time to completion was 12 minutes. In addition participants will receive a 2 cent bonus for every point earned during the game. Participants who decline consent are returned right away and unpaid.</p>
+<p><strong>Consent and data sharing.</strong> Participants consent on the first page of the experiment. The single consent page discloses that the data will be de-identified, analysed and shared publicly, and agreeing to take part is consent to all of this. Every analysed participant’s anonymised trial data are released (<a href="#sec-availability" class="quarto-xref">Section 6</a>). Age and sex, from Prolific’s profile export, are reported only as summaries over the analysed sample and are not released per participant.</p>
+</section>
+<section id="sec-exclusions" class="level2" data-number="5.4">
+<h2 data-number="5.4" class="anchored" data-anchor-id="sec-exclusions"><span class="header-section-number">5.4</span> Exclusions</h2>
 <!-- 3.2 rules verbatim from preprocess_participant_data.R with pilot E rates -->
-<p>Every exclusion rule lives in one script, <code>src/r/preprocess_participant_data.R</code>, which writes a ledger of counts per rule (<code>exclusions.csv</code>). Nothing else is excluded. In particular no participant is dropped for poor performance, and the practice session plays no part in any rule.</p>
+<p>Every exclusion rule lives <code>src/r/preprocess_participant_data.R</code>, which writes a ledger of counts per rule (<code>exclusions.csv</code>). Nothing else is excluded.</p>
 <table class="caption-top table">
 <colgroup>
 <col style="width: 3%">
@@ -4220,14 +4023,12 @@ P(a_t = k) = (1 - \varepsilon)\,\big[\omega_t\, \pi^{E}_k + (1 - \omega_t)\, \pi
 </tr>
 </tbody>
 </table>
-<p>A Prolific time-out is not an exclusion. The 60-minute window of X4 is measured on the game’s own log, not by Prolific. Timed-out participants not otherwise excluded are thus kept and paid.</p>
+<p>A Prolific time-out is not considered an exclusion and participant data will still be included if completed and within the 60-minute window (X4). This is measured on the game’s own log, not by Prolific. Such participants are still paid.</p>
 </section>
 </section>
-<section id="sec-availability" class="level1" data-number="7">
-<h1 data-number="7"><span class="header-section-number">7</span> Frozen artefacts, reporting and data availability</h1>
-<!-- 6.1 release tag, commit hashes, checkpoint sha256, pinned environments; no retraining -->
-<p>[TODO] <!-- 6.3 attachments: PDF, hashes, repo zip, checkpoint, anonymised trial file, power CSVs --> [TODO]</p>
-<p><strong>Reporting.</strong> When the data are in, the results are written by the pipeline’s report stage at the tagged commit into <code>results.md</code>, with no number typed by hand, in the fixed order of the pipeline’s manifest (<code>numbers.py</code>): the sample and the exclusion ledger in the format of <a href="#sec-exclusions" class="quarto-xref">Section 6.4</a> against the registered <span class="math inline">\(N = 350\)</span>; one row per claim of <a href="#sec-hypotheses" class="quarto-xref">Section 3</a> with estimate, 95% interval and verdict, for S1 to S4 the check-gated final verdict of the report stage with the choice stage’s own verdict beside it, and the reward rows beside their contrasts; the twelve-cell grid of means with intervals per outcome, solo’s first and third games beside it; the ladder of every registered model with its paired difference from HOS, the Pareto-<span class="math inline">\(k\)</span> counts and the sessions refitted under the fallback, and the per-participant differences; the gate diagnostics, recovery outcomes and predictive-check bands, whatever they show; each entry of <a href="#sec-exploratory-list" class="quarto-xref">Section 5</a> that was run, entries not run listed as such; and every deviation from this document with its reason, an empty list stated as such.</p>
+<section id="sec-availability" class="level1" data-number="6">
+<h1 data-number="6"><span class="header-section-number">6</span> Reporting and data availability</h1>
+<p><strong>Reporting.</strong> Once data collection for the full study is complete, the results are written by the pipeline’s report stage into <code>results.md</code> in the order of the pipeline’s manifest (<code>numbers.py</code>). That file is released with the data.</p>
 </section>
 
 </main>

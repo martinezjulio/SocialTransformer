@@ -68,7 +68,7 @@ This study asks whether a social learner's theory of mind representations of a s
 
 The practice session is a sequence of games defined above as [Play, Watch, Play] all on the same bandit for familiarization and not analyzed. 
 
-**Conditions.** There are 3 conditions. 2 are social conditions made up of watch and play games. The third is a non-social or solo condition made up of entirely play games. Every participant sees every condition in random order. Each condition is split into rounds. Each round repeats the same set of games again but in a new bandit with new payoffs. In the social conditions both an expert and a novice demonstrator are watched in each round. The order of the type of demonstrator watched first is counterbalanced across participants. The social conditions end with a choice game whereas the solo condition does not. The table below shows the structure of each condition. 
+**Conditions.** The design is within-participants: there are 3 conditions and every participant completes all three, in random order. 2 are social conditions made up of watch and play games. The third is a non-social or solo condition made up entirely of play games. Each condition is split into rounds. Each round repeats the same set of games again but in a new bandit with new payoffs. In the social conditions both an expert and a novice demonstrator are watched in each round. The order of the type of demonstrator watched first is counterbalanced across participants. The social conditions end with a choice game whereas the solo condition does not. The table below shows the structure of each condition. 
 
 | Condition | Each round | Choice game |
 |--------------|------------------------------------------|------------------|
@@ -116,21 +116,21 @@ The list below shows each confirmatory claim, both primary and secondary. For ea
 - **S1.** Arm choices are predicted better by models that use the estimate of the expert's beliefs than by models that use the estimate of the most recently watched demonstrator's beliefs (S1a) or of the novice's beliefs (S1b).
   - Estimand: out-of-sample predictive accuracy, ΔELPD, of the full policy model reading the expert's belief minus the same model reading the last-watched demonstrator's belief (S1a) and minus the same model reading the novice's belief (S1b), with the standard error paired over participants.
   - Models: HOS of expert vs recent (S1a) and vs novice (S1b).
-  - Rule: not a test; each part ΔELPD, @eq-elpd, > 2 paired SE, reported with its SE; both required.
+  - Rule: not a test; each part ΔELPD, @eq-elpd, > 2 paired SE, reported with its SE.
 - **S2.** Arm choices are predicted better by models that use the estimate of the expert's beliefs than by models that simply count the successes and failures of 1. the most recent demonstrator they watched (S2a), 2. the expert demonstrator they watched (S2b), or 3. every demonstrator they watched (S2c).
   - Estimand: ΔELPD of the full model minus the same model with the expert's belief replaced by a Beta count of the visible choices of the last demonstration (S2a), of the expert's demonstration on this bandit (S2b), and of every choice seen on this bandit this round (S2c).
   - Models: HOS of expert vs naive-recent (S2a), vs naive-expert (S2b) and vs naive (S2c).
-  - Rule: not a test; each part ΔELPD > 2 paired SE, reported with its SE; all required.
+  - Rule: not a test; each part ΔELPD > 2 paired SE, reported with its SE.
 - **S3.** Arm choices are predicted better by models that use the estimate of the expert's beliefs alone than by models that use only own experience (S3a). Similarly, models that use the estimate of the expert's beliefs as well as own experience predict choices better than models that use only own experience (S3b).
   - Estimand: ΔELPD of the model with the expert's belief and no own outcomes minus the model with own outcomes and no belief (S3a), and of the full model minus the model with own outcomes and no belief (S3b).
   - Models: HS vs HO (S3a), HOS vs HO (S3b).
-  - Rule: not a test; each ΔELPD > 2 paired SE, reported with its SE; both required.
+  - Rule: not a test; each ΔELPD > 2 paired SE, reported with its SE.
 - **S4.** Participants are more influenced by the expert's belief in round 2 after watching the novice than in round 1 after watching the novice.
   - Estimand: in the switch model, the group-level change from round 1 to round 2 in the weight placed on the expert's belief on play games that follow the novice, on the logit scale, $\Delta = \delta_N$.
   - Model: Switch-by-round, Eq. [-@eq-switch].
   - Rule: posterior interval, not a test; 95% ETI of $\Delta$ excludes 0 on the predicted side.
 
-**Rules and verdicts.** The Holm correction applies across the outcomes within a hypothesis. Verdicts are *supported*, *not supported* or *contradicted*. No smallest effect of interest is registered.
+**Rules and verdicts.** The Holm correction applies across the outcomes within a hypothesis. Verdicts are *supported*, *not supported*, *contradicted* or, for the secondary claims, *not evaluable* (@sec-fitting). No smallest effect of interest is registered.
 
 # Models and analysis {#sec-analysis}
 
@@ -201,13 +201,7 @@ $$ {#eq-choice}
 
 Without the readout, the readout term of @eq-belief is replaced by 1, so $\alpha_k = 1 + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k$ and likewise $\beta_k$ with the failure counts, or $\alpha_k = \beta_k = 1$ for perseveration alone. Without the win-stay lose-shift $\ell_k = \log p_k$ and $\pi_k = p_k$. 
 
-How parameters are shared across participants and conditions is described in the table below.
-
-- $\kappa_i$, $\rho_{0,i}$, $\rho_{\mathrm{win},i}$: hierarchical, one value per participant drawn from a group mean, $\kappa$ on a log scale.
-- $\lambda_{\mathrm{w}}$, $\lambda_{\mathrm{c}}$: group-level.
-- $\varepsilon$: fixed at 0.02.
-
-Every prior is listed below.
+**Hierarchical and group-level parameters.** $\kappa_i$ and $\rho_i$ are fitted per participant since every trial carries evidence for them: $\kappa_i$ scales the readout, and is present on all 48 shots, and $\rho_i$ acts on the previous arm, which exists on every trial after the first. However $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ only act on the arms a participant has already attempted. Because there are 12 arms, 48 trials total results in a participant providing very few informative shots to estimate them. Hence why they are strictly pooled across participants. The lapse rate $\varepsilon$ is fixed at 0.02 rather than fitted. This allows every every arm to have some probability of occuring so that a single stray trials do not dominate the likelihood.
 
 **The ladder.** Every other model is @eq-belief to @eq-choice with a term replaced or removed. HOS isthe model with all terms. Models missing the habit term drop the H, and similarly for O and S. The models of S1 to S3, each described as a change from HOS:
 
@@ -246,7 +240,7 @@ and likewise for $E$ with $\delta_E$.
 | Switch | two HOS policies, one on the expert's readout and one on the novice's, mixed by @eq-mixture |
 | Switch-by-round | same as Switch with the round term @eq-switch |
 
-**Priors.** Hierarchical parameters are non-centred. The group mean is $\mu$, the group spread is $\tau$ and the standard-normal participant deviation is $z_i$. They are combined as $\mu + \tau z_i$ on the scale named in the table below. Parameters with the participant subscript $i$ are hierarchical. The rest are group-level. The exploratory variants of @sec-exploratory-list add parameters whose priors are in the fitting code at the registered tag.
+**Priors.** Hierarchical parameters are non-centred. The group mean is $\mu$, the group spread is $\tau$ and the standard-normal participant deviation is $z_i$. They are combined as $\mu + \tau z_i$ on the scale named in the table below. Parameters with the participant subscript $i$ are hierarchical. The rest are group-level. The exploratory variants add parameters whose priors are in the fitting code at the registered tag.
 
 | Parameter | Scale | Prior |
 |-----------|------|------------------------------------------|
@@ -261,100 +255,33 @@ and likewise for $E$ with $\delta_E$.
 
 ## Fitting and model comparison {#sec-fitting}
 
-**Thompson probabilities.** @eq-thompson has no closed form. It is evaluated by trapezoidal quadrature on a uniform grid of the logit scale, over a dense grid of $\kappa$, $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ (accurate to about $10^{-7}$) and interpolated, so every model shares one likelihood.
+**Thompson probabilities.** @eq-thompson is evaluated with trapezoidal quadrature on a uniform grid of the logit scale, over a dense grid of $\kappa$, $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ and interpolated. This was checked to be accurate to about $10^{-7}$.
 
-**Sampling and gate.** Every model is fitted with NUTS in NumPyro, four chains of 1,000 warm-up and 1,000 sampling iterations at target acceptance 0.9. A fit passes when $\hat{R} < 1.01$ and bulk and tail effective sample sizes are at least 400 on every parameter, with no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations at acceptance 0.95, then 4,000 + 4,000 at 0.99; a fit that fails the last rung is not reported.
+**Sampling and gate.** Every model is fitted with NUTS in NumPyro. Here we use four chains of 1,000 warm-up iterations and 1,000 sampling iterations with the sampler set to target accerptance of 0.9. A fit passes when $\hat{R} < 1.01$ and bulk and tail effective sample sizes are at least 400 on every parameter and no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations with target acceptance increased to 0.95, then 4,000 + 4,000 with target acceptance increase to 0.99. Any fit that fails the last rung is not reported.
 
-**Comparison.** Models are compared by expected log predictive density estimated with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over shots. For models $A$ and $B$, with $d_i$ the sum over participant $i$'s shots of the pointwise difference and $N$ the number of participants,
+**Comparison.** Models are compared by expected log predictive density estimated (ELPD) with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over trials. For any two given models $A$ and $B$, where $d_i$ the sum over participant $i$'s shots of the pointwise difference between the two models, and $N$ is the the number of participants we compute
 
 $$
 \Delta\mathrm{ELPD}_{AB} = \sum_{i=1}^{N} d_i, \qquad \mathrm{SE}_{AB} = \sqrt{N}\; \mathrm{sd}(d_1, \ldots, d_N),
 $$ {#eq-elpd}
 
-so the standard error is paired over participants. A comparison supports $A$ when $\Delta\mathrm{ELPD}_{AB} > 2\, \mathrm{SE}_{AB}$. A shot whose Pareto $k$ exceeds 0.7 has an unreliable importance estimate; for HOS and its five rivals of S1 and S2, every session holding such a shot is refitted without that session and its shots enter by their exact held-out log predictive density.
+so the standard error is paired over participants. A comparison supports $A$ when $\Delta\mathrm{ELPD}_{AB} > 2\, \mathrm{SE}_{AB}$.  A trial whose Pareto $k$ exceeds 0.7 is an unreliable importance estimate. Every session containing such a trial is held out entirely and the model is refitted without it, and all of that session's trials enter by their true leave-one-session-out log predictive density under that refit. The number of sessions refitted per model is reported beside each $\Delta\mathrm{ELPD}$.
 
-**Verdicts.** A multi-part claim is *supported* only if every part clears the rule, *contradicted* if any part favours the rival by more than two standard errors, and *not supported* otherwise; every part's verdict is reported. A claim is *not evaluable* when a fit it needs failed the gate or its recovery check below failed; the comparison is still reported.
-
-**Recovery checks.** Two simulation checks run on the frozen code before any verdict is read. (a) Parameter recovery of $\delta_N$: 25 datasets of 100 simulated participants are generated from posterior draws of the Switch-by-round fit to the analysed data, each played through the full experiment with the transformer re-read before every play game, and refitted with the registered pipeline; the check passes when the 95% intervals cover the true $\delta_N$ and exclude zero on its side in at least 22 of 25. (b) Model recovery for S1a (HOS vs recent) and S2a (HOS vs naive-recent): five datasets are generated from each model of the pair and both are fitted to each; the check passes when the generating model wins a majority of its own datasets and at most a minority of its rival's, an undecided dataset counting for the rival. The S1a and S2a checks gate S1 and S2; the $\delta_N$ check gates S4.
-
-## Posterior predictive checks {#sec-ppc}
-
-**Free-running check.** The fitted HOS and Switch-by-round models are each made to play the experiment and their behaviour compared with the participants'. At each of 50 posterior draws spaced evenly over the chains, every participant replays their own two social sessions with their drawn parameters: the fitted policy takes every shot of every play game, the demonstrations are the ones the participant saw, and the transformer is re-read before each play game so that the readout entering a round's second play game reflects the simulated first one. Five statistics are computed on each replay exactly as on the human data, each a mean over participants of a per-participant mean:
-
-1. the after-novice payoff rise from round 1 to round 2 (H2's quantity);
-2. the entropy fall from round 1 to round 2 over the social play games (H3's quantity);
-3. the novice-first zig-zag, payoff after the expert minus after the novice within novice-first sessions;
-4. the share of shots that repeat the previous arm after a win;
-5. the same share after a loss.
-
-For each statistic the 2.5th and 97.5th percentiles over the 50 replays form a 95% band, and the check passes when the human value lies inside it. A missed target does not change any verdict: the checks are registered as a description of what the winning model can and cannot reproduce, reported for every target and both models in a figure with the human value against the band, and discussed as such.
-
-**Split-half generative check (exploratory).** The same two models are fitted on a random half of the participants (fixed seed) and the other half is replayed at each of the 50 draws with parameters drawn fresh from the fitted group-level hierarchy rather than their own posteriors, so the band shows what the population model predicts for participants it has never seen. The five statistics of the held-out half are compared with the band in the same way and reported beside the main check.
-
-# Exploratory analyses {#sec-exploratory-list}
-
-**The analyses below are ones that may be run, not a commitment to run every one of them.** They are written down as a closed list so that whichever of them appear in the paper were planned before the data arrived rather than invented afterwards; an analysis in the list that is not run is simply not reported. None of them carries a decision rule: each is reported with its estimate and 95% interval, and where an expectation is stated it is a prior belief that frames the reading, not a test. Anything not in @sec-hypotheses or in this list is post hoc; if it appears in the paper it is labelled post hoc and stated to have been chosen after seeing the data.
-
-| | Analysis | What is reported | Expectation |
-|--|-----------------|----------------------|------------|
-| E1 | after-expert round change | round 2 minus round 1 in the after-expert cells, from the model of @sec-descriptive, all outcomes | no fall; may rise |
-| E2 | the other social cells vs solo's final game | H5's comparison with the after-novice cells (E2a) and with the social cells averaged over demonstrators (E2b) in place of the after-expert cells, and H5 within round 2 alone (E2c) (payoff) | after-novice near zero; the average positive and smaller than H5; round 2 like H5 |
-| E3 | the after-novice improvement vs solo practice | H2's difference minus the same round difference in solo's first and second play, from the model of @sec-descriptive, all outcomes; the solo term alone is reported as E3s | payoff positive; entropy ambiguous, since solo entropy also falls with practice |
-| E4 | reward | the reward version of every contrast above, H1, H2, H5 and E1 to E3, with its 95% interval (@sec-descriptive) | same sign as payoff, wider intervals |
-| E5 | condition breakdown of the after-novice round change | H2's contrast within expert-first and within novice-first separately; in novice-first the round 2 after-novice game is on a new bandit before the expert has been seen on it, so any improvement there is carried over from round 1 | none stated |
-| E6 | sensitivity of H1, H2, H3 and H5 | the model of @sec-descriptive refitted two ways, each reporting estimate, interval and uncorrected $p$-value without Holm or verdict: (a) random slopes for round and play by participant, coded $-\tfrac12$ and $+\tfrac12$, reduced to uncorrelated slopes and then to the intercept-only model if singular or non-convergent, the specification reached reported; (b) session order as a numeric covariate in the fixed part, cell means taken at its mean | same verdicts |
-| E7 | reported ladder rungs | paired ΔELPD with its SE, @eq-elpd, as rows of the choice stage: the ladder's difference from HOS for OS (habit), HOS+persev (perseveration) and HOS-reset (own outcomes not carried between play games), and the two paired rows HOS minus HS (own experience on top of the readout) and S minus O (social belief against own experience) | habit positive; S over O positive; the rest near zero |
-| E8 | $\delta_E$ | the round change of the weight on the expert's belief after the expert, @eq-switch, as its posterior mean and 95% ETI from the Switch-by-round fit | no fall |
-| E9 | Switch-by-round vs Switch | ΔELPD of the round term; beside it, model recovery for this pair run as in check (b) of @sec-fitting | positive |
-| E10 | robustness of S4 | three refits, each reporting posterior means with 95% ETIs: Switch-by-round with a group-level round trend on $\log\kappa$ (Switch-by-round+ktrend: $\delta_\kappa$ and $\delta_N$); HOS with the lapse rate free at group level (HOS+eps: $\varepsilon$ and the group-level $\kappa$); Switch-by-round with the lapse rate free (Switch-by-round+eps: $\varepsilon$ and $\delta_N$) | $\Delta$ unchanged in sign and interval |
-| E11 | the unseen-expert readout | the five analyses (a) to (e) of the table below | the expert's readout matters before the expert is seen on the bandit, in round 2 |
-| E12 | recency in the partner choice | the model of @sec-partner-choice with condition added, `chose_expert ~ condition + (1 | participant)` under sum-to-zero coding, so the condition term is half the expert-first minus novice-first difference on the logit scale; in expert-first the novice was watched last, in novice-first the expert, so a term near zero means the choice tracks expertise rather than recency | near zero |
-
-**Contrasts of E1 to E3.** Written as in the table of @sec-hypotheses; `demo == "none"` selects the solo cells and `play == "second"` solo's final game of a round.
-
-| | Contrast |
-|--|------------------------------------------------------------------|
-| E1 | `m(demo == "expert" & round == 2) - m(demo == "expert" & round == 1)` |
-| E2a | `m(demo == "novice") - m(demo == "none" & play == "second")` |
-| E2b | `m(demo != "none") - m(demo == "none" & play == "second")` |
-| E2c | `m(demo == "expert" & round == 2) - m(demo == "none" & play == "second" & round == 2)` |
-| E3 | `(m(demo == "novice" & round == 2) - m(demo == "novice" & round == 1)) - (m(demo == "none" & round == 2) - m(demo == "none" & round == 1))` |
-| E3s | `m(demo == "none" & round == 2) - m(demo == "none" & round == 1)` |
-
-**E11, the unseen-expert readout.** In the novice-first condition, the first play game of round 2 follows the novice's demonstration on a new bandit, before the expert has shot on it; the readout of the expert's belief there can draw only on the expert's earlier bandit and on the novice's shots. Whether that readout is still the better account of choices, and what it contains, is E11. The five analyses are fixed outputs of the pipeline (`src/analysis/unseen.py` and the Switch-8 fit), carry no decision rule, and are read with the caveat registered beside S4 (@sec-policy-models). The expectation is that the expert's readout matters before the expert is seen, in round 2 but not in round 1.
-
-| | Analysis | What is computed |
-|--|----------------|------------------------------------------|
-| a | what the readout contains | per readout (expert, novice), bandit state (expert already seen on it or not) and round, the readout entering a play game is scored four ways: its confidence (the total Beta count), the Spearman rank correlation of its arm means with the true payoffs, the true payoff of its favourite arm, and the entropy of the Thompson policy on it at $\kappa = 1$; each a mean over sessions with its standard error |
-| b | the readout against copying | on after-novice play games, by expert-seen and round: the rank correlation across arms between the unseen-expert readout and the copying belief, $\mathrm{Beta}(1 + \text{wins}, 1 + \text{losses})$ from the novice's visible shots, and of each with the truth |
-| c | the ELPD split | two paired comparisons from the fits of @sec-fitting, cut into the after-novice cells of expert-seen $\times$ round with @eq-elpd per cell: HOS against naive-recent (S2a's pair) and HOS against recent, which on these shots reads the novice's belief (S1a's pair, so the cells add up to S1a) |
-| d | the exploit statistic | model-free, on after-novice shots by expert-seen and round: the share of a participant's shots on arms where the novice's demonstration succeeded at least once, beside the share of such arms among the twelve (chance) and the share of the participant's shots on arms the novice tried at all; mean and standard error over participants. Exploiting the evidence raises the first share above chance without raising the third |
-| e | the eight-weight switch model | Switch-8 (@sec-policy-models) gives one group-level weight on the expert's policy per last demonstrator $\times$ round $\times$ condition, laid out in session order so that the after-novice weight in round 2 of novice-first, where the expert is unseen, can be read against the same cell in round 1 and against round 2 of expert-first, where the expert has been seen |
+**Verdicts.** A comparison is contradicted when the rival is favoured by more than two standard errors. A claim is not evaluable when a fit it needs failed the gate or its recovery check failed; the comparison is still reported.
 
 # Sampling plan {#sec-sampling}
 
-## Existing data {#sec-existing-data}
+## Pilot Data {#sec-existing-data}
 <!-- 1.1 the pilots statement (MP 5.4) -->
 
-Registration prior to creation of the confirmatory data. Several pilots of this task were run to work out the arm payoffs, the expert demonstrators' experience level, the framing and reward labelling, and the labelling of demonstrators, zones and expeditions throughout the game. The last pilot (pilot E, 38 participants, three sessions each) ran the final version of the task, and the models and hypotheses in this document were developed on it. Pilot E numbers appear below only as descriptive context and as the assumptions of the sample-size analysis, and are labelled as such; none of the pilot data enters the confirmatory dataset, and no pilot participant may take part in the full study. Pilot participants were not asked for consent to data sharing, so the pilot trial data are not released; the IRB protocol permits their internal use for the sample-size analysis, whose inputs, method and outputs are reported in @sec-power and whose output tables are attached to the registration. A reader can check the sample-size chain from those tables but cannot re-run the simulation. No further pilot precedes the full run; if the task code changes before recruitment (for example new log fields), the new fields are checked by the experimenter, not piloted.
-
-## Participants and sampling {#sec-participants}
-<!-- 3.1 population, prescreens, consent and data-sharing check; 3.3 stopping rule -->
-
-**Population and recruitment.** Participants are recruited on Prolific with these prescreens: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. The colour-vision prescreen is Prolific's stored profile self-report, unverified and possibly old, so it removes people who know they are colour blind and no more; the two partner starships and the asteroids are told apart partly by colour but also by name and image, and the game asks no colour-vision question of its own (the stored answer is exclusion rule X2 of @sec-exclusions). Two platform filters are added: an approval rate of 95% or higher on previous studies and at least 10 previous submissions. Anyone who took part in any pilot of this task or in the related experiments of our earlier work is excluded in advance through a Prolific participant group of their IDs. The target sample size $N$ is set in @sec-power.
-
-**Stopping rule.** Recruitment runs in batches on Prolific until $N = 350$ participants (@sec-power) have all three sessions complete and survive every exclusion rule of @sec-exclusions. After each batch the exclusion script is run to count survivors, and that count is the only thing looked at before the end: no confirmatory outcome, contrast or model is computed on any part of the data until recruitment has closed. Batches are sized so that the last one is expected to reach $N$ with a small overshoot; every participant in the final batch who passes the rules is analysed, so the analysed sample may exceed $N$ by a few and is never trimmed to hit it exactly. Recruitment is not stopped early for any reason other than reaching $N$, is not bounded by a spending limit, and is not extended beyond $N$ to chase a result. Bonuses are paid after each batch.
-
-**Payment.** A base payment of $2, which assumes completion in 10 minutes at $12 per hour, plus the performance bonus of 2 cents per point earned in play games, accumulated across sessions and shown in the game as a running total (watch games and the choice game earn nothing), paid in bulk after each batch. In pilot E the median time from start to finish was 12 minutes (quartiles 10 to 15). Participants who decline consent on the first page return their submission unpaid and are not counted toward the sample.
-
-**Consent and data sharing.** Participants consent on the first page. The one consent covers both taking part and the de-identified public sharing of the data; there is no separate sharing item, so every analysed participant's anonymised trial data are released (@sec-availability). Age and sex, taken from Prolific's profile export, are summarised by the preprocessing script over the analysed sample (mean, SD and range of age; counts by sex) and reported descriptively; they enter no analysis and are not released per participant. The consent text is in the experiment repository at the registered tag.
+Multiple pilots of this was were run prior to this preregistration. These were used to develop the task along with the specific framing reward labeling and clarify of partners and zones (the bandits) to clearly distinguish them from each other. These were also helpful as data for developing and debugging the models and finally in generating the hypotheses and estimating the sample size. Only the final pilot, referred to as pilot E, was used in the power analysis since only that pilot used the finalized version of the task. Pilot E was run with 38 participants after all exclusions. 
 
 ## Power analysis and sample size {#sec-power}
 <!-- 3.4 simulation on pilot E, decision rates by N, chosen N -->
 
-**Method.** Power for H1 to H5 is estimated by simulation on pilot E, whose 38 participants are the only source of effect sizes and noise for this task, so every number below assumes the full run resembles the pilot. At each candidate $N$ in $\{200, 250, 300, 350, 400, 500, 600, 700, 800\}$, $N$ participants are resampled with replacement from the pilot (a participant drawn twice becomes two distinct participants), the outcome model of @sec-descriptive is refitted per outcome, every confirmatory contrast is evaluated and the rule of @sec-hypotheses applied with Holm within a hypothesis; H4 is resampled the same way and the partner-choice model refitted. The rate of *supported* over 500 simulations per cell is the power estimate; no fit failed. Two effect sizes are simulated: the *pilot effect*, the resampled data as they are, and the *half effect*, every outcome shrunk toward its grand mean by half the pilot cell effect, which halves every contrast while keeping the noise and the participant structure (for H4, choices are regenerated from the pilot logistic fit with the common preference halved and each participant's deviation kept). The script is `src/r/power_analysis.R`; its decision-rate table is attached to the registration.
+**Method.** Power is estimated only for the primary confirmatory hypotheses H1 to H5. Pilot E's 38 participants were resampled with replacement to generate 500 different simulated datasets at the following sample sizes: $N \in \{200, 250, 300, 350, 400, 500, 600, 700, 800\}$. Every contrast is evaluated on each simulated dataset using the same models in  @sec-descriptive with Holm correction applied within each hypothesis. The proportion of simulations that support each hypothesis is reported as the power estimate. We also report the power for each hypothesis at half the effect size observed in pilot E. The script is `src/r/power_analysis.R`. 
 
-**Decision rates at the pilot effect.** Every confirmatory test is at 1.00 at every $N$ on the grid (500 simulations per cell).
+**Decision rates at the pilot effect.** 
 
 | Test | 200 | 250 | 300 | 350 | 400 | 500 | 600 | 700 | 800 |
 |------------|---|---|---|---|---|---|---|---|---|
@@ -378,14 +305,26 @@ Registration prior to creation of the confirmatory data. Several pilots of this 
 | H4, choice | .99 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 | H5, payoff | .95 | .97 | .99 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 
-**Secondary claims.** S1 to S3 are model comparisons and S4 a posterior quantity; none is powered, and each is reported with its paired standard error or posterior interval whatever $N$ delivers.
+**Secondary claims.** None of the secondary claims are powered, and each is reported with its paired standard error or posterior interval.
 
 **Chosen sample size.** We plan to recruit $N = 350$ participants who survive the exclusion rules of @sec-exclusions. At $N = 350$ the lowest-powered claim, H2 on payoff, is at 0.91 at half the pilot effect.
+
+## Participants and sampling {#sec-participants}
+<!-- 3.1 population, prescreens, consent and data-sharing check; 3.3 stopping rule -->
+
+**Recruitment.** Participants are recruited on Porlific. The following prescreens are applied: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. These are all self-reported on prolific and unverified. In addition anyone who took prior pilots of this task or related experiments of our earlier work is excluded in advance through Prilific's prescreening feature.
+
+**Stopping rule.** Recruitment will run in batcheson Prolific until we have N=350 participants that pass all exclusion rules. After each batch only the exclusion script is run to count survivors. Batches are sized so that the last batch is expected to reach N with a small overshoot. Every participant in the final batch who passes the rules will be included in the analysis. 
+
+**Payment.** A base payment of $2 will be paid to all participants who complete the task within the 60 minute cutoff. $2 assumes a payment of $12 per hour at a 10 minute completion pace. Pilot E median time to completion was 12 minutes. In addition participants will receive a 2 cent bonus for every point earned during the game. Participants who decline consent are returned right away and unpaid. 
+
+**Consent and data sharing.** Participants consent on the first page of the experiment. The single consent page discloses that the data will be de-identified, analysed and shared publicly, and agreeing to take part is consent to all of this. Every analysed participant's anonymised trial data are released (@sec-availability). Age and sex, from Prolific's profile export, are reported only as summaries over the analysed sample and are not released per participant.
+
 
 ## Exclusions {#sec-exclusions}
 <!-- 3.2 rules verbatim from preprocess_participant_data.R with pilot E rates -->
 
-Every exclusion rule lives in one script, `src/r/preprocess_participant_data.R`, which writes a ledger of counts per rule (`exclusions.csv`). Nothing else is excluded. In particular no participant is dropped for poor performance, and the practice session plays no part in any rule.
+Every exclusion rule lives `src/r/preprocess_participant_data.R`, which writes a ledger of counts per rule (`exclusions.csv`). Nothing else is excluded.
 
 | | Level | Rule | Reason | Pilot E |
 |--|----------|----------------------|----------------|-----|
@@ -401,10 +340,8 @@ Every exclusion rule lives in one script, `src/r/preprocess_participant_data.R`,
 | X10 | participant | no change to starting position | participant never moved | 0 |
 | X11 | participant | not exactly three sessions after exclusions | dropouts, missing or repeated sessions | 0 |
 
-A Prolific time-out is not an exclusion. The 60-minute window of X4 is measured on the game's own log, not by Prolific. Timed-out participants not otherwise excluded are thus kept and paid.
+A Prolific time-out is not considered an exclusion and participant data will still be included if completed and within the 60-minute window (X4). This is measured on the game's own log, not by Prolific. Such participants are still paid. 
 
-# Frozen artefacts, reporting and data availability {#sec-availability}
-<!-- 6.1 release tag, commit hashes, checkpoint sha256, pinned environments; no retraining --> [TODO]
-<!-- 6.3 attachments: PDF, hashes, repo zip, checkpoint, anonymised trial file, power CSVs --> [TODO]
+# Reporting and data availability {#sec-availability}
 
-**Reporting.** When the data are in, the results are written by the pipeline's report stage at the tagged commit into `results.md`, with no number typed by hand, in the fixed order of the pipeline's manifest (`numbers.py`): the sample and the exclusion ledger in the format of @sec-exclusions against the registered $N = 350$; one row per claim of @sec-hypotheses with estimate, 95% interval and verdict, for S1 to S4 the check-gated final verdict of the report stage with the choice stage's own verdict beside it, and the reward rows beside their contrasts; the twelve-cell grid of means with intervals per outcome, solo's first and third games beside it; the ladder of every registered model with its paired difference from HOS, the Pareto-$k$ counts and the sessions refitted under the fallback, and the per-participant differences; the gate diagnostics, recovery outcomes and predictive-check bands, whatever they show; each entry of @sec-exploratory-list that was run, entries not run listed as such; and every deviation from this document with its reason, an empty list stated as such.
+**Reporting.** Once data collection for the full study is complete, the results are written by the pipeline's report stage into `results.md` in the order of the pipeline's manifest (`numbers.py`). That file is released with the data.
