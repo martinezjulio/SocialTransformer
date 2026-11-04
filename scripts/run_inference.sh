@@ -23,8 +23,6 @@ SEED=42  # Base random seed for reproducibility
 # Optional: Override masking strategy from checkpoint (uncomment to use)
 #MASKING_STRATEGY_OVERRIDE="all_bandits"  # Options: all_bandits, current_bandit_only
 
-# Optional: Override profile method from checkpoint (uncomment to use)
-#PROFILE_METHOD_OVERRIDE="no_profile"  # Options: no_profile, learned_profile, agent_pooling, cross_attention
 
 # ==============================================================================
 # CHECKPOINT LOADING OPTIONS (choose ONE of the following three options)
@@ -90,12 +88,6 @@ if [ -n "$MASKING_STRATEGY_OVERRIDE" ]; then
     MASKING_STRATEGY_FLAG="--masking_strategy_override $MASKING_STRATEGY_OVERRIDE"
 fi
 
-# Build profile_method_override flag
-PROFILE_METHOD_FLAG=""
-if [ -n "$PROFILE_METHOD_OVERRIDE" ]; then
-    PROFILE_METHOD_FLAG="--profile_method_override $PROFILE_METHOD_OVERRIDE"
-fi
-
 # Build python command based on checkpoint source
 echo "Starting inference..."
 if [ "$CHECKPOINT_SOURCE" = "local" ]; then
@@ -106,8 +98,7 @@ if [ "$CHECKPOINT_SOURCE" = "local" ]; then
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \
-        $MASKING_STRATEGY_FLAG \
-        $PROFILE_METHOD_FLAG
+        $MASKING_STRATEGY_FLAG
 elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
     python src/run_inference.py \
         --experiment_data_path "$EXPERIMENT_DATA_PATH" \
@@ -116,8 +107,7 @@ elif [ "$CHECKPOINT_SOURCE" = "wandb_artifact" ]; then
         --device $DEVICE \
         --num_rollouts $NUM_ROLLOUTS \
         --seed $SEED \
-        $MASKING_STRATEGY_FLAG \
-        $PROFILE_METHOD_FLAG
+        $MASKING_STRATEGY_FLAG
 fi
 
 # Check if inference was successful
