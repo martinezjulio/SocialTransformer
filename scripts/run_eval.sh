@@ -17,7 +17,7 @@ export PYTHONPATH="src:$PYTHONPATH"
 
 # Per-run pilot selection — inherited by run_inference.sh. Change these to switch pilots.
 EXPERIMENT_NAME="transfer_bandits_choice_textbox"
-VERSION="pilot_D"
+VERSION="pilot_E"
 export EXPERIMENT_NAME VERSION
 
 # Number of independent Thompson sampling rollouts per session. Inherited by
@@ -26,7 +26,9 @@ NUM_ROLLOUTS="${NUM_ROLLOUTS:-5}"
 export NUM_ROLLOUTS
 
 # Set parameters
-DATASET_NAME="demonstrations_data_00"
+# The split matching the checkpoint above (demonstrations_data_00 predates the
+# Arrow migration and has no loadable test/ dataset).
+DATASET_NAME="demonstrations_data_02"
 TEST_DATA_DIR="${TRAINING_DATA_ROOT_DIR}/${DATASET_NAME}"
 # Note: Output paths managed automatically by eval.py ($OUTPUT_DATA_DIR/eval/)
 DEVICE="cuda"  # Options: cuda, cpu
@@ -40,14 +42,18 @@ MAX_EXAMPLES=""  # Leave empty for all examples, or set number (e.g., 1000)
 # CHECKPOINT LOADING OPTIONS (choose ONE of the following three options)
 # ==============================================================================
 
-# Option 1: Load from local file path
-#CHECKPOINT_PATH="checkpoints/best_model.pt"
-#CHECKPOINT_SOURCE="local"
+# Option 1: Load from local file path — the checkpoint behind every analysis
+# result (wandb run 0i8yhqm7, model_type "social"). See the README,
+# "Reproducing the model used in the analysis".
+CHECKPOINT_PATH="$OUTPUT_DATA_DIR/training_runs/wandb_0i8yhqm7/checkpoints/epoch_119_best.pt"
+CHECKPOINT_SOURCE="local"
 
 # Option 2: Load from wandb artifact (uncomment to use)
 # Format: "entity/project/artifact:alias"
-WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
-CHECKPOINT_SOURCE="wandb_artifact"
+# NOTE: sbi-transformer-run-oy7ru2t3:v88 was the old default; it is a profile
+# model with a beta_nll theta head (2K outputs) and no longer loads here.
+#WANDB_ARTIFACT="juliomartinez-individual/social-belief-modeling/sbi-transformer-run-oy7ru2t3:v88"
+#CHECKPOINT_SOURCE="wandb_artifact"
 
 # Print configuration
 echo "=================================="

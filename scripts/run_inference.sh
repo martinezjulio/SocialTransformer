@@ -13,7 +13,7 @@ conda activate SocialTransformer
 
 # Set parameters
 # Pilot selection — override from caller (e.g. run_eval.sh) via env; else defaults apply.
-VERSION="${VERSION:-pilot_D}"
+VERSION="${VERSION:-pilot_E}"
 EXPERIMENT_DATA_PATH="${EXPERIMENT_DATA_DIR}/${VERSION}/preprocessed_participant_data.csv"
 EVAL_DIR="${OUTPUT_DATA_DIR}/eval/${VERSION}"   # per-pilot outputs: eval/<version>/{data,metadata}
 DEVICE="cuda"  # Options: cuda, cpu
