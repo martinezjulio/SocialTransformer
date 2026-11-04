@@ -52,9 +52,11 @@ follow the HOS convention (H habit, O own experience, S social belief) in `polic
 - **Segment-level masking**: each training example picks 1..N visible segments,
   masks later segments in attention, and predicts for the last visible
   segment's bandit. Evaluation sweeps this cutoff. See `src/train.py`.
-- **Beta outputs, not point estimates**: heads emit Beta(alpha, beta). Theta
-  uses Beta NLL; beliefs use log-MSE, KL, or cross-entropy against true
-  pre-episode counts. See `src/models/losses.py`.
+- **Beta outputs, not point estimates**: the belief heads emit Beta(alpha,
+  beta), scored against true pre-episode counts by log-MSE, KL, expected-value
+  MSE or cross-entropy (`--demo_belief_loss`). Theta takes `--env_theta_loss`:
+  `bce` on logits (the default, and what the analysis model used) or `beta_nll`
+  on a predicted Beta. See `src/models/losses.py`.
 - **Per-demonstrator beliefs**: predicted separately per demonstrator, never
   averaged.
 - **Model factory boundary**: `build_model(model_type, config)` in
