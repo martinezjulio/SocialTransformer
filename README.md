@@ -110,10 +110,41 @@ MODEL_TYPE=social_profile_cross_attention bash scripts/run_training.sh
 bash scripts/run_training.sh --run_id episode-123                     # extra flags pass through
 ```
 
-Four model types: `social`, `social_profile_learned`,
-`social_profile_agent_pooling`, `social_profile_cross_attention`, all built
-through `build_model()` in `src/models/__init__.py`. `python src/train.py --help`
-lists every flag. To continue a run:
+Model types are built through `build_model()` in `src/models/__init__.py`.
+`social` is the one in use; the three `social_profile_*` variants are
+exploratory and were not used for any published result. `python src/train.py
+--help` lists every flag.
+
+#### Reproducing the model used in the analysis
+
+Every inference run feeding the analysis pipeline used one checkpoint —
+`training_runs/wandb_0i8yhqm7/checkpoints/epoch_119_best.pt` (wandb run
+`0i8yhqm7`, single GPU). **The committed defaults in `scripts/run_training.sh`
+are that run's hyperparameters**, so retraining the same architecture is just:
+
+```bash
+bash scripts/run_training.sh      # keep NUM_GPUS=1: batch size is per rank
+```
+
+The published configuration, recorded here so it survives later edits to that
+script:
+
+| | |
+|---|---|
+| model | `social` — plain `SocialTransformer`, no demonstrator profiles, no experience head |
+| architecture | `d_model` 256, `nhead` 4, `num_layers` 8, `dim_feedforward` 1024, `dropout` 0.2 |
+| data | `demonstrations_data_02`, `seed` 42 |
+| optimisation | `adamw`, `lr` 5e-5, `batch_size` 128 (world size 1), `weight_decay` 0.0, `epochs` 500 |
+| scheduler | `plateau`, `patience` 15, `factor` 0.7, `min_lr` 1e-8, `warmup_epochs` 2 |
+| losses | `env_theta_loss` `bce`, `demo_belief_loss` `cross_entropy`, `demo_loss_weight` 1.0, `experience_loss_weight` 1.0 |
+| masking | `all_bandits` |
+| early stopping | overfitting threshold 15%, patience 50, window 15 — best epoch was **119** |
+
+The `report` stage also records that checkpoint's `sha256` in the paper
+provenance block, so a rebuilt model can be checked against the one the results
+came from.
+
+To continue a run:
 
 ```bash
 bash scripts/continue_training.sh --checkpoint <run_id> --source wandb --epochs 150

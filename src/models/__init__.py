@@ -2,6 +2,11 @@
 
 Dispatch via ``build_model(model_type, config)``; import concrete classes
 directly when you need them.
+
+``social`` is the only model type in use. The three ``social_profile_*``
+variants are DEPRECATED exploratory paths: no published result used one, and
+every sweep config in ``src/Sweeps/`` pins ``model_type: "social"``. They are
+kept so old checkpoints still load — prefer ``social`` for new work.
 """
 
 from typing import Dict
@@ -44,6 +49,14 @@ def build_model(model_type: str, config: Dict) -> nn.Module:
             The four pre-rename strings ("no_profile", "learned_profile",
             "agent_pooling", "cross_attention") are also accepted via an
             alias map and resolve to the corresponding new value.
+
+            Use "social": it is what every published result was produced
+            with. The three "social_profile_*" variants are DEPRECATED and
+            unvalidated. "social_profile_learned" in particular discards the
+            segment-cutoff attention mask it is handed (it rebuilds a plain
+            causal mask at the spliced sequence length — see
+            profile_social_model.py), so it trains on full context while the
+            other types train on the truncated context train.py intends.
         config: Dict with model hyperparameters. Required keys: num_arms,
             num_agents, num_bandits, num_demonstrators, d_model, nhead,
             num_layers, dim_feedforward, dropout. Optional keys (with sensible

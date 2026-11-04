@@ -291,6 +291,11 @@ on a `num_queries` axis.
 
 ### What distinguishes the variants
 
+> **Only `social` is in use.** Every published result came from it, and every
+> sweep config pins `model_type: "social"`. The three `social_profile_*`
+> variants below are deprecated exploratory paths, documented because the code
+> is still there and old checkpoints still load through it.
+
 `SocialTransformer` (120 lines) is the plain path: embed → causal transformer →
 per-QUERY heads, head inputs hardcoded to `query_only`. It has **no experience
 head** (so no `N_tot_pred` key) and no demonstrator profile vectors at all.

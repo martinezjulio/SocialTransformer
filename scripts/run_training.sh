@@ -47,7 +47,11 @@ MASKING_STRATEGY="all_bandits" # Options: all_bandits, current_bandit_only
 
 # Model variant + Experience Head Configuration.
 # Override from the shell, e.g. `MODEL_TYPE=social bash scripts/run_training.sh`.
-MODEL_TYPE="${MODEL_TYPE:-social}" # Options: social, social_profile_learned, social_profile_agent_pooling, social_profile_cross_attention
+# Keep this at `social`: it is the type every published result used, and these
+# defaults are that run's hyperparameters (see README, "Reproducing the model
+# used in the analysis"). The social_profile_* types are deprecated exploratory
+# paths: social, social_profile_learned, social_profile_agent_pooling, social_profile_cross_attention
+MODEL_TYPE="${MODEL_TYPE:-social}"
 EXPERIENCE_HEAD_LOSS_WEIGHT=0.0    # Weight for direct experience head loss (only used for profile model_types)
 EXPERIENCE_HEAD_LOSS_TYPE="mse"    # Options: mse, bce
 EXPERT_THRESHOLD=30.0              # Threshold for expert classification (only used for BCE loss)
