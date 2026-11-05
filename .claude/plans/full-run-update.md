@@ -75,4 +75,5 @@ shared-cache race of 4 Nov). None is expected to fail; each is checked or bounde
 
 ## Findings
 
+- 4 Nov 19:47, throughput in the full-run configuration: 104 table tasks running at once (102 on `owners`, 1 on `normal`) against 2-3 with 16-core tasks; 40 of 288 blocks in the first 25 min; per task 13-23 min on 4 cores, `MaxRSS` 5.5-6.7 GB, so a 32-block task uses about as much memory as an 8-block one (fixed overhead dominates: 2.8 GB even for a cached task) and 16 GB holds; projection for 350 participants stays ~10-14 GB, `SLURM_TABLE_MEM=24G`. Three preemptions in 25 min, requeued. Level 0 ETA under an hour instead of overnight.
 - 4 Nov: the pilot chain is being rerun in the full-run configuration (A.1, A.2, A.5 applied) so that configuration is what the pilot tests; the five 8-block files from the first chain (`*.block00Xof008.npy`) stay in `tables/` unused (block files are keyed by their split) and can be deleted with the set-aside folders.
