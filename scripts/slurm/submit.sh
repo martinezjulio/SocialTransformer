@@ -37,7 +37,7 @@ CPU="--partition=${SLURM_CPU_PARTITION:-normal}"; GPU="--partition=${SLURM_GPU_P
 ACCOUNT="${SLURM_ACCOUNT:+--account=$SLURM_ACCOUNT}"
 LEVELS=("$CPU --cpus-per-task=${SLURM_TABLE_CPUS:-16} --mem=${SLURM_TABLE_MEM:-64G} --time=4:00:00" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
 DIR="$OUTPUT_DATA_DIR/analysis/$VERSION/slurm"; mkdir -p "$DIR"
-bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units > "$DIR/units.tsv"   # inside the image on Sherlock
+bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units --missing > "$DIR/units.tsv"   # inside the image on Sherlock; cached units are not queued, a level with none is skipped
 submit() { local name="$1"; shift; if [ "$DRY" -eq 1 ]; then echo "sbatch $*" >&2; echo "dry-$name"; else sbatch --parsable "$@"; fi; }
 DEP=""
 for level in 0 1 2 3 4; do

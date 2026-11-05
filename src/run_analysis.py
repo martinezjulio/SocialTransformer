@@ -1,7 +1,7 @@
 """Driver of the analysis pipeline: run registered stages for one experiment version.
 
     python src/run_analysis.py --version pilot_E [--stages games,inference-check]
-    python src/run_analysis.py --version pilot_E --list-units | --unit fit:ROS    # one cluster unit (scripts/slurm)
+    python src/run_analysis.py --version pilot_E --list-units [--missing] | --unit fit:ROS    # cluster units (scripts/slurm)
 
 Inputs:  $EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv and $OUTPUT_DATA_DIR/eval/<version>/
          (run_inference.py). Outputs: $OUTPUT_DATA_DIR/analysis/<version>/<stage>/. The R stages
@@ -296,39 +296,74 @@ def run_report(p: Paths) -> None:
 
 
 def units(p: Paths) -> dict:
-    """Every cluster unit (scripts/slurm) as name -> (level, thunk), in dependency order: 0 table blocks (CPU), 1 table
+    """Every cluster unit (scripts/slurm) as name -> (level, thunk, done), in dependency order: 0 table blocks (CPU), 1 table
     assembly, 2 human fits, 3 recovery datasets, split-half fits and PPC draws (GPU), 4 split-half draws and model-recovery
-    datasets, with the loso refits of the S1/S2 models at level 3 (the model-recovery pair is read from them). Each fills one cache piece (one writer per file); the stages then run on the full caches."""
+    datasets, with the loso refits of the S1/S2 models at level 3 (the model-recovery pair is read from them). Each fills one
+    cache piece (one writer per file); the stages then run on the full caches. ``done()`` says whether the piece is already
+    cached (``--list-units --missing`` skips it); a test whose own inputs are not cached yet counts as not done."""
+    import pickle
+
+    import numpy as np
     from analysis.checks import N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS, PPC_MODELS, RECOVERY_CLAIMS, model_recovery, ppc, recover_delta, split_half
     from analysis.compare import loo
     from analysis.data import load_sessions, trial_data
-    from analysis.fitting import run_many
+    from analysis.fitting import cache_path, run_many
     from analysis.policies import REGISTRY, belief, grids
-    from analysis.thompson import table
+    from analysis.thompson import block_path, table, table_path
     T, u = trial_data(load_sessions(p.eval_dir, p.version)), {}
     tab = lambda s, m, **kw: table(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", *grids(m), n_blocks=N_TABLE_BLOCKS, **kw).shape
+    tpath = lambda s, m: table_path(f"{s}_{int(m.kappa)}_{int(m.own)}", *belief(T, s), T.own_seg, T.own_prev, p.analysis_dir / "tables", *grids(m))
     check = lambda call: call(*checks_setup(p))   # a checks unit: the stage's setup, then one call restricted to the unit
+    fits, checks = p.analysis_dir / "choice" / "fits", p.analysis_dir / "checks"
+    fit_key = lambda n: "-".join(x.stem.split("_")[-1] for x in human_tables(p, T, n))
+    pairs = {}   # recovery_pairs, computed once on first use (needs the level-3 caches)
+
+    def quiet(f):
+        try:
+            return bool(f())
+        except Exception:
+            return False
+
+    def draw_path(n, i, cache_dir, key, sub, tag):   # the json of draw i of the evenly spaced grid over a cached fit's posterior
+        f = pickle.load(open(cache_path(n, key, cache_dir), "rb"))
+        size = next(iter(f.posterior.values())).shape[0] * next(iter(f.posterior.values())).shape[1]
+        return checks / sub / f"{REGISTRY[n].name.replace(':', '-')}{tag}_draw{int(np.linspace(0, size - 1, N_PPC_DRAWS).astype(int)[i]):05d}.json"
+
+    def pair(c):
+        if not pairs:
+            pairs.update(recovery_pairs(p, T))
+        return pairs[c]
+
     for n, m in REGISTRY.items():
         for s in (m.source, "novice") if m.mixture != "none" else (m.source,):
+            tp = tpath(s, m)
             for b in range(N_TABLE_BLOCKS):
-                u[f"table:{s}_{int(m.kappa)}_{int(m.own)}:{b}/{N_TABLE_BLOCKS}"] = (0, lambda s=s, m=m, b=b: tab(s, m, block=b))
-            u[f"assemble:{s}_{int(m.kappa)}_{int(m.own)}"] = (1, lambda s=s, m=m: tab(s, m))
+                u[f"table:{s}_{int(m.kappa)}_{int(m.own)}:{b}/{N_TABLE_BLOCKS}"] = (0, lambda s=s, m=m, b=b: tab(s, m, block=b),
+                                                                                  lambda tp=tp, b=b: tp.exists() or block_path(tp, b, N_TABLE_BLOCKS).exists())
+            u[f"assemble:{s}_{int(m.kappa)}_{int(m.own)}"] = (1, lambda s=s, m=m: tab(s, m), lambda tp=tp: tp.exists())
         t = human_tables(p, T, n)
-        u[f"fit:{n}"] = (2, lambda n=n, t=t: run_many([n], p.eval_dir, p.version, {n: (t[0], t[1] if len(t) > 1 else None)}, "-".join(x.stem.split("_")[-1] for x in t), p.analysis_dir / "choice" / "fits")[n].diagnostics)
+        u[f"fit:{n}"] = (2, lambda n=n, t=t: run_many([n], p.eval_dir, p.version, {n: (t[0], t[1] if len(t) > 1 else None)}, "-".join(x.stem.split("_")[-1] for x in t), fits)[n].diagnostics,
+                         lambda n=n: cache_path(n, fit_key(n), fits).exists())
     for n in FALLBACK_MODELS:   # the Pareto-k fallback refits (loso_loo) after the fits, on a GPU; the choice stage then reads the cache
-        u[f"loso:{n}"] = (3, lambda n=n: (lambda l: dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, n, l).elpd))(loo(choice_fit(p, T, n))))
+        u[f"loso:{n}"] = (3, lambda n=n: (lambda l: dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, n, l).elpd))(loo(choice_fit(p, T, n))),
+                          lambda n=n: cache_path(n, fit_key(n), p.analysis_dir / "choice" / "loso").exists() or quiet(lambda: loo(choice_fit(p, T, n)).n_bad == 0))
     for d in range(N_DATASETS):
-        u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])))
+        u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])),
+                              lambda d=d: cache_path("Switch-by-round", f"dataset_{d:02d}", checks / "recovery" / "fits").exists())
     for c in RECOVERY_CLAIMS:   # side i of the pair, resolved at run time by recovery_pairs (after the level-3 fallback refits)
         for i in range(2):
             for d in range(N_MODEL_RECOVERY):
                 u[f"model_recovery:{c}:{i}:{d}"] = (4, lambda c=c, i=i, d=d: check(lambda T, out, post, model, norm, pools, frames: (lambda pair: model_recovery(
-                    {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", {c: pair}, units=[(c, pair[i], d)]))(recovery_pairs(p, T)[c])))
+                    {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", {c: pair}, units=[(c, pair[i], d)]))(recovery_pairs(p, T)[c])),
+                    lambda c=c, i=i, d=d: quiet(lambda: all(cache_path(m, f"{c}_{pair(c)[0]}_vs_{pair(c)[1]}_{pair(c)[i]}_{d:02d}", checks / "model_recovery" / "fits").exists() for m in pair(c))))
     for n in PPC_MODELS:
-        u[f"split_fit:{n}"] = (3, lambda n=n: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[])))
+        u[f"split_fit:{n}"] = (3, lambda n=n: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[])),
+                               lambda n=n: cache_path(REGISTRY[n].name, "split0", checks / "split_half" / "fits").exists())
         for i in range(N_PPC_DRAWS):
-            u[f"ppc:{n}:{i}"] = (3, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: ppc(REGISTRY[n], post(n), T, frames, model, norm, out / "ppc", draws=[i])))
-            u[f"split_half:{n}:{i}"] = (4, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[i])))
+            u[f"ppc:{n}:{i}"] = (3, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: ppc(REGISTRY[n], post(n), T, frames, model, norm, out / "ppc", draws=[i])),
+                                 lambda n=n, i=i: quiet(lambda: draw_path(n, i, fits, fit_key(n), "ppc", "").exists()))
+            u[f"split_half:{n}:{i}"] = (4, lambda n=n, i=i: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[i])),
+                                        lambda n=n, i=i: quiet(lambda: draw_path(REGISTRY[n].name, i, checks / "split_half" / "fits", "split0", "split_half", "_split0").exists()))
     return u
 
 
@@ -339,6 +374,7 @@ def main() -> None:
     ap.add_argument("--checkpoint", default=None, help="transformer checkpoint for the checks stage (default: the inference run's)")
     ap.add_argument("--list-units", action="store_true", help="print the cluster units as level<TAB>name and exit (scripts/slurm)")
     ap.add_argument("--unit", default=None, help="run one cluster unit by name (see --list-units) and exit")
+    ap.add_argument("--missing", action="store_true", help="with --list-units: only the units whose cache piece does not exist yet")
     args = ap.parse_args()
     if "OUTPUT_DATA_DIR" not in os.environ:
         from dotenv import load_dotenv
@@ -354,7 +390,10 @@ def main() -> None:
         u = units(p)
         if args.unit is not None and args.unit not in u:
             ap.error(f"unknown unit {args.unit!r}; see --list-units")
-        print(*(f"{level}\t{name}" for name, (level, _) in u.items()), sep="\n") if args.list_units else print(args.unit, u[args.unit][1]())
+        if args.list_units:
+            print(*(f"{level}\t{name}" for name, (level, _, done) in u.items() if not (args.missing and done())), sep="\n")
+        else:
+            print(args.unit, u[args.unit][1]())
         return
     for name in [n for n in STAGES if n in names]:   # pipeline order regardless of how they were listed
         STAGES[name](p)
