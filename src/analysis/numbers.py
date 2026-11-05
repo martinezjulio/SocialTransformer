@@ -3,7 +3,7 @@
 every key into a LaTeX macro (``macro_name``) formatted by its quantity type (``kind_of``, ``fmt``; meta-plan 9.2), after
 ``check_manifest`` has found every key the paper cites (``MANIFEST``, one block per figure or text section) and nothing else.
 
-Keys are free text (``S1a_estimate``, ``elpd_HOS+eps``, ``ppc_HOS split_half_zigzag_inside``); the macro name keeps
+Keys are free text (``S1a_estimate``, ``elpd_ROS+eps``, ``ppc_ROS split_half_zigzag_inside``); the macro name keeps
 letters only: words split at every non-letter, digits spelled out, each word capitalised, prefixed ``res``
 (``resSOneAEstimate``). Two keys may not share a macro name. Values are plain numbers, booleans, or short text (verdicts, provenance).
 """
@@ -68,7 +68,7 @@ EXCLUSION_RULES = ("returned", "colour_vision", "speed_floor", "span_ceiling", "
                    "restarted", "never_moved", "not_three_sessions")
 DEMOGRAPHICS = ("age_mean", "age_sd", "age_min", "age_max", "sex_female_count", "sex_male_count", "sex_other_count")   # demographics_summary.csv
 CLAIMS = ("S1a", "S1b", "S2a", "S2b", "S2c", "S3a", "S3b", "S4", "S1", "S2", "S3", "switch_round_term", "own_on_top", "social_vs_own")
-POSTERIORS = ("delta_E", "ktrend_delta_kappa", "ktrend_delta_N", "eps_HOS_eps", "eps_HOS_kappa", "eps_switch_eps", "eps_switch_delta_N")   # E8, E10: mean and 95% ETI
+POSTERIORS = ("delta_E", "ktrend_delta_kappa", "ktrend_delta_N", "eps_ROS_eps", "eps_ROS_kappa", "eps_switch_eps", "eps_switch_delta_N")   # E8, E10: mean and 95% ETI
 PPC_TARGETS = ("after_novice_rise", "entropy_fall", "zigzag", "stay_win", "stay_loss")
 interval = lambda stem, p=True: [f"{stem}_{f}" for f in ("estimate", "lo", "hi") + (("p",) if p else ())]
 MANIFEST = {
@@ -84,7 +84,7 @@ MANIFEST = {
     "checks (Fig S, PPC and recovery)": ["recovery_covered", "recovery_sign", "recovery_n", "recovery_bias", "model_recovery_correct", "model_recovery_n"]
                                        + [f"model_recovery_{c}_{k}" for c in ("S1", "S2", "S4") for k in ("own_count", "rival_count", "side_n")]
                                        + [f"model_recovery_{c}_rival" for c in ("S1", "S2")]
-                                       + [f"ppc_{m}{h}_{t}_{f}" for m in ("HOS", "Switch-by-round") for h in ("", " split_half") for t in PPC_TARGETS for f in ("human", "lo", "hi", "inside")],
+                                       + [f"ppc_{m}{h}_{t}_{f}" for m in ("ROS", "Switch-by-round") for h in ("", " split_half") for t in PPC_TARGETS for f in ("human", "lo", "hi", "inside")],
 }
 
 

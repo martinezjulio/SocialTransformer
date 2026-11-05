@@ -26,10 +26,10 @@ def test_lapse_one_policy_is_uniform():
     a, b = (torch.tensor(rng.gamma(2.0, 3.0, size=(3, K))) for _ in range(2))
     s = TrialState(a, b, None, None, 0, 1, 1, torch.tensor(rng.integers(0, 3, (2, K)).astype(float)), torch.zeros(2, K), prev_action=4, prev_reward=1, round_index=1)
     params = dict(log_kappa=0.3, log_lambda_w=0.1, lambda_c=0.2, rho0=1.5, rho_win=2.0, logit_omega_E=3.0, logit_omega_N=1.0, delta_E=0.5, delta_N=2.0)
-    for spec in (P.ModelSpec("u1", habit=True, lapse=1.0), P.ModelSpec("u2", habit=True, mixture="by_round", lapse=1.0)):
+    for spec in (P.ModelSpec("u1", repeat=True, lapse=1.0), P.ModelSpec("u2", repeat=True, mixture="by_round", lapse=1.0)):
         assert np.allclose(FittedPolicy(spec, params).probs(s), 1 / K, atol=1e-12)
-    with_habit, without = (FittedPolicy(P.ModelSpec("h", habit=h), params).probs(s) for h in (True, False))
-    assert abs(with_habit.sum() - 1) < 1e-12 and with_habit[4] > without[4], "the habit tilt raises the previous arm"
+    with_repeat, without = (FittedPolicy(P.ModelSpec("r", repeat=h), params).probs(s) for h in (True, False))
+    assert abs(with_repeat.sum() - 1) < 1e-12 and with_repeat[4] > without[4], "the repeat tilt raises the previous arm"
 
 
 @pytest.fixture(scope="module")
@@ -71,10 +71,10 @@ def test_recovery_and_model_recovery_summaries():
     from analysis.checks import comparisons, model_recovery_summary
     r = pd.DataFrame(dict(covered=[True] * 23 + [False] * 2, sign=[True] * 22 + [False] * 3, truth=[1.0] * 25, mean=[1.5] * 25))
     assert recovery_summary(r) == dict(covered=23, sign=22, n=25, bias=0.5)
-    ladder = pd.DataFrame({"delta": {"HOS": 0.0, "recent": -88.0, "novice": -258.0, "naive-recent": -160.0, "naive-expert": -195.0, "naive": -148.0}})
+    ladder = pd.DataFrame({"delta": {"ROS": 0.0, "recent": -88.0, "novice": -258.0, "naive-recent": -160.0, "naive-expert": -195.0, "naive": -148.0}})
     comps = comparisons(ladder)
-    assert comps == {"S1": ("HOS", "recent"), "S2": ("HOS", "naive"), "S4": ("Switch-by-round", "Switch")}, "HOS against the nearest rival per claim; S4 fixed"
-    assert comparisons(ladder.assign(delta=ladder["delta"].where(ladder.index != "novice", -10.0)))["S1"] == ("HOS", "novice")
+    assert comps == {"S1": ("ROS", "recent"), "S2": ("ROS", "naive"), "S4": ("Switch-by-round", "Switch")}, "ROS against the nearest rival per claim; S4 fixed"
+    assert comparisons(ladder.assign(delta=ladder["delta"].where(ladder.index != "novice", -10.0)))["S1"] == ("ROS", "novice")
     (s1, s1b), (s4a, s4b) = comps["S1"], comps["S4"]
     rows = pd.DataFrame([dict(comparison="S1", generating=s1, winner=s1)] * 3 + [dict(comparison="S1", generating=s1b, winner=s1b)] * 3
                         + [dict(comparison="S4", generating=s4a, winner=s4a)] * 3 + [dict(comparison="S4", generating=s4b, winner="undecided")] * 3)

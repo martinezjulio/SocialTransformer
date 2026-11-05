@@ -1,7 +1,7 @@
 # %% policies
 """Choice-model specifications and the registry of fitted models (plan 'Models' table; preregistration.md).
 
-Every model is HOS (habit, own experience, social belief) with terms switched on or off: a belief source scaled by κ_i, the learner's own
+Every model is ROS (repeat, own experience, social belief) with terms switched on or off: a belief source scaled by κ_i, the learner's own
 counts weighted by λ_w (this play game) and λ_c (the round's earlier play game), Thompson sampling, a
 win-stay lose-shift tilt, an optional perseveration bonus, a fixed lapse; the Switch models mix the
 expert-readout and novice-readout policies with a weight ω per trial. ``belief`` gives the counts a
@@ -26,7 +26,7 @@ class ModelSpec:
     kappa: bool = True          # κ_i (hierarchical) scales the source; False fixes κ = 1
     own: bool = True            # λ_w, λ_c on the learner's own counts; False leaves them out
     reset: bool = False         # λ_c fixed at 0: the exploratory reset learner (needs own)
-    habit: bool = False         # win-stay lose-shift tilt ρ0_i + ρwin_i · previous reward on the previous arm
+    repeat: bool = False         # win-stay lose-shift tilt ρ0_i + ρwin_i · previous reward on the previous arm
     persev: bool = False        # one group-level bonus on any arm already chosen in this play game
     mixture: str = "none"       # MIXTURES: two = ω_E, ω_N per participant; by_round = + δ_E, δ_N; eight = group weights
     kappa_trend: bool = False   # δ_κ: round slope on log κ (robustness)
@@ -49,23 +49,23 @@ def belief(T: TrialData, source: str) -> tuple:
 
 
 REGISTRY = {m.name: m for m in [
-    ModelSpec("HOS", habit=True, role="full"),
-    ModelSpec("recent", source="recent", habit=True, role="S1a"),
-    ModelSpec("novice", source="novice", habit=True, role="S1b"),
-    ModelSpec("naive", source="naive", own=False, habit=True, role="S2c"),
-    ModelSpec("naive-recent", source="vis_last", habit=True, role="S2a"),
-    ModelSpec("naive-expert", source="vis_expert", habit=True, role="S2b"),
-    ModelSpec("OS"), ModelSpec("HS", own=False, habit=True), ModelSpec("HO", source="uniform", kappa=False, habit=True),
-    ModelSpec("H", source="uniform", kappa=False, own=False, habit=True), ModelSpec("O", source="uniform", kappa=False),
+    ModelSpec("ROS", repeat=True, role="full"),
+    ModelSpec("recent", source="recent", repeat=True, role="S1a"),
+    ModelSpec("novice", source="novice", repeat=True, role="S1b"),
+    ModelSpec("naive", source="naive", own=False, repeat=True, role="S2c"),
+    ModelSpec("naive-recent", source="vis_last", repeat=True, role="S2a"),
+    ModelSpec("naive-expert", source="vis_expert", repeat=True, role="S2b"),
+    ModelSpec("OS"), ModelSpec("RS", own=False, repeat=True), ModelSpec("RO", source="uniform", kappa=False, repeat=True),
+    ModelSpec("R", source="uniform", kappa=False, own=False, repeat=True), ModelSpec("O", source="uniform", kappa=False),
     ModelSpec("S", own=False), ModelSpec("Random", source="uniform", kappa=False, own=False),
-    ModelSpec("Switch", habit=True, mixture="two"),
-    ModelSpec("Switch-by-round", habit=True, mixture="by_round", role="S4"),
-    ModelSpec("Switch-by-round+ktrend", habit=True, mixture="by_round", kappa_trend=True, role="robustness"),
-    ModelSpec("Switch-8", habit=True, mixture="eight", role="exploratory"),
-    ModelSpec("HOS+persev", habit=True, persev=True, role="exploratory"),
-    ModelSpec("HOS-reset", habit=True, reset=True, role="exploratory"),
-    ModelSpec("HOS+eps", habit=True, lapse=None, role="robustness"),
-    ModelSpec("Switch-by-round+eps", habit=True, mixture="by_round", lapse=None, role="robustness"),
+    ModelSpec("Switch", repeat=True, mixture="two"),
+    ModelSpec("Switch-by-round", repeat=True, mixture="by_round", role="S4"),
+    ModelSpec("Switch-by-round+ktrend", repeat=True, mixture="by_round", kappa_trend=True, role="robustness"),
+    ModelSpec("Switch-8", repeat=True, mixture="eight", role="exploratory"),
+    ModelSpec("ROS+persev", repeat=True, persev=True, role="exploratory"),
+    ModelSpec("ROS-reset", repeat=True, reset=True, role="exploratory"),
+    ModelSpec("ROS+eps", repeat=True, lapse=None, role="robustness"),
+    ModelSpec("Switch-by-round+eps", repeat=True, mixture="by_round", lapse=None, role="robustness"),
 ]}
 
 
@@ -156,7 +156,7 @@ def model(spec: ModelSpec, T: TrialData, tab, observed: bool = True, tab2=None):
     log_w = numpyro.sample("log_lambda_w", dist.Normal(0.0, 1.5)) if spec.own else 0.0
     c = 0.0 if spec.reset or not spec.own else numpyro.sample("lambda_c", dist.HalfNormal(4.0))
     tilt = jnp.zeros((N, K))
-    if spec.habit:
+    if spec.repeat:
         b = (hierarchical("rho0", plate, 2.0, 1.0)[part] + hierarchical("rho_win", plate, 2.0, 1.0)[part] * prev_rew) * (prev_arm >= 0)
         tilt = tilt + b[:, None] * jax.nn.one_hot(jnp.clip(prev_arm, 0), K)
     if spec.persev:

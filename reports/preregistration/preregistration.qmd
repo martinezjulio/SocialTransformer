@@ -111,15 +111,15 @@ The list below shows each confirmatory claim, both primary and secondary. For ea
 
 - **S1.** Arm choices are predicted better by models that use the estimate of the expert's beliefs than by models that use the estimate of the most recently watched demonstrator's beliefs (S1a) or of the novice's beliefs (S1b).
   - Estimand: out-of-sample predictive accuracy, ΔELPD, of the full policy model reading the expert's belief minus the same model reading the last-watched demonstrator's belief (S1a) and minus the same model reading the novice's belief (S1b), with the standard error paired over participants.
-  - Models: HOS of expert vs recent (S1a) and vs novice (S1b).
+  - Models: ROS of expert vs recent (S1a) and vs novice (S1b).
   - Rule: not a test; each part ΔELPD, @eq-elpd, > 2 paired SE, reported with its SE.
 - **S2.** Arm choices are predicted better by models that use the estimate of the expert's beliefs than by models that simply count the successes and failures of 1. the most recent demonstrator they watched (S2a), 2. the expert demonstrator they watched (S2b), or 3. every demonstrator they watched (S2c).
   - Estimand: ΔELPD of the full model minus the same model with the expert's belief replaced by a Beta count of the visible choices of the last demonstration (S2a), of the expert's demonstration on this bandit (S2b), and of every choice seen on this bandit this round (S2c).
-  - Models: HOS of expert vs naive-recent (S2a), vs naive-expert (S2b) and vs naive (S2c).
+  - Models: ROS of expert vs naive-recent (S2a), vs naive-expert (S2b) and vs naive (S2c).
   - Rule: not a test; each part ΔELPD > 2 paired SE, reported with its SE.
 - **S3.** Arm choices are predicted better by models that use the estimate of the expert's beliefs alone than by models that use only own experience (S3a). Similarly, models that use the estimate of the expert's beliefs as well as own experience predict choices better than models that use only own experience (S3b).
   - Estimand: ΔELPD of the model with the expert's belief and no own outcomes minus the model with own outcomes and no belief (S3a), and of the full model minus the model with own outcomes and no belief (S3b).
-  - Models: HS vs HO (S3a), HOS vs HO (S3b).
+  - Models: RS vs RO (S3a), ROS vs RO (S3b).
   - Rule: not a test; each ΔELPD > 2 paired SE, reported with its SE.
 - **S4.** Participants are more influenced by the expert's belief in round 2 after watching the novice than in round 1 after watching the novice.
   - Estimand: in the switch model, the group-level change from round 1 to round 2 in the weight placed on the expert's belief on play games that follow the novice, on the logit scale, $\Delta = \delta_N$.
@@ -173,7 +173,7 @@ chose_expert ~ condition + (1 | participant), family = binomial
 The policy models are fitted to every shot of the play games of the two social conditions (expert-first and novice-first). For each of the two conditions there two rounds, two play games, six shots, making 48 shots total per participant. Each shot is a trial $t$ of participant $i$ choosing arm $a_t$ from $K = 12$ arms. The readouts from the transformer are the parameters of a Beta distribution per arm $k$, $(\alpha^{\mathrm{demo}}_k, \beta^{\mathrm{demo}}_k)$. The participant's own outcomes are the counts of successes and failures on each arm $k$ in the current play game, $s^{\mathrm{curr}}_k$ and $f^{\mathrm{curr}}_k$, and in the earlier play game of the same round, $s^{\mathrm{prev}}_k$ and $f^{\mathrm{prev}}_k$. The previous arm chosen is $a_{t-1}$ with its reward outcome $r_{t-1} \in \{0, 1\}$.
 
 
-**The full model, HOS.** The full model includes all terms: the perseveration or habit term (H), the own-experience term (O) and the social-belief term built on the readouts (S), hence the name HOS. Each term carries its own weight.  
+**The full model, ROS.** The full model includes all terms: the repeat term (R), a bias toward repeating the previous arm scaled by whether it just won, the own-experience term (O) and the social-belief term built on the readouts (S), hence the name ROS. Each term carries its own weight.  
 
 $$
 \alpha_k = \kappa_i\, \alpha^{\mathrm{demo}}_k + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k, \qquad \beta_k = \kappa_i\, \beta^{\mathrm{demo}}_k + \lambda_{\mathrm{w}}\, f^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, f^{\mathrm{prev}}_k,
@@ -197,26 +197,26 @@ $$
 \pi_k = \frac{\exp \ell_k}{\sum_j \exp \ell_j}, \qquad P(a_t = k) = (1 - \varepsilon)\, \pi_k + \frac{\varepsilon}{K}, \qquad \varepsilon = 0.02.
 $$ {#eq-choice}
 
-Without the readout, the readout term of @eq-belief is replaced by 1, so $\alpha_k = 1 + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k$ and likewise $\beta_k$ with the failure counts, or $\alpha_k = \beta_k = 1$ for perseveration alone. Without the win-stay lose-shift $\ell_k = \log p_k$ and $\pi_k = p_k$. 
+Without the readout, the readout term of @eq-belief is replaced by 1, so $\alpha_k = 1 + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k$ and likewise $\beta_k$ with the failure counts, or $\alpha_k = \beta_k = 1$ for the repeat term alone. Without the win-stay lose-shift $\ell_k = \log p_k$ and $\pi_k = p_k$. 
 
 **Hierarchical and group-level parameters.** $\kappa_i$ and $\rho_i$ are fitted per participant since every trial carries evidence for them: $\kappa_i$ scales the readout, and is present on all 48 shots, and $\rho_i$ acts on the previous arm, which exists on every trial after the first. However $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ only act on the arms a participant has already attempted. Because there are 12 arms, 48 trials total results in a participant providing very few informative shots to estimate them. Hence why they are strictly pooled across participants. The lapse rate $\varepsilon$ is fixed at 0.02 rather than fitted. This allows every every arm to have some probability of occuring so that a single stray trials do not dominate the likelihood.
 
-**The ladder.** Every other model is @eq-belief to @eq-choice with a term replaced or removed. HOS isthe model with all terms. Models missing the habit term drop the H, and similarly for O and S. The models of S1 to S3, each described as a change from HOS:
+**The ladder.** Every other model is @eq-belief to @eq-choice with a term replaced or removed. ROS is the model with all terms. Models missing the repeat term drop the R, and similarly for O and S. The models of S1 to S3, each described as a change from ROS:
 
 | Model | Terms included |
 |-----------------------|-------------------------------------------------------------|
-| HOS | readout of the expert (S), own counts (O), habit tilt (H) |
-| recent | same as HOS but with the readout of the last-watched demonstrator |
-| novice | same as HOS but with the readout of the novice |
-| naive-recent | same as HOS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ the visible shots of the last demonstration in place of the readout |
-| naive-expert | same as HOS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ the visible shots of the expert's demonstration on current bandit in place of the readout |
-| naive | same as HOS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ every shot seen on the bandit in current round including play and watch games |
-| HS | same as HOS without the own counts |
-| HO | same as HOS without the readout |
+| ROS | readout of the expert (S), own counts (O), repeat tilt (R) |
+| recent | same as ROS but with the readout of the last-watched demonstrator |
+| novice | same as ROS but with the readout of the novice |
+| naive-recent | same as ROS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ the visible shots of the last demonstration in place of the readout |
+| naive-expert | same as ROS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ the visible shots of the expert's demonstration on current bandit in place of the readout |
+| naive | same as ROS but with $\mathrm{Beta}(1,1) + \kappa_i \times$ every shot seen on the bandit in current round including play and watch games |
+| RS | same as ROS without the own counts |
+| RO | same as ROS without the readout |
 
 Random is uniform choice with nothing fitted and included as a floor.
 
-**The Switch models.** Two HOS policies sharing the same parameters for the perseveration, own-experience and social terms ($\rho$, $\lambda$ and $\kappa_i$), one using the expert's readout and the other the novice's, are mixed,
+**The Switch models.** Two ROS policies sharing the same parameters for the repeat, own-experience and social terms ($\rho$, $\lambda$ and $\kappa_i$), one using the expert's readout and the other the novice's, are mixed,
 
 $$
 P(a_t = k) = (1 - \varepsilon)\,\big[\omega_t\, \pi^{E}_k + (1 - \omega_t)\, \pi^{N}_k\big] + \frac{\varepsilon}{K},
@@ -235,7 +235,7 @@ and likewise for $E$ with $\delta_E$.
 
 | Model | Terms included |
 |-----------------------|-------------------------------------------------------------|
-| Switch | two HOS policies, one on the expert's readout and one on the novice's, mixed by @eq-mixture |
+| Switch | two ROS policies, one on the expert's readout and one on the novice's, mixed by @eq-mixture |
 | Switch-by-round | same as Switch with the round term @eq-switch |
 
 **Priors.** Hierarchical parameters are non-centred. The group mean is $\mu$, the group spread is $\tau$ and the standard-normal participant deviation is $z_i$. They are combined as $\mu + \tau z_i$ on the scale named in the table below. Parameters with the participant subscript $i$ are hierarchical. The rest are group-level. The exploratory variants add parameters whose priors are in the fitting code at the registered tag.
@@ -244,7 +244,7 @@ and likewise for $E$ with $\delta_E$.
 |-----------|------|------------------------------------------|
 | $\kappa_i$ | $\log$ | $\mu_\kappa \sim \mathcal{N}(0, 0.5)$, $\tau_\kappa \sim \mathrm{HalfNormal}(0.3)$ |
 | $\lambda_{\mathrm{w}}$ | $\log$ | $\mathcal{N}(0, 1.5)$, group level |
-| $\lambda_{\mathrm{c}}$ | linear | $\mathrm{HalfNormal}(4)$, group level; fixed at 0 in HOS-reset |
+| $\lambda_{\mathrm{c}}$ | linear | $\mathrm{HalfNormal}(4)$, group level; fixed at 0 in ROS-reset |
 | $\rho_{0,i}$ | linear | $\mu \sim \mathcal{N}(0, 2)$, $\tau \sim \mathrm{HalfNormal}(1)$ |
 | $\rho_{\mathrm{win},i}$ | linear | $\mu \sim \mathcal{N}(0, 2)$, $\tau \sim \mathrm{HalfNormal}(1)$ |
 | $\varepsilon$ | linear | fixed at 0.02 |
@@ -267,11 +267,11 @@ so the standard error is paired over participants. A comparison supports $A$ whe
 
 **Verdicts.** A comparison is contradicted when the rival is favoured by more than two standard errors. A claim is not evaluable when a fit it needs failed the gate; the comparison is still reported.
 
-**Recovery checks.** Two simulation checks are run and reported beside the claims. (a) Parameter recovery of $\delta_N$: 25 datasets of 100 simulated participants are generated from posterior draws of the Switch-by-round fit to the analysed data, each played through the full experiment with new transformer Beta predictions before every play game, and refitted with the registered pipeline. We report how many of the 25 intervals cover the true $\delta_N$, how many exclude zero on the same side as the truth, and the bias, the mean of the posterior means minus the truths. (b) Model recovery for S1, S2 and S4. For S1 and S2 the pair is the full model against its nearest rival, the model with the smallest ΔELPD from HOS within that claim in the fit to the analysed data; on the pilot these are recent (S1a) and naive-recent (S2a). For S4 the pair is Switch-by-round against Switch. Five datasets are generated from each model of the pair and both are fitted to each. We report how often each generating model wins its own datasets and the other model's.
+**Recovery checks.** Two simulation checks are run and reported beside the claims. (a) Parameter recovery of $\delta_N$: 25 datasets of 100 simulated participants are generated from posterior draws of the Switch-by-round fit to the analysed data, each played through the full experiment with new transformer Beta predictions before every play game, and refitted with the registered pipeline. We report how many of the 25 intervals cover the true $\delta_N$, how many exclude zero on the same side as the truth, and the bias, the mean of the posterior means minus the truths. (b) Model recovery for S1, S2 and S4. For S1 and S2 the pair is the full model against its nearest rival, the model with the smallest ΔELPD from ROS within that claim in the fit to the analysed data; on the pilot these are recent (S1a) and naive-recent (S2a). For S4 the pair is Switch-by-round against Switch. Five datasets are generated from each model of the pair and both are fitted to each. We report how often each generating model wins its own datasets and the other model's.
 
 ## Posterior predictive checks {#sec-ppc}
 
-**Free-running check.** The fitted HOS and Switch-by-round generative models are each simulated to play the experiment and their behaviour is compared with the participants'. At each of 50 posterior draws spaced evenly over the chains, every participant replays their own two social sessions with their drawn parameters. The fitted policy takes every shot of every play game, the demonstrations are the same exact ones the participant observed in the watch games, and the transformer makes new Beta predictions before each play game so that the readout entering a round's second play game reflects the first simulated play. Five statistics are computed on each replay exactly as on the human data, each a mean over participants of a per-participant mean:
+**Free-running check.** The fitted ROS and Switch-by-round generative models are each simulated to play the experiment and their behaviour is compared with the participants'. At each of 50 posterior draws spaced evenly over the chains, every participant replays their own two social sessions with their drawn parameters. The fitted policy takes every shot of every play game, the demonstrations are the same exact ones the participant observed in the watch games, and the transformer makes new Beta predictions before each play game so that the readout entering a round's second play game reflects the first simulated play. Five statistics are computed on each replay exactly as on the human data, each a mean over participants of a per-participant mean:
 
 1. the after-novice payoff rise from round 1 to round 2 (H2's quantity)
 2. the entropy fall from round 1 to round 2 over the social play games (H3's quantity)
@@ -295,10 +295,10 @@ For each statistic we report the human value against the 95% ETI of the statisti
 | E4 | reward | the reward version of every contrast above, H1, H2, H5 and E1 to E3, with its 95% interval (@sec-descriptive) | same sign as payoff, wider intervals |
 | E5 | condition breakdown of the after-novice round change | H2's contrast within expert-first and within novice-first separately; in novice-first the round 2 after-novice game is on a new bandit before the expert has been seen on it, so any improvement there is carried over from round 1 | none stated |
 | E6 | sensitivity of H1, H2, H3 and H5 | the model of @sec-descriptive refitted two ways, each reporting estimate, interval and uncorrected $p$-value without Holm or verdict: (a) random slopes for round and play by participant, coded $-\tfrac12$ and $+\tfrac12$, reduced to uncorrelated slopes and then to the intercept-only model if singular or non-convergent, the specification reached and the slope standard deviations of every specification tried reported, so that a slope variance at zero is visible rather than discarded; (b) session order as a numeric covariate in the fixed part, cell means taken at its mean | same verdicts |
-| E7 | reported ladder rungs | paired ΔELPD with its SE, @eq-elpd, as rows of the choice stage: the ladder's difference from HOS for OS (habit), HOS+persev (perseveration) and HOS-reset (own outcomes not carried between play games), and the two paired rows HOS minus HS (own experience on top of the readout) and S minus O (social belief against own experience) | habit positive; S over O positive; the rest near zero |
+| E7 | reported ladder rungs | paired ΔELPD with its SE, @eq-elpd, as rows of the choice stage: the ladder's difference from ROS for OS (repeat), ROS+persev (perseveration) and ROS-reset (own outcomes not carried between play games), and the two paired rows ROS minus RS (own experience on top of the readout) and S minus O (social belief against own experience) | repeat positive; S over O positive; the rest near zero |
 | E8 | $\delta_E$ | the round change of the weight on the expert's belief after the expert, @eq-switch, as its posterior mean and 95% ETI from the Switch-by-round fit | no fall |
 | E9 | Switch-by-round vs Switch | ΔELPD of the round term; beside it, model recovery for this pair run as in check (b) of @sec-fitting | positive |
-| E10 | robustness of S4 | three refits, each reporting posterior means with 95% ETIs: Switch-by-round with a group-level round trend on $\log\kappa$ (Switch-by-round+ktrend: $\delta_\kappa$ and $\delta_N$); HOS with the lapse rate free at group level (HOS+eps: $\varepsilon$ and the group-level $\kappa$); Switch-by-round with the lapse rate free (Switch-by-round+eps: $\varepsilon$ and $\delta_N$) | $\Delta$ unchanged in sign and interval |
+| E10 | robustness of S4 | three refits, each reporting posterior means with 95% ETIs: Switch-by-round with a group-level round trend on $\log\kappa$ (Switch-by-round+ktrend: $\delta_\kappa$ and $\delta_N$); ROS with the lapse rate free at group level (ROS+eps: $\varepsilon$ and the group-level $\kappa$); Switch-by-round with the lapse rate free (Switch-by-round+eps: $\varepsilon$ and $\delta_N$) | $\Delta$ unchanged in sign and interval |
 | E11 | the unseen-expert readout | the five analyses (a) to (e) of the table below | the expert's readout matters before the expert is seen on the bandit, in round 2 |
 | E12 | recency in the partner choice | the condition term of the model of @sec-partner-choice, under sum-to-zero coding half the expert-first minus novice-first difference on the logit scale; in expert-first the novice was watched last, in novice-first the expert, so a term near zero means the choice tracks expertise rather than recency | near zero |
 | E13 | practice within a round | the solo condition's second minus first play game, from the model of @sec-descriptive, all outcomes: the effect of extra play on the same bandit without a demonstration in between | payoff near zero or a small rise; entropy a small fall |

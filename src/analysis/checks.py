@@ -28,18 +28,18 @@ from inference.simulate import simulate_session
 
 SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # game sequence -> expert-first / novice-first
 N_RECOVERY, N_DATASETS = 100, int(os.environ.get("N_DATASETS", 25))   # open decision 5; the checks are reported, not gates (4 Nov)
-RIVALS = {"S1": ("recent", "novice"), "S2": ("naive-recent", "naive-expert", "naive")}   # the rivals of HOS behind each claim's parts
-RECOVERY_CLAIMS = ("S1", "S2", "S4")   # the model-recovery pairs: HOS against its nearest rival for S1 and S2, the fixed S4 pair
+RIVALS = {"S1": ("recent", "novice"), "S2": ("naive-recent", "naive-expert", "naive")}   # the rivals of ROS behind each claim's parts
+RECOVERY_CLAIMS = ("S1", "S2", "S4")   # the model-recovery pairs: ROS against its nearest rival for S1 and S2, the fixed S4 pair
 
 
 def comparisons(ladder: pd.DataFrame) -> dict:
-    """The model-recovery pairs (A, B) per claim (prereg, Recovery checks (b)): for S1 and S2, HOS against its nearest rival,
-    the model with the smallest ΔELPD from HOS in the fit to the analysed data (the ladder's ``delta`` is model − HOS, so
+    """The model-recovery pairs (A, B) per claim (prereg, Recovery checks (b)): for S1 and S2, ROS against its nearest rival,
+    the model with the smallest ΔELPD from ROS in the fit to the analysed data (the ladder's ``delta`` is model − ROS, so
     the largest); for S4, Switch-by-round against Switch."""
-    return {c: ("HOS", max(rs, key=lambda m: float(ladder.loc[m, "delta"]))) for c, rs in RIVALS.items()} | {"S4": ("Switch-by-round", "Switch")}
+    return {c: ("ROS", max(rs, key=lambda m: float(ladder.loc[m, "delta"]))) for c, rs in RIVALS.items()} | {"S4": ("Switch-by-round", "Switch")}
 N_MODEL_RECOVERY = int(os.environ.get("N_MODEL_RECOVERY", 5))   # datasets per generating side
 N_PPC_DRAWS = int(os.environ.get("N_PPC_DRAWS", 50))            # posterior draws replayed in the free-running PPC
-PPC_MODELS = ("HOS", "Switch-by-round")                          # the models given the free-running PPC and the split-half check
+PPC_MODELS = ("ROS", "Switch-by-round")                          # the models given the free-running PPC and the split-half check
 # The three sizes take environment overrides for reduced development runs; the caches are keyed by dataset and draw
 # index with seeded draw lists, so a reduced run's units are the first units of the full run and are reused by it.
 

@@ -49,11 +49,11 @@ def test_results_and_tables_compile(tmp_path):
                   dict(hypothesis="H1", outcome="reward", role="reported", estimate=-0.001, **{"lower.CL": -0.05, "upper.CL": 0.16, "p.value": 0.4}, p_holm=float("nan"), verdict=None)]
                  ).to_csv(tmp_path / "descriptive" / "contrasts.csv", index=False)
     pd.DataFrame([dict(role="confirmatory", term="(Intercept)", **{"p.value": 0.004}, prob_estimate=0.71, prob_lower=0.57, prob_upper=0.81, verdict="supported")]).to_csv(tmp_path / "partner_choice" / "model.csv", index=False)
-    pd.DataFrame(dict(model=["HOS", "recent"], elpd=[-2673.9, -2762.2], n_bad_k=[0, 0], delta=[0.0, -88.3], se=[0.0, 18.4])).to_csv(tmp_path / "choice" / "ladder.csv", index=False)
+    pd.DataFrame(dict(model=["ROS", "recent"], elpd=[-2673.9, -2762.2], n_bad_k=[0, 0], delta=[0.0, -88.3], se=[0.0, 18.4])).to_csv(tmp_path / "choice" / "ladder.csv", index=False)
     paper = tmp_path / "paper"
     write_results(numbers, paper), write_tables(tmp_path, paper)
     (paper / "test.tex").write_text(r"\documentclass{article}\usepackage{booktabs}\input{results.tex}\begin{document}"
-                                    r"\resSOneACI, \resHOnePayoffP, \resElpdHOS, \resRecoveryCovered, \resCommit. \input{tables/hypotheses.tex}\input{tables/ladder.tex}\end{document}")
+                                    r"\resSOneACI, \resHOnePayoffP, \resElpdROS, \resRecoveryCovered, \resCommit. \input{tables/hypotheses.tex}\input{tables/ladder.tex}\end{document}")
     r = subprocess.run(["tectonic", "test.tex"], cwd=paper, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-800:]
     assert (paper / "test.pdf").stat().st_size > 1000

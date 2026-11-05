@@ -45,7 +45,7 @@ simulation checks by unit, so reruns are cheap; stages overwrite their outputs u
 reduced run needs `--dev`. The paper's numbers are never typed by hand: stages write `numbers.json`,
 `numbers.py` holds the manifest of every cited number, and the `report` stage emits `paper/`
 (`results.tex` macros, `results.md`, tables, figures) or fails naming any missing number. Model names
-follow the HOS convention (H habit, O own experience, S social belief) in `policies.py`'s registry.
+follow the ROS convention (R repeat, O own experience, S social belief) in `policies.py`'s registry.
 
 ## Design decisions (do not silently revisit)
 

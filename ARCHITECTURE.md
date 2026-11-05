@@ -499,8 +499,8 @@ loads torch or JAX.
 | 2 | `descriptive` | **R** (`r/descriptive.R`) | The 12-cell mixed model per outcome (`payoff`, `reward`, `entropy`): `outcome ~ condition * play * round + (1 \| participant)`, sum-to-zero coding, REML, Satterthwaite df (lmerTest/emmeans). Confirmatory contrasts H1, H2, H3, H5 with Holm within hypothesis plus verdicts; reward rows reported without a rule; registered exploratory contrasts; two sensitivity refits. | `descriptive/{cell_means,contrasts,contrast_weights,robustness,robustness_variance}.csv`, `numbers.json` |
 | 3 | `partner_choice` | **R** (`r/partner_choice.R`) | H4, the end-of-session expert-vs-novice pick: per-session table, Wilson-interval rates overall and by condition, one mixed logistic model with condition (sum-to-zero) and a participant intercept: the intercept for `P(choose expert) > 0.5`, the condition term as the exploratory recency check. Reads the preprocessed CSV directly — the choice game is not tokenized, so it is in no inference CSV. | `partner_choice/{choices,rates,model}.csv`, `numbers.json` |
 | 4 | `inference-check` | Py (in `run_analysis.py`) | Asserts the inference CSVs came from **this** version's preprocessed file (comparing `inference_config.yaml`'s recorded `experiment_data_path`) and that their session/participant sets equal the social sessions in the preprocessed file. | — (prints only) |
-| 5 | `choice` | Py (`policies`/`thompson`/`fitting`/`compare`) | The confirmatory policy-model stage: per-(source, κ, own) log-policy tables, NUTS fits of the whole registry, PSIS-LOO with a Pareto-k leave-one-session-out fallback on the S1/S2 models, the ladder vs HOS, the ladder per round, per-participant ΔELPD, four-outcome verdicts for S1a–S3b (2 SE rule), claims S1–S3 composed from their parts, S4 from δ_N's 95% ETI, and the reported posteriors. | `choice/{ladder,ladder_by_round,elpd_per_participant,verdicts}.csv`, `choice/fits/`, `choice/loso/`, `tables/`, `numbers.json` |
-| 6 | `checks` | Py (`analysis/checks.py`, `predictive.py`) | Simulation-based checks, all GPU: δ_N parameter recovery (`recover_delta`, 25 datasets × 100 simulated participants; coverage, sign and bias reported, no pass rule), model recovery for S1 and S2 (HOS against its nearest rival by the ladder's ΔELPD, `comparisons`) and S4 (Switch-by-round vs Switch), free-running PPC on `PPC_MODELS = (HOS, Switch-by-round)` over 5 targets (`after_novice_rise, entropy_fall, zigzag, stay_win, stay_loss`), and the exploratory split-half generative check. Loads the transformer itself (`inference.readout.load_model`), so simulated sessions re-read the network before every play game. | `checks/{recovery,model_recovery,confusion,ppc,model_recovery_summary}.csv`, `checks/{recovery,model_recovery,ppc,split_half}/`, `numbers.json` |
+| 5 | `choice` | Py (`policies`/`thompson`/`fitting`/`compare`) | The confirmatory policy-model stage: per-(source, κ, own) log-policy tables, NUTS fits of the whole registry, PSIS-LOO with a Pareto-k leave-one-session-out fallback on the S1/S2 models, the ladder vs ROS, the ladder per round, per-participant ΔELPD, four-outcome verdicts for S1a–S3b (2 SE rule), claims S1–S3 composed from their parts, S4 from δ_N's 95% ETI, and the reported posteriors. | `choice/{ladder,ladder_by_round,elpd_per_participant,verdicts}.csv`, `choice/fits/`, `choice/loso/`, `tables/`, `numbers.json` |
+| 6 | `checks` | Py (`analysis/checks.py`, `predictive.py`) | Simulation-based checks, all GPU: δ_N parameter recovery (`recover_delta`, 25 datasets × 100 simulated participants; coverage, sign and bias reported, no pass rule), model recovery for S1 and S2 (ROS against its nearest rival by the ladder's ΔELPD, `comparisons`) and S4 (Switch-by-round vs Switch), free-running PPC on `PPC_MODELS = (ROS, Switch-by-round)` over 5 targets (`after_novice_rise, entropy_fall, zigzag, stay_win, stay_loss`), and the exploratory split-half generative check. Loads the transformer itself (`inference.readout.load_model`), so simulated sessions re-read the network before every play game. | `checks/{recovery,model_recovery,confusion,ppc,model_recovery_summary}.csv`, `checks/{recovery,model_recovery,ppc,split_half}/`, `numbers.json` |
 | 7 | `unseen` | Py (`analysis/unseen.py`) | Exploratory unseen-expert section: `readout_table` (confidence, Spearman rank-correlation with truth, favourite arm's true payoff, Thompson entropy, by readout × expert_seen × round), `copying_table` (expert readout vs the `Beta(1+wins, 1+losses)` copying belief), `elpd_by_cell` splits reusing the choice stage's cached LOO, and `exploit_table`. | `unseen/{readout_table,copying_table,exploit,elpd_split,copying_elpd}.csv`, `numbers.json` |
 | 8 | `figures` | Py (`analysis/figures/`) | Fig 1 inset, Figs 2–4 and the supplement, from the stage outputs and cached fits. Forces the `Agg` backend unless `MPLBACKEND` says otherwise. PDF + PNG per figure with fixed names (`fig2_primary`, `figS3_ppc`, …). | `figures/` |
 | 9 | `report` | Py (`analysis/report.py`) | Last: merges every stage's `numbers.json` with the provenance block, derives the check-gated final verdicts, validates against the manifest, writes the paper artifacts. | `paper/{results.tex,results.md}`, `paper/tables/{hypotheses,ladder}.tex`, `paper/figures/` |
@@ -516,8 +516,8 @@ listed in.
 
 ### The policy-model registry
 
-[`src/analysis/policies.py`](src/analysis/policies.py). **HOS = H habit, O own
-experience, S social belief.** Every model is the full HOS model with terms
+[`src/analysis/policies.py`](src/analysis/policies.py). **ROS = R repeat, O own
+experience, S social belief.** Every model is the full ROS model with terms
 switched off; a name either lists the letters that are on, or names the ablated
 **belief source** instead, or adds a suffixed extension.
 
@@ -525,7 +525,7 @@ switched off; a name either lists the letters that are on, or names the ablated
 `SOURCES = (expert, novice, recent, naive, vis_last, vis_expert, uniform)`;
 `kappa` (hierarchical κ_i scaling the social evidence; False fixes κ = 1); `own`
 (λ_w on this play game's own counts, λ_c on the round's earlier play game);
-`reset` (λ_c ≡ 0); `habit` (win-stay/lose-shift tilt `ρ0_i + ρwin_i · prev_reward`
+`reset` (λ_c ≡ 0); `repeat` (win-stay/lose-shift tilt `ρ0_i + ρwin_i · prev_reward`
 on the previous arm); `persev` (group-level bonus on any arm already chosen this
 game); `mixture` ∈ `MIXTURES = (none, two, by_round, eight)`; `kappa_trend` (δ_κ
 round slope on log κ); `lapse` (fixed 0.02, or `None` to fit ε ~ Beta(1,9));
@@ -536,26 +536,26 @@ The 21 registered models:
 
 | name | role | description |
 |---|---|---|
-| `HOS` | full | The full model: habit + own counts + the expert readout scaled by κ_i. The reference every ΔELPD is measured against. |
-| `recent` | S1a | HOS, but the belief is the **most recently watched** demonstrator's readout. |
-| `novice` | S1b | HOS, but the belief is the **novice's** readout. |
+| `ROS` | full | The full model: repeat tilt + own counts + the expert readout scaled by κ_i. The reference every ΔELPD is measured against. |
+| `recent` | S1a | ROS, but the belief is the **most recently watched** demonstrator's readout. |
+| `novice` | S1b | ROS, but the belief is the **novice's** readout. |
 | `naive` | S2c | Belief = Beta(1,1) + every pull visible this round (demos + own); own terms off, since the pooled count already holds them. |
 | `naive-recent` | S2a | Belief = Beta(1,1) + the **last demonstration's** visible pulls — copying, not a readout. |
 | `naive-expert` | S2b | Belief = Beta(1,1) + the **expert's** visible pulls this round. |
-| `OS` | reported | Own + social, no habit. |
-| `HS` | reported | Habit + social, no own counts. |
-| `HO` | reported | Habit + own; uniform belief with κ fixed at 1 (no social). |
-| `H` | reported | Habit only. |
+| `OS` | reported | Own + social, no repeat term. |
+| `RS` | reported | Repeat + social, no own counts. |
+| `RO` | reported | Repeat + own; uniform belief with κ fixed at 1 (no social). |
+| `R` | reported | Repeat only. |
 | `O` | reported | Own counts only. |
 | `S` | reported | Social belief only. |
 | `Random` | reported | Uniform chance baseline; nothing to sample, so its log-likelihood is taken directly. |
-| `Switch` | reported | HOS mixed with the novice-readout policy, weight ω_E,i / ω_N,i per participant by who was watched last. |
+| `Switch` | reported | ROS mixed with the novice-readout policy, weight ω_E,i / ω_N,i per participant by who was watched last. |
 | `Switch-by-round` | S4 | `Switch` plus δ_E / δ_N round slopes on the mixing logit. **δ_N is the S4 estimand.** |
 | `Switch-by-round+ktrend` | robustness | Adds δ_κ, a round slope on log κ. |
 | `Switch-8` | exploratory | Eight group-level weights indexed by (demonstrator watched, round, condition), participants deviating with a shared τ·z_i. Drives Fig 4a. |
-| `HOS+persev` | exploratory | HOS plus a perseveration bonus on any arm already chosen this play game. |
-| `HOS-reset` | exploratory | HOS with λ_c ≡ 0: the learner resets between the round's two play games. |
-| `HOS+eps` | robustness | HOS with the lapse ε fitted (Beta(1,9)) rather than fixed at 0.02. |
+| `ROS+persev` | exploratory | ROS plus a perseveration bonus on any arm already chosen this play game. |
+| `ROS-reset` | exploratory | ROS with λ_c ≡ 0: the learner resets between the round's two play games. |
+| `ROS+eps` | robustness | ROS with the lapse ε fitted (Beta(1,9)) rather than fixed at 0.02. |
 | `Switch-by-round+eps` | robustness | `Switch-by-round` with the lapse fitted. |
 
 `belief(T, source)` returns a `(prior, social)` count pair, each `(N, K, 2)`: a
@@ -565,7 +565,7 @@ sources (`naive`, `vis_last`, `vis_expert`) are Beta(1,1) + visible pulls;
 
 The model body is NumPyro: step 1 posterior
 `prior + κ·social + λ_w·own_seg + λ_c·own_prev`, step 2 Thompson (**read from
-the interpolated tables, not recomputed**), step 3 habit/perseveration tilt,
+the interpolated tables, not recomputed**), step 3 repeat/perseveration tilt,
 step 4 lapse, plus the mixture `logaddexp`. `grids(spec)` gives the
 `(κ, λ_w, λ_c)` knots the spec's table needs (a single knot where a term is
 off); `cubic` is 4-point Lagrange interpolation along the grid axis;
@@ -608,8 +608,8 @@ only on the tables each model needs. Human fits use the scipy builder
 the tables the fit read (two for a Switch model: expert + novice). Changing the
 data or the grid therefore invalidates the fit automatically. The same key names
 the Pareto-k fallback refits under `choice/loso/`. `figures/fits.py::load_fit`
-resolves a model's pickle by an exact name-plus-hash regex, so `HOS` never
-matches `HOS+persev`.
+resolves a model's pickle by an exact name-plus-hash regex, so `ROS` never
+matches `ROS+persev`.
 
 **3. Checks, keyed by unit.** Simulated datasets, fits, PPC draws and split-half
 draws are cached per dataset index / per draw index under
@@ -640,7 +640,7 @@ number from being typed by hand.
   order. The five stages that write one are
   `STAGES_WITH_NUMBERS = ("descriptive", "partner_choice", "choice", "checks", "unseen")`
   — the first two from R.
-- Keys are free text (`S1a_estimate`, `elpd_HOS+eps`,
+- Keys are free text (`S1a_estimate`, `elpd_ROS+eps`,
   `split_half_zigzag_inside`). `macro_name(key)` keeps letters only: words split
   at every non-letter, digits spelled out, each word capitalised, prefixed
   `res`. So `S1a_estimate` becomes `\resSOneAEstimate`.
@@ -828,7 +828,7 @@ cache piece, one writer per file, and the stages then run over the full caches:
 | 3 | `loso:<model>`, `recovery:<d>`, `model_recovery:<comparison>:<side>:<d>`, `split_fit:<model>`, `ppc:<model>:<i>` | GPU |
 | 4 | `split_half:<model>:<i>` | GPU |
 
-Run one by hand with `python src/run_analysis.py --version <v> --unit fit:HOS`,
+Run one by hand with `python src/run_analysis.py --version <v> --unit fit:ROS`,
 or via the array script:
 `SLURM_ARRAY_TASK_ID=<i> UNIT_LIST=<file> VERSION=<v> bash scripts/slurm/units.sbatch`.
 

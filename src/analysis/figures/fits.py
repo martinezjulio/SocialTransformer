@@ -1,6 +1,6 @@
 # %% fits
 """The choice stage's cached fits, for the figures: ``load_fit(analysis_dir, name)`` finds the pickle of a registry model
-by its sanitised name and hash key (``<name>_<hash>[-<hash>].pkl``), so ``HOS`` does not match ``HOS+persev``."""
+by its sanitised name and hash key (``<name>_<hash>[-<hash>].pkl``), so ``ROS`` does not match ``ROS+persev``."""
 
 import pickle
 import re

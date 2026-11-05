@@ -1,13 +1,13 @@
 # %% supp
 """Supplementary figures, one file each (``figS_<name>``). Part 1, from the choice and unseen stages: the full ladder
-(every model against HOS, whole data) with the S1/S2 rivals by round; the per-participant ΔELPD behind every paired SE
+(every model against ROS, whole data) with the S1/S2 rivals by round; the per-participant ΔELPD behind every paired SE
 of the registered comparisons; the ELPD split and the copying comparison on the after-novice cells. Part 2, from the
 descriptive, power, partner-choice, games and preprocessing outputs: the confirmatory contrasts under the robustness
 fits; decision rates by N at the pilot and half effect; exclusion counts per rule; the solo session's four slots by
 round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3, from the cached fits:
-the group-level posteriors of HOS and Switch-by-round (κ, λ_w, λ_c, ρ0, ρ_win, ω_E, ω_N, δ_E, δ_N) and the lapse ε of
+the group-level posteriors of ROS and Switch-by-round (κ, λ_w, λ_c, ρ0, ρ_win, ω_E, ω_N, δ_E, δ_N) and the lapse ε of
 the two free-lapse fits, as 95% ETI bars with the median.
-Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: H habit, O own, S social.
+Part 4 (8.7.4): PPC bands, recovery coverage, split-half. Names: R repeat, O own, S social.
 """
 
 from pathlib import Path
@@ -20,17 +20,17 @@ from analysis.figures.fig3 import COUNTS, SOURCES, dot_whisker, headed_rows
 from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, FONT, WIDTH, apply, save
 
-NAME = {"HOS+persev": "HOS + perseveration", "HOS-reset": "HOS, no reset", "HOS+eps": "HOS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free",
+NAME = {"ROS+persev": "ROS + perseveration", "ROS-reset": "ROS, no reset", "ROS+eps": "ROS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free",
         "Switch-by-round+ktrend": "Switch-by-round + κ trend"}   # registry name -> figure name where they differ
-REGISTERED = {**{m: (m,) for m in SOURCES + COUNTS}, "HOS − HO": ("HO",), "HS − HO": ("HS", "HO")}   # per-participant ΔELPD: HOS minus the model, or the difference of two
+REGISTERED = {**{m: (m,) for m in SOURCES + COUNTS}, "ROS − RO": ("RO",), "RS − RO": ("RS", "RO")}   # per-participant ΔELPD: ROS minus the model, or the difference of two
 
 
 def fig_ladder(analysis_dir: Path) -> list:
-    """Every model against HOS on all trials (left), and the S1/S2 rivals by round (right)."""
-    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0).drop(index="HOS")
+    """Every model against ROS on all trials (left), and the S1/S2 rivals by round (right)."""
+    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0).drop(index="ROS")
     byr = pd.read_csv(Path(analysis_dir) / "choice" / "ladder_by_round.csv", index_col=[0, 1])
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(WIDTH["double"], 4.0), width_ratios=[1.3, 1], gridspec_kw=dict(wspace=0.9))
-    ys = headed_rows(ax1, {"HOS minus the model": [NAME.get(m, m) for m in lad.index]})
+    ys = headed_rows(ax1, {"ROS minus the model": [NAME.get(m, m) for m in lad.index]})
     for y, m in zip(ys, lad.index):
         dot_whisker(ax1, y, -lad.loc[m, "delta"], lad.loc[m, "se"])
     rivals = SOURCES + COUNTS
@@ -40,7 +40,7 @@ def fig_ladder(analysis_dir: Path) -> list:
             dot_whisker(ax2, y + dy, -byr.loc[(m, r), "delta"], byr.loc[(m, r), "se"], mk, r if m == rivals[0] else None)
     for ax in (ax1, ax2):
         ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-        ax.set_xlabel("ΔELPD, HOS minus the model")
+        ax.set_xlabel("ΔELPD, ROS minus the model")
     ax2.legend(loc="upper right", handletextpad=0.3)
     return save(fig, "figS_ladder", analysis_dir)
 
@@ -50,9 +50,9 @@ def fig_per_participant(analysis_dir: Path) -> list:
     e = pd.read_csv(Path(analysis_dir) / "choice" / "elpd_per_participant.csv", index_col=0)
     fig, ax = plt.subplots(figsize=(WIDTH["single"], 2.8))
     rng = np.random.default_rng(0)
-    ys = headed_rows(ax, {"belief rivals (HOS −)": list(REGISTERED)[:5], "ablations": list(REGISTERED)[5:]})
+    ys = headed_rows(ax, {"belief rivals (ROS −)": list(REGISTERED)[:5], "ablations": list(REGISTERED)[5:]})
     for y, (lab, ms) in zip(ys, REGISTERED.items()):
-        d = -e[ms[0]] if len(ms) == 1 else e[ms[0]] - e[ms[1]]   # the file holds model − HOS: HOS − model, or (HS − HOS) − (HO − HOS) = HS − HO
+        d = -e[ms[0]] if len(ms) == 1 else e[ms[0]] - e[ms[1]]   # the file holds model − ROS: ROS − model, or (RS − ROS) − (RO − ROS) = RS − RO
         ax.scatter(d, y + rng.uniform(-0.18, 0.18, len(d)), s=6, color=COLOR["model"], alpha=0.8, linewidths=0, zorder=2)
         ax.plot([d.mean()] * 2, [y - 0.3, y + 0.3], color=COLOR["human"], linewidth=1.4, zorder=3)
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
@@ -161,7 +161,7 @@ def fig_recency(analysis_dir: Path) -> list:
 PARAMS = {"κ (group)": ("mu_log_kappa", np.exp), "λ_w": ("log_lambda_w", np.exp), "λ_c": ("lambda_c", None), "ρ0 (group)": ("mu_rho0", None), "ρ_win (group)": ("mu_rho_win", None),
           "ω_E (group)": ("mu_logit_omega_E", lambda x: 1 / (1 + np.exp(-x))), "ω_N (group)": ("mu_logit_omega_N", lambda x: 1 / (1 + np.exp(-x))), "δ_E": ("delta_E", None), "δ_N": ("delta_N", None),
           "ε (free lapse)": ("eps", None)}
-POST_MODELS = ["HOS", "Switch-by-round", "HOS+eps", "Switch-by-round+eps"]
+POST_MODELS = ["ROS", "Switch-by-round", "ROS+eps", "Switch-by-round+eps"]
 
 
 def fig_posteriors(analysis_dir: Path) -> list:
@@ -184,7 +184,7 @@ def fig_posteriors(analysis_dir: Path) -> list:
 
 TARGETS = {"after_novice_rise": "after-novice\npayoff rise", "entropy_fall": "entropy fall\nround 1 − 2", "zigzag": "novice-first\nzig-zag",
            "stay_win": "stay after\na win", "stay_loss": "stay after\na loss"}
-PPC_MODELS = ["HOS", "Switch-by-round"]
+PPC_MODELS = ["ROS", "Switch-by-round"]
 
 
 def fig_ppc(analysis_dir: Path) -> list:

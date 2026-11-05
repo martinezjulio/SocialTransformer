@@ -95,10 +95,10 @@ def hypothesis_table(analysis_dir: Path) -> pd.DataFrame:
 
 
 def ladder_table(analysis_dir: Path) -> pd.DataFrame:
-    """Every registry model: role, ELPD, difference from HOS with its SE, trials with Pareto k > 0.7."""
+    """Every registry model: role, ELPD, difference from ROS with its SE, trials with Pareto k > 0.7."""
     lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0)
     return pd.DataFrame([dict(Model=m, Role=REGISTRY[m].role or "", ELPD=fmt(lad.loc[m, "elpd"], "integer"),
-                              delta="" if m == "HOS" else f"{fmt(lad.loc[m, 'delta'], 'integer')} ({fmt(lad.loc[m, 'se'], 'integer')})", bad_k=int(lad.loc[m, "n_bad_k"]))
+                              delta="" if m == "ROS" else f"{fmt(lad.loc[m, 'delta'], 'integer')} ({fmt(lad.loc[m, 'se'], 'integer')})", bad_k=int(lad.loc[m, "n_bad_k"]))
                          for m in REGISTRY if m in lad.index]).rename(columns={"delta": "$\\Delta$ELPD (SE)", "bad_k": "$k > 0.7$"})
 
 

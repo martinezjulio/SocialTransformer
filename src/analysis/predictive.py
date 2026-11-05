@@ -3,7 +3,7 @@
 
 ``FittedPolicy`` holds one participant's parameters at one posterior draw and turns a ``TrialState`` into
 the model's choice probabilities with the exact Thompson quadrature (no tables: simulated beliefs are new).
-It implements the same four steps as ``policies.model`` (belief prior + κ·social + own terms, Thompson, habit tilt, lapse) and the
+It implements the same four steps as ``policies.model`` (belief prior + κ·social + own terms, Thompson, repeat tilt, lapse) and the
 Switch mixture. Sources available in the loop: expert, novice, recent (last watched), vis_last, uniform.
 ``simulated_trial_data`` turns the simulator's session frames into ``TrialData`` through the human
 builder, and ``sample_participants`` draws new participants from the fitted hierarchy.
@@ -72,7 +72,7 @@ class FittedPolicy:
             lam_c = 0.0 if self.spec.reset else self.p["lambda_c"]
             ab = ab + np.exp(self.p["log_lambda_w"]) * s.own_within.numpy().T + lam_c * s.own_carry.numpy().T
         lq = np.log(np.clip(p_win(ab[None])[0], P_FLOOR, None))
-        if self.spec.habit and s.prev_action is not None:
+        if self.spec.repeat and s.prev_action is not None:
             lq[s.prev_action] += self.p["rho0"] + self.p["rho_win"] * s.prev_reward
         if self.spec.persev:
             lq = lq + self.p["persev"] * (s.own_within.numpy().sum(0) > 0)

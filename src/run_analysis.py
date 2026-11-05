@@ -1,7 +1,7 @@
 """Driver of the analysis pipeline: run registered stages for one experiment version.
 
     python src/run_analysis.py --version pilot_E [--stages games,inference-check]
-    python src/run_analysis.py --version pilot_E --list-units | --unit fit:HOS    # one cluster unit (scripts/slurm)
+    python src/run_analysis.py --version pilot_E --list-units | --unit fit:ROS    # one cluster unit (scripts/slurm)
 
 Inputs:  $EXPERIMENT_DATA_DIR/<version>/preprocessed_participant_data.csv and $OUTPUT_DATA_DIR/eval/<version>/
          (run_inference.py). Outputs: $OUTPUT_DATA_DIR/analysis/<version>/<stage>/. The R stages
@@ -75,7 +75,7 @@ def claim_verdict(parts: list) -> str:
 @stage("choice")
 def run_choice(p: Paths) -> None:
     """Fit the choice-model registry on this version's social trials: tables per (source, κ, own) built once and
-    cached, fits cached by table hash, PSIS-LOO with the Pareto-k fallback on the S1/S2 models (``loso_loo``), ladder vs HOS,
+    cached, fits cached by table hash, PSIS-LOO with the Pareto-k fallback on the S1/S2 models (``loso_loo``), ladder vs ROS,
     the registration's four-outcome verdicts for S1a–S3b (2 SE each), the claims S1–S3 (from their parts) and S4 (δ_N 95% ETI), numbers.json."""
     from concurrent.futures import ThreadPoolExecutor
     import numpy as np
@@ -108,22 +108,22 @@ def run_choice(p: Paths) -> None:
     bad = {n: l.n_bad for n, l in loos.items()}   # the ladder reports the pre-fallback count and the sessions the fallback refits
     refit = {n: len(set(T.session[l.pareto_k > K_BAD])) if n in FALLBACK_MODELS else 0 for n, l in loos.items()}
     loos = {n: loso_loo(p, T, n, l) if n in FALLBACK_MODELS else l for n, l in loos.items()}
-    lad = ladder(loos, "HOS", T.part).assign(n_bad_k=pd.Series(bad), sessions_refit=pd.Series(refit)).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
+    lad = ladder(loos, "ROS", T.part).assign(n_bad_k=pd.Series(bad), sessions_refit=pd.Series(refit)).join(pd.DataFrame({n: f.diagnostics for n, f in fits.items()}).T)
     lad.to_csv(out / "ladder.csv")
-    rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs HOS, paired SE, share
-    pd.concat({n: by_cell(l, loos["HOS"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
-    pd.DataFrame({n: paired(l, loos["HOS"], T.part)["per_participant"] for n, l in loos.items()}).rename_axis("participant").to_csv(out / "elpd_per_participant.csv")   # Fig S: dots behind every paired SE
+    rounds = {"round 1": T.round_pm < 0, "round 2": T.round_pm > 0}   # the ladder per round (Fig 3b, 3d): ΔELPD vs ROS, paired SE, share
+    pd.concat({n: by_cell(l, loos["ROS"], T, rounds) for n, l in loos.items()}, names=["model", "round"]).to_csv(out / "ladder_by_round.csv")
+    pd.DataFrame({n: paired(l, loos["ROS"], T.part)["per_participant"] for n, l in loos.items()}).rename_axis("participant").to_csv(out / "elpd_per_participant.csv")   # Fig S: dots behind every paired SE
     def post(name, site, f=lambda x: x):   # posterior mean and 95% ETI of a site (or a function of it); NaN when the fit failed the gate
         x = f(fits[name].posterior[site].reshape(-1)) if name in loos else np.array([np.nan])
         return dict(estimate=x.mean(), lo=np.percentile(x, 2.5), hi=np.percentile(x, 97.5), rule="posterior")
     rows = {"S4": post("Switch-by-round", "delta_N") | dict(rule="95% ETI > 0")}
-    for name, a, b in [("S1a", "HOS", "recent"), ("S1b", "HOS", "novice"), ("S2a", "HOS", "naive-recent"), ("S2b", "HOS", "naive-expert"),
-                       ("S2c", "HOS", "naive"), ("S3a", "HS", "HO"), ("S3b", "HOS", "HO"),
-                       ("switch_round_term", "Switch-by-round", "Switch"), ("own_on_top", "HOS", "HS"), ("social_vs_own", "S", "O")]:
+    for name, a, b in [("S1a", "ROS", "recent"), ("S1b", "ROS", "novice"), ("S2a", "ROS", "naive-recent"), ("S2b", "ROS", "naive-expert"),
+                       ("S2c", "ROS", "naive"), ("S3a", "RS", "RO"), ("S3b", "ROS", "RO"),
+                       ("switch_round_term", "Switch-by-round", "Switch"), ("own_on_top", "ROS", "RS"), ("social_vs_own", "S", "O")]:
         q = paired(loos[a], loos[b], T.part) if a in loos and b in loos else dict(delta=np.nan, se=np.nan)
         rows[name] = dict(estimate=q["delta"], lo=q["delta"] - 2 * q["se"], hi=q["delta"] + 2 * q["se"], rule="ΔELPD > 2 SE" if name[0] == "S" else "reported")
     rows |= {"delta_E": post("Switch-by-round", "delta_E"), "ktrend_delta_kappa": post("Switch-by-round+ktrend", "delta_kappa"),   # E8, E10 (numbers.POSTERIORS)
-             "ktrend_delta_N": post("Switch-by-round+ktrend", "delta_N"), "eps_HOS_eps": post("HOS+eps", "eps"), "eps_HOS_kappa": post("HOS+eps", "mu_log_kappa", np.exp),
+             "ktrend_delta_N": post("Switch-by-round+ktrend", "delta_N"), "eps_ROS_eps": post("ROS+eps", "eps"), "eps_ROS_kappa": post("ROS+eps", "mu_log_kappa", np.exp),
              "eps_switch_eps": post("Switch-by-round+eps", "eps"), "eps_switch_delta_N": post("Switch-by-round+eps", "delta_N")}
     for r in rows.values():
         r["verdict"] = "" if r["rule"] in ("reported", "posterior") else verdict(r["estimate"], r["lo"], r["hi"])
@@ -159,7 +159,7 @@ def table_arrays(p: Paths, T, name: str) -> tuple:
     return (tabs[0], tabs[1] if len(tabs) > 1 else None)
 
 
-FALLBACK_MODELS = ("HOS", "recent", "novice", "naive-recent", "naive-expert", "naive")   # the registered S1/S2 comparisons (prereg 4.7.3)
+FALLBACK_MODELS = ("ROS", "recent", "novice", "naive-recent", "naive-expert", "naive")   # the registered S1/S2 comparisons (prereg 4.7.3)
 
 
 def loso_loo(p: Paths, T, name: str, l):
@@ -188,8 +188,8 @@ def recovery_pairs(p: Paths, T) -> dict:
     path = p.analysis_dir / "choice" / "ladder.csv"
     if path.exists():
         return comparisons(pd.read_csv(path, index_col="model"))
-    elpd = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))).elpd for n in ("HOS", *sum(RIVALS.values(), ()))}
-    return comparisons(pd.DataFrame({"delta": {n: e - elpd["HOS"] for n, e in elpd.items()}}))
+    elpd = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))).elpd for n in ("ROS", *sum(RIVALS.values(), ()))}
+    return comparisons(pd.DataFrame({"delta": {n: e - elpd["ROS"] for n, e in elpd.items()}}))
 
 
 def checks_setup(p: Paths) -> tuple:
@@ -211,7 +211,7 @@ def checks_setup(p: Paths) -> tuple:
 
 @stage("checks")
 def run_checks(p: Paths) -> None:
-    """Simulation checks of the fitted models: δ_N recovery, model recovery for S1 and S2 (HOS against its nearest rival in the
+    """Simulation checks of the fitted models: δ_N recovery, model recovery for S1 and S2 (ROS against its nearest rival in the
     ladder, ``recovery_pairs``) and S4, free-running PPC. The transformer
     is the one the inference CSVs came from (eval metadata) unless ``checkpoint`` overrides it. Every unit is cached
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
@@ -253,8 +253,8 @@ def run_unseen(p: Paths) -> None:
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "unseen"
     out.mkdir(exist_ok=True)
     tabs = dict(readout_table=readout_table(T), copying_table=copying_table(T), exploit=exploit_table(T))
-    loos = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))) for n in ("HOS", "recent", "naive-recent")}   # the choice stage's fallback-corrected LOO (cache)
-    tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["HOS"], loos["recent"], T), elpd_by_cell(loos["HOS"], loos["naive-recent"], T)
+    loos = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))) for n in ("ROS", "recent", "naive-recent")}   # the choice stage's fallback-corrected LOO (cache)
+    tabs["elpd_split"], tabs["copying_elpd"] = elpd_by_cell(loos["ROS"], loos["recent"], T), elpd_by_cell(loos["ROS"], loos["naive-recent"], T)
     for name, t in tabs.items():
         t.to_csv(out / f"{name}.csv")
     r, x = tabs["readout_table"], tabs["exploit"]
