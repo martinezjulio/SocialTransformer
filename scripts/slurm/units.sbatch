@@ -21,6 +21,7 @@ set -a; source "$ENV_FILE"; set +a
 source "$CONDA_SETUP"
 conda activate SocialTransformer
 cd "$REPO_DIR"
+export XDG_CACHE_HOME="/tmp/$USER/job-$SLURM_JOB_ID"; mkdir -p "$XDG_CACHE_HOME"   # per-task cache dir: Sherlock sets it to the node-shared /tmp, and arviz writes a stamp file there at import, which tasks starting together on one node raced on (exit 1)
 : "${VERSION:?VERSION is not set}" "${UNIT_LIST:?UNIT_LIST is not set}" "${SLURM_ARRAY_TASK_ID:?not an array task}"
 UNIT="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$UNIT_LIST")"
 [ -n "$UNIT" ] || { echo "no unit on line $SLURM_ARRAY_TASK_ID of $UNIT_LIST" >&2; exit 2; }
