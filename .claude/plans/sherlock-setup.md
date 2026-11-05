@@ -65,7 +65,7 @@ same message style as the repo's recent commits and pushed, so the lab machine p
 - [ ] 6. Results
   - [ ] 6.1 `final-*.out` ends with the report line (256 numbers, 50 figure files); `paper/results.md` values against the table above; `verdicts.csv` all supported; `checks/recovery.csv` 25 rows, `model_recovery.csv` 30 rows, `ppc.csv` 20 rows. Record the differences under Findings (~0)
   - [ ] 6.2 `cp -r $OUTPUT_DATA_DIR/analysis/pilot_E/paper $GROUP_HOME/$USER/SocialBanditsProject/results/pilot_E_$(date +%F)` (scratch is purged); `git status` clean or every fix committed and pushed (~0)
-- [ ] 7. Full data (later, when the preprocessed full version exists on the lab machine): 3.1–3.3 and 5 with `--version <full>`; `sh_quota` before: tables ≈ 9 × 3.5 GB plus the recovery datasets' GPU tables (~0)
+- [ ] 7. Full data (the settings, checks and steps are in `full-run-update.md`, reviewed before the submission; later, when the preprocessed full version exists on the lab machine): 3.1–3.3 and 5 with `--version <full>`; `sh_quota` before: tables ≈ 9 × 3.5 GB plus the recovery datasets' GPU tables (~0)
 
 ## Findings
 
