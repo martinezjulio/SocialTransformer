@@ -8,21 +8,21 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 
 ## A. Settings to change before the full submission
 
-- [ ] A.1 Final run time limit: `submit.sh` hard-codes `--time=12:00:00` for the final run; the full run needs 24 h (`hns` and
+- [x] A.1 (4 Nov: `SLURM_FINAL_TIME` added to `submit.sh` and `.env.example`; 24:00:00 set in the Sherlock `.env`; applied to the pilot chain as a test of the configuration) Final run time limit: `submit.sh` hard-codes `--time=12:00:00` for the final run; the full run needs 24 h (`hns` and
   `normal` allow 7 d). Make it an `.env` variable (`SLURM_FINAL_TIME`, default 12:00:00, documented in `.env.example`) and set
   24:00:00 in the Sherlock `.env`. Set from the pilot's measured final-run time × ~8 (the choice stage was estimated at ~7 h
   at 300 participants on the lab box).
-- [ ] A.2 Table blocks: `N_TABLE_BLOCKS=32` in `.env` (288 level-0 tasks instead of 72). Each block then takes ~25 min at 350
+- [x] A.2 (4 Nov: `N_TABLE_BLOCKS=32`, `SLURM_TABLE_CPUS=4`, `SLURM_TABLE_MEM=16G` in the Sherlock `.env`, the two new variables read by `submit.sh`; dry run gives 288 level-0 units; applied to the pilot chain) Table blocks: `N_TABLE_BLOCKS=32` in `.env` (288 level-0 tasks instead of 72). Each block then takes ~25 min at 350
   participants instead of ~1.5 h, fits scheduler gaps better and loses less to a preemption. Check that `--list-units`
   gives 288 level-0 units and that level 0's `--cpus-per-task=16` still suits a 32-block task (the builder is threaded;
   consider 8 cores and halve the memory if the pilot's `seff` shows headroom).
-- [ ] A.3 Level-0 memory: read the pilot's peak (`seff <jobid>_<task>` on a few completed block tasks, `MaxRSS` in
+- [x] A.3 (4 Nov: pilot 8-block tasks on 16 cores peaked at 5.8-6.2 GB (`MaxRSS`), cached ones 2.8 GB, 15-26 min; a 32-block pilot task is a quarter of the rows, so 16 GB is ample; at 350 participants a 32-block task holds ~2.3× the rows of a pilot 8-block task, projected peak ~10-14 GB: set `SLURM_TABLE_MEM=24G` for the full run and re-check with `seff` on the pilot's 32-block tasks) Level-0 memory: read the pilot's peak (`seff <jobid>_<task>` on a few completed block tasks, `MaxRSS` in
   `sacct -o JobID,MaxRSS`) and scale by rows per block at 350 participants (a 32-block task holds about the same rows as a
   pilot 8-block task: 350/38 × 1/4 ≈ 2.3×). Keep `--mem` ≥ 1.5× the projected peak.
 - [ ] A.4 GPU unit time limit (2 h): confirm from the pilot that the slowest level-3/4 unit (recovery dataset, loso refit,
   split fit) finished well inside 2 h; fits at 350 are expected at ~35 min. Raise to 4 h only if the pilot's slowest unit
   exceeded 1 h (the simulated datasets do not grow with N; the fits and loso refits do).
-- [ ] A.5 Partitions: CPU levels `owners,normal,mcfrank` (the group's own 24-core node, 7 d, no campus competition); GPU
+- [x] A.5 (4 Nov: `mcfrank` AllowGroups includes mcfrank, 24 cores, 192 GB, 7 d, 8 GB/core; `SLURM_CPU_PARTITION=owners,normal,mcfrank` in `.env`; applied to the pilot chain) Partitions: CPU levels `owners,normal,mcfrank` (the group's own 24-core node, 7 d, no campus competition); GPU
   levels stay `owners` (the `gpu` partition's QOS refuses arrays of 130+ tasks); final `hns,normal`. Check `mcfrank`
   eligibility first: `scontrol show partition mcfrank` (AllowGroups) and a 1-minute test job.
 - [ ] A.6 `sh_quota` before submitting: tables at 350 ≈ 9 × 3.5 GB plus the recovery datasets' tables; scratch has room (100 TB),
@@ -75,4 +75,4 @@ shared-cache race of 4 Nov). None is expected to fail; each is checked or bounde
 
 ## Findings
 
-(added as the pilot chain and the full run teach us more)
+- 4 Nov: the pilot chain is being rerun in the full-run configuration (A.1, A.2, A.5 applied) so that configuration is what the pilot tests; the five 8-block files from the first chain (`*.block00Xof008.npy`) stay in `tables/` unused (block files are keyed by their split) and can be deleted with the set-aside folders.

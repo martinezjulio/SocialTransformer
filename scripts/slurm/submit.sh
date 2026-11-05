@@ -5,7 +5,8 @@
 # long CPU partition, which finds every cache piece filled. Unit lists and logs go to $OUTPUT_DATA_DIR/analysis/<version>/slurm/.
 #   bash scripts/slurm/submit.sh --version pilot_E [--dev] [--dry-run]
 # .env: SLURM_CPU_PARTITION (default normal), SLURM_GPU_PARTITION (owners, preemptible: the tasks requeue),
-# SLURM_FINAL_PARTITION (hns), SLURM_ACCOUNT (optional), N_TABLE_BLOCKS (8; rows per table block unit).
+# SLURM_FINAL_PARTITION (hns), SLURM_ACCOUNT (optional), N_TABLE_BLOCKS (8; rows per table block unit), SLURM_TABLE_CPUS (16) and
+# SLURM_TABLE_MEM (64G) per table block task, SLURM_FINAL_TIME (12:00:00) for the final run.
 # `--dev` allows the reduced sizes (N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS), which the tasks inherit from this shell.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +32,7 @@ done
 export VERSION N_TABLE_BLOCKS="${N_TABLE_BLOCKS:-8}" REPO_DIR="$PWD"
 CPU="--partition=${SLURM_CPU_PARTITION:-normal}"; GPU="--partition=${SLURM_GPU_PARTITION:-owners} --gpus=1 --cpus-per-task=4 --mem=32G --time=2:00:00"
 ACCOUNT="${SLURM_ACCOUNT:+--account=$SLURM_ACCOUNT}"
-LEVELS=("$CPU --cpus-per-task=16 --mem=64G --time=4:00:00" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
+LEVELS=("$CPU --cpus-per-task=${SLURM_TABLE_CPUS:-16} --mem=${SLURM_TABLE_MEM:-64G} --time=4:00:00" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
 DIR="$OUTPUT_DATA_DIR/analysis/$VERSION/slurm"; mkdir -p "$DIR"
 bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units > "$DIR/units.tsv"   # inside the image on Sherlock
 submit() { local name="$1"; shift; if [ "$DRY" -eq 1 ]; then echo "sbatch $*" >&2; echo "dry-$name"; else sbatch --parsable "$@"; fi; }
@@ -42,5 +43,5 @@ for level in 0 1 2 3 4; do
   JOB=$(submit "level$level" $ACCOUNT ${LEVELS[$level]} ${DEP:+--dependency=afterok:$DEP} --array="1-$n" --export=ALL,UNIT_LIST="$LIST" --output="$DIR/level$level-%A_%a.out" scripts/slurm/units.sbatch)
   echo "level $level: $n units, job $JOB"; DEP="$JOB"
 done
-JOB=$(submit final $ACCOUNT --partition="${SLURM_FINAL_PARTITION:-hns}" --cpus-per-task=16 --mem=64G --time=12:00:00 ${DEP:+--dependency=afterok:$DEP} --job-name=analysis-final --output="$DIR/final-%j.out" --wrap "bash scripts/run_analysis.sh --version $VERSION $DEV")
+JOB=$(submit final $ACCOUNT --partition="${SLURM_FINAL_PARTITION:-hns}" --cpus-per-task=16 --mem=64G --time="${SLURM_FINAL_TIME:-12:00:00}" ${DEP:+--dependency=afterok:$DEP} --job-name=analysis-final --output="$DIR/final-%j.out" --wrap "bash scripts/run_analysis.sh --version $VERSION $DEV")
 echo "final run: job $JOB (lists and logs under $DIR)"
