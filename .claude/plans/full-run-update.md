@@ -20,7 +20,8 @@ submission Friday night, results wanted by end of Monday 10 Nov.
   `sacct -o JobID,MaxRSS`) and scale by rows per block at 350 participants (a 32-block task holds about the same rows as a
   pilot 8-block task: 350/38 × 1/4 ≈ 2.3×). Keep `--mem` ≥ 1.5× the projected peak.
 - [ ] A.3b (4 Nov 22:20, pilot level 3): a recovery dataset unit ran 16 min with `MaxRSS` 21.9 GB against the 32 GB GPU-unit request; loso refits up to 10 GB; the simulated datasets are the same size in the full run, so raise the GPU levels' `--mem` to 48G (12 GB/core on `owners`, within its 48 GB/core cap) before the full submission; make it an `.env` variable (`SLURM_GPU_MEM`, default 32G) like the table settings.
-- [ ] A.4a (4 Nov: `SLURM_GPU_OPTS=--gpu_cmode=shared` is required on Sherlock for every GPU level; without it the fit worker cannot open a CUDA context; set in `.env` by the setup script) GPU compute mode.
+- [x] A.4b (5 Nov: `SLURM_GPU_OPTS` also carries `-C GPU_GEN:AMP|GPU_GEN:HPR|GPU_GEN:LOV|GPU_GEN:TUR|GPU_GEN:VLT`, every generation on `owners` except Pascal; `--exclude` is not allowed on Sherlock, constraints are) GPU generation.
+- [x] A.4a (4 Nov: `SLURM_GPU_OPTS=--gpu_cmode=shared` is required on Sherlock for every GPU level; without it the fit worker cannot open a CUDA context; set in `.env` by the setup script) GPU compute mode.
 - [x] A.4 (5 Nov: `SLURM_GPU_TIME=4:00:00` and `SLURM_GPU_MEM=48G` in the Sherlock `.env`, read by `submit.sh`; pilot recovery datasets 7-119 min with one 2 h timeout on a Pascal P40, so the limit was the only failure of the night; A.3b done by the same change; see A.4b for the GPU-generation constraint) GPU unit time limit (2 h): confirm from the pilot that the slowest level-3/4 unit (recovery dataset, loso refit,
   split fit) finished well inside 2 h; fits at 350 are expected at ~35 min. Raise to 4 h only if the pilot's slowest unit
   exceeded 1 h (the simulated datasets do not grow with N; the fits and loso refits do).
