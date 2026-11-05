@@ -43,6 +43,8 @@ export SLURM_CPU_PARTITION=owners,normal
 export SLURM_GPU_PARTITION=owners
 export SLURM_FINAL_PARTITION=hns,normal
 export SLURM_GPU_OPTS=--gpu_cmode=shared
+export SLURM_GPU_MEM=48G
+export SLURM_GPU_TIME=4:00:00
 export N_TABLE_BLOCKS=8
 export RENV_PATHS_CACHE=$ENV_ROOT/renv-cache
 export CONTAINER=$IMAGE
