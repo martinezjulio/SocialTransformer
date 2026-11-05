@@ -753,7 +753,7 @@ fitting code runs unchanged on simulations.
 
 ### Sherlock: analysis at full size
 
-One-time setup from a login node inside the clone:
+One-time setup inside an `sh_dev` session in the clone (the installs are too heavy for a login node):
 
 ```bash
 sh_dev -c 4 -m 16GB -t 2:00:00     # the installs are too heavy for a login node

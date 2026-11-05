@@ -41,7 +41,7 @@ def test_p_win_equals_legacy_and_sums_to_one(output_data_dir):
 
 
 def test_cubic_interpolation_on_dense_grid(output_data_dir):
-    files = sorted((output_data_dir / "analysis" / "pilot_E" / "tables").glob("expert_*.npy"))
+    files = sorted(f for f in (output_data_dir / "analysis" / "pilot_E" / "tables").glob("expert_*.npy") if ".block" not in f.name)   # full tables, not cluster block pieces
     if not files or not (output_data_dir / "eval" / "pilot_E" / "data").exists():
         pytest.skip("cached expert table or pilot_E inference not present")
     T = trial_data(load_sessions(output_data_dir / "eval" / "pilot_E", "pilot_E"))

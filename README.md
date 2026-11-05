@@ -211,7 +211,7 @@ Running at full size on a cluster, and the Sherlock/Apptainer setup, are covered
 in `ARCHITECTURE.md` §7. The short version:
 
 ```bash
-bash scripts/setup_sherlock.sh                     # one-time, from a login node
+bash scripts/setup_sherlock.sh                     # one-time, inside an sh_dev session
 bash scripts/slurm/submit.sh --version pilot_E     # dependent job arrays
 bash scripts/with_env.sh <command>                 # anything else, inside the container
 ```
