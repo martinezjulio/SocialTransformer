@@ -14,17 +14,21 @@
 #SBATCH --mem=32G
 #SBATCH --time=2:00:00
 set -euo pipefail
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-ENV_FILE="${ENV_FILE:-${REPO_DIR}/.env}"
-set -a; source "$ENV_FILE"; set +a
-[ -z "${CONTAINER:-}" ] || [ -n "${APPTAINER_CONTAINER:-}" ] || exec bash "$REPO_DIR/scripts/with_env.sh" bash "$REPO_DIR/scripts/slurm/units.sbatch"   # Sherlock: re-run inside the image
-source "$CONDA_SETUP"
-conda activate SocialTransformer
-cd "$REPO_DIR"
-export XDG_CACHE_HOME="/tmp/$USER/job-$SLURM_JOB_ID"; mkdir -p "$XDG_CACHE_HOME"   # per-task cache dir: Sherlock sets it to the node-shared /tmp, and arviz writes a stamp file there at import, which tasks starting together on one node raced on (exit 1)
-: "${VERSION:?VERSION is not set}" "${UNIT_LIST:?UNIT_LIST is not set}" "${SLURM_ARRAY_TASK_ID:?not an array task}"
-UNIT="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$UNIT_LIST")"
-[ -n "$UNIT" ] || { echo "no unit on line $SLURM_ARRAY_TASK_ID of $UNIT_LIST" >&2; exit 2; }
-echo "== $UNIT on ${SLURMD_NODENAME:-$(hostname)} ($(date +%H:%M:%S))"
-python src/run_analysis.py --version "$VERSION" --unit "$UNIT"
-echo "== done ($(date +%H:%M:%S))"
+# The body is one function so bash parses the whole file before executing it: the container re-exec runs this file from the repo, and bash otherwise reads a script incrementally, so an edit during a long task would be executed as garbage (seen 4 Nov, exit 127).
+main() {
+  REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+  ENV_FILE="${ENV_FILE:-${REPO_DIR}/.env}"
+  set -a; source "$ENV_FILE"; set +a
+  [ -z "${CONTAINER:-}" ] || [ -n "${APPTAINER_CONTAINER:-}" ] || exec bash "$REPO_DIR/scripts/with_env.sh" bash "$REPO_DIR/scripts/slurm/units.sbatch"   # Sherlock: re-run inside the image
+  source "$CONDA_SETUP"
+  conda activate SocialTransformer
+  cd "$REPO_DIR"
+  export XDG_CACHE_HOME="/tmp/$USER/job-$SLURM_JOB_ID"; mkdir -p "$XDG_CACHE_HOME"   # per-task cache dir: Sherlock sets it to the node-shared /tmp, and arviz writes a stamp file there at import, which tasks starting together on one node raced on (exit 1)
+  : "${VERSION:?VERSION is not set}" "${UNIT_LIST:?UNIT_LIST is not set}" "${SLURM_ARRAY_TASK_ID:?not an array task}"
+  UNIT="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$UNIT_LIST")"
+  [ -n "$UNIT" ] || { echo "no unit on line $SLURM_ARRAY_TASK_ID of $UNIT_LIST" >&2; exit 2; }
+  echo "== $UNIT on ${SLURMD_NODENAME:-$(hostname)} ($(date +%H:%M:%S))"
+  python src/run_analysis.py --version "$VERSION" --unit "$UNIT"
+  echo "== done ($(date +%H:%M:%S))"
+}
+main "$@"; exit $?   # parsed in full before anything runs; nothing is read past this line
