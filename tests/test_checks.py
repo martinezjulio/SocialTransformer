@@ -82,3 +82,33 @@ def test_recovery_and_model_recovery_summaries():
     assert v["S1"] == dict(a_wins_on_a=3, n_a=3, a_wins_on_b=0, n_b=3) and v["S4"] == dict(a_wins_on_a=3, n_a=3, a_wins_on_b=0, n_b=3)
     assert v["S2"] == dict(a_wins_on_a=0, n_a=0, a_wins_on_b=0, n_b=0), "a comparison without rows reports zeros"
     assert model_recovery_summary(rows.assign(winner=rows["winner"].where(rows["generating"] != s4b, s4a)), comps)["S4"]["a_wins_on_b"] == 3
+
+
+def test_simulated_visible_counts_match_the_human_construction(pilot):
+    """The simulator's per-shot visible-pull counts (last demonstration, the expert's this round, every pull this round plus
+    the learner's own), which the copying and naive policies read, equal what ``analysis.data.trial_data`` rebuilds from the
+    simulated shots, in both conditions (the naive rival of the S2 model-recovery pair is generated from them)."""
+    import random
+    from analysis.predictive import simulated_trial_data
+    from inference.readout import load_model
+    from inference.simulate import simulate_session
+    root, preprocessed, _ = pilot
+    ckpt = root / "training_runs/wandb_0i8yhqm7/checkpoints/epoch_119_best.pt"
+    if not ckpt.exists():
+        pytest.skip(f"{ckpt} not present")
+    model, _, norm = load_model(str(ckpt), None, None, "cuda" if torch.cuda.is_available() else "cpu")
+
+    class Recording:
+        def __init__(self): self.rows = []
+        def probs(self, s):
+            self.rows.append(((s.vis_round + s.own_within).numpy().T.copy(), s.vis_expert.numpy().T.copy(), s.vis_last.numpy().T.copy()))
+            return np.full(s.own_within.shape[1], 1.0 / s.own_within.shape[1])
+
+    for cond, pool in templates(preprocessed).items():
+        rec = Recording()
+        S = simulated_trial_data([simulate_session(model, norm, pool[0], rec, random.Random(0), np.random.default_rng(0))], "pilot_E")
+        seen = [np.stack([r[i] for r in rec.rows]) for i in range(3)]
+        assert len(rec.rows) == len(S.act) == 24, cond
+        for name, a, b in zip(("vis_round", "vis_expert", "vis_last"), seen, (S.vis_round, S.vis_expert, S.vis_last)):
+            assert np.array_equal(a, b), (cond, name)
+        assert (seen[1].sum(axis=(1, 2)) > 0).sum() == (24 if cond == "expert-first" else 12), cond   # the expert is seen from the first play game, or from the second

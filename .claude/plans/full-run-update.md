@@ -70,7 +70,10 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 - [ ] D.3 Monday: `final-*.out` ends with the report line; `paper/` copied to group home (scratch purges after 90 days);
   `git status` clean, every fix pushed.
 
-## E. Known residual risks after a clean pilot (why B and D exist)
+## E. Known residual risks after a clean pilot
+
+(5 Nov: one of these materialised on the pilot: the data-dependent recovery pair picked a rival the simulator could not play; fixed in the simulator, see `sherlock-setup.md` 5.3. The full data can pick any of the three S2 rivals; all three are now simulable, and `naive-expert` is covered by the same change.)
+ (why B and D exist)
 
 Time limits (A.1, A.4), memory at 350 (A.3), longer tasks more exposed to preemption on `owners` (A.2), data-dependent
 paths that the pilot never exercised (Pareto-k fallback refits on more sessions, recovery pairs chosen from the full

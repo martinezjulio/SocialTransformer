@@ -31,6 +31,8 @@ class TrialState:
     round_index: int = 0
     trial: int = 0
     vis_last: Optional[torch.Tensor] = None   # [2, K] (wins, losses) visible in the demonstration watched last
+    vis_expert: Optional[torch.Tensor] = None   # [2, K] visible in the expert's demonstrations this round (zeros if not yet seen)
+    vis_round: Optional[torch.Tensor] = None    # [2, K] every pull visible this round before this game: the demonstrations and the learner's earlier play game
 
 
 @runtime_checkable

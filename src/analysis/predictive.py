@@ -60,8 +60,9 @@ class FittedPolicy:
 
     def _source(self, s: TrialState, source: str) -> tuple:   # (prior, social) (K, 2) counts, as policies.belief
         K = s.own_within.shape[1]
-        if source in ("uniform", "vis_last"):
-            return np.ones((K, 2)), (s.vis_last.numpy().T if source == "vis_last" else np.zeros((K, 2)))
+        if source in ("uniform", "vis_last", "vis_expert", "naive"):   # Beta(1, 1) plus visible pulls, as policies.belief; naive holds the learner's own shots too
+            vis = {"uniform": None, "vis_last": s.vis_last, "vis_expert": s.vis_expert, "naive": None if s.vis_round is None else s.vis_round + s.own_within}[source]
+            return np.ones((K, 2)), (np.zeros((K, 2)) if vis is None else vis.numpy().T)
         d = {"expert": s.expert, "novice": s.novice, "recent": s.last_watched}[source]
         return np.zeros((K, 2)), np.stack([s.alpha_demo[d].numpy(), s.beta_demo[d].numpy()], -1)
 
