@@ -8,6 +8,8 @@
 #         .../descriptive/contrast_weights.csv  the 12-cell weight vector of every contrast (one column each)
 #         .../descriptive/robustness.csv   the confirmatory contrasts under two sensitivity fits: random slopes for round and play
 #                                          (reduced in a stated order if singular) and session order as a covariate
+#         .../descriptive/robustness_variance.csv  the variance components of every random-slope specification tried, per outcome,
+#                                          with its singular flag and whether it is the one reached (advisor, 3 Nov)
 #         .../descriptive/numbers.json   every contrast's estimate, CI, p (Holm p and verdict on confirmatory rows), keyed as
 #                                          the report stage's manifest lists them (src/analysis/numbers.py)
 # Model:  outcome ~ condition * play * round + (1 | participant), sum-to-zero coding, REML,
@@ -73,7 +75,13 @@ CONTRASTS <- with(grid, list(
   solo_round_change   = list(w = m(demo == "none" & round == 2) - m(demo == "none" & round == 1), outcomes = OUTCOMES, sign = c(NA, NA, NA), role = "exploratory"),
   H5_round2           = list(w = m(demo == "expert" & round == 2) - m(demo == "none" & play == "second" & round == 2), outcomes = PR, sign = c(1, 1), role = "exploratory"),
   social_vs_solo4     = list(w = m(demo != "none") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(1, 1), role = "exploratory"),
-  novice_vs_solo4     = list(w = m(demo == "novice") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(NA, NA), role = "exploratory")
+  novice_vs_solo4     = list(w = m(demo == "novice") - m(demo == "none" & play == "second"), outcomes = PR, sign = c(NA, NA), role = "exploratory"),
+  # E5: H2 within each social condition; E13: extra play on the same bandit with no demonstration in between (advisor, 3 Nov)
+  H2_expert_first     = list(w = m(demo == "novice" & round == 2 & condition == "expert-first") - m(demo == "novice" & round == 1 & condition == "expert-first"),
+                             outcomes = OUTCOMES, sign = c(NA, NA, NA), role = "exploratory"),
+  H2_novice_first     = list(w = m(demo == "novice" & round == 2 & condition == "novice-first") - m(demo == "novice" & round == 1 & condition == "novice-first"),
+                             outcomes = OUTCOMES, sign = c(NA, NA, NA), role = "exploratory"),
+  solo_play_change    = list(w = m(demo == "none" & play == "second") - m(demo == "none" & play == "first"), outcomes = OUTCOMES, sign = c(NA, NA, NA), role = "exploratory")
 ))
 stopifnot(all(sapply(CONTRASTS, function(k) abs(sum(k$w)) < 1e-12)))
 CONFIRMATORY <- names(CONTRASTS)[sapply(CONTRASTS, `[[`, "role") == "confirmatory"]
@@ -102,23 +110,26 @@ for (i in seq_len(nrow(contrasts))) {
   numbers[paste0(stem, c("_estimate", "_lo", "_hi", "_p"))] <- list(r$estimate, r$lower.CL, r$upper.CL, r$p.value)
   if (r$role == "confirmatory") numbers[paste0(stem, c("_p_holm", "_verdict"))] <- list(r$p_holm, r$verdict)
 }
-jsonlite::write_json(numbers, file.path(out_dir, "numbers.json"), auto_unbox = TRUE, digits = NA, pretty = TRUE)
 print(as.data.frame(contrasts[contrasts$role != "exploratory", c("hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value", "p_holm", "verdict")]), digits = 3)
 
 # 5) Robustness fits (exploratory sensitivity, the confirmatory contrasts only, no Holm or verdict). Random slopes for round and
 #    play by participant are reduced in a fixed order when the fit is singular or does not converge:
 #    correlated slopes -> uncorrelated slopes -> intercept only (the main model). The random part uses
 #    +-0.5 codings of round and play (lme4's || would expand a factor into one column per level). Session
-#    order (1..3, randomised per participant) enters as a numeric covariate; emmeans takes it at its mean.
+#    order (1..3, randomised per participant) enters as a numeric covariate; emmeans takes it at its mean. Every random-slope
+#    specification tried is kept so that its variance components can be reported: a slope standard deviation at zero is the
+#    finding that participants do not differ in that effect, not a failure.
 games <- mutate(games, round_c = ifelse(round == "2", 0.5, -0.5), play_c = ifelse(play == "second", 0.5, -0.5))
 FIXED <- "condition * play * round"
 RANDOM <- c(slopes_correlated = "(1 + round_c + play_c | participant)", slopes_uncorrelated = "(1 + round_c + play_c || participant)",
             intercept_only = "(1 | participant)")
 fit_ok <- function(fit) !isSingular(fit) && is.null(fit@optinfo$conv$lme4$messages)
 fit_reduced <- function(y) {
+  tried <- list()
   for (spec in names(RANDOM)) {
     fit <- suppressWarnings(suppressMessages(lmer(reformulate(paste(FIXED, "+", RANDOM[[spec]]), response = y), data = games, REML = TRUE)))
-    if (fit_ok(fit) || spec == "intercept_only") return(list(fit = fit, spec = spec))
+    tried[[spec]] <- fit
+    if (fit_ok(fit) || spec == "intercept_only") return(list(fit = fit, spec = spec, tried = tried))
   }
 }
 ROBUST <- list(
@@ -133,3 +144,21 @@ robustness <- bind_rows(lapply(names(ROBUST), function(f) {
 }))
 write_csv(robustness, file.path(out_dir, "robustness.csv"))
 print(as.data.frame(robustness[, c("fit", "spec", "hypothesis", "outcome", "estimate", "lower.CL", "upper.CL", "p.value")]), digits = 3)
+
+# 6) Variance components of every random-slope specification tried. The numbers take the slope standard deviations from the
+#    last specification tried that has slopes (the one reached, or the uncorrelated attempt when the intercept-only model was
+#    reached) and name the specification reached.
+sd_of <- function(fit, term) { v <- as.data.frame(VarCorr(fit)); x <- v$sdcor[startsWith(v$grp, "participant") & v$var1 == term & is.na(v$var2)]; if (length(x)) x[1] else NA_real_ }
+variance <- bind_rows(lapply(OUTCOMES, function(y) {
+  r <- ROBUST$random_slopes[[y]]
+  bind_rows(lapply(names(r$tried), function(spec) { f <- r$tried[[spec]]
+    data.frame(outcome = y, spec = spec, sd_intercept = sd_of(f, "(Intercept)"), sd_round = sd_of(f, "round_c"), sd_play = sd_of(f, "play_c"),
+               singular = isSingular(f), converged = is.null(f@optinfo$conv$lme4$messages), reached = spec == r$spec) }))
+}))
+write_csv(variance, file.path(out_dir, "robustness_variance.csv"))
+for (y in OUTCOMES) {
+  s <- tail(variance[variance$outcome == y & variance$spec != "intercept_only", ], 1)
+  numbers[paste0("random_slopes_", y, c("_round_sd", "_play_sd", "_spec"))] <- list(s$sd_round, s$sd_play, ROBUST$random_slopes[[y]]$spec)
+}
+jsonlite::write_json(numbers, file.path(out_dir, "numbers.json"), auto_unbox = TRUE, digits = NA, pretty = TRUE)
+print(as.data.frame(variance), digits = 3)

@@ -79,7 +79,8 @@ FITS = {"main": ("main", "o", 0.0), "random_slopes": ("random slopes", "s", -0.2
 
 def fig_robustness(analysis_dir: Path) -> list:
     """The confirmatory contrasts (payoff, entropy; reward beside them, reported) under the main fit and the two
-    sensitivity fits: estimate and 95% CI. The random-slope fit falls back to the intercept-only model when singular."""
+    sensitivity fits: estimate and 95% CI. The random-slope fit falls back to the intercept-only model when singular; the
+    specification reached is named under each panel."""
     d = Path(analysis_dir) / "descriptive"
     main = pd.read_csv(d / "contrasts.csv").query("role != 'exploratory'").assign(fit="main")
     rob = pd.read_csv(d / "robustness.csv")
@@ -94,6 +95,9 @@ def fig_robustness(analysis_dir: Path) -> list:
         ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
         ax.set(yticks=range(len(hyps)), yticklabels=hyps, xlabel=f"Δ {outcome}" + (" (bits)" if outcome == "entropy" else ""))
         ax.invert_yaxis()
+    specs = {o: rob.query("fit == 'random_slopes' and outcome == @o")["spec"].iloc[0].replace("_", " ") for o in ("payoff", "entropy")}
+    reached = specs["payoff"] if len(set(specs.values())) == 1 else ", ".join(f"{v} ({o})" for o, v in specs.items())
+    fig.text(0.5, -0.04, f"random slopes: {reached} reached", ha="center", va="top", fontsize=6, color="#666666")
     ax_e.tick_params(labelleft=False)
     ax_p.legend(loc="lower center", bbox_to_anchor=(0.95, 1.0), ncol=3, handletextpad=0.3, columnspacing=0.8)
     return save(fig, "figS_robustness", analysis_dir)
@@ -181,7 +185,6 @@ def fig_posteriors(analysis_dir: Path) -> list:
 TARGETS = {"after_novice_rise": "after-novice\npayoff rise", "entropy_fall": "entropy fall\nround 1 − 2", "zigzag": "novice-first\nzig-zag",
            "stay_win": "stay after\na win", "stay_loss": "stay after\na loss"}
 PPC_MODELS = ["HOS", "Switch-by-round"]
-COMPARISON_A = {"S1a": "HOS", "S2a": "HOS", "S4": "Switch-by-round"}   # model A of checks.COMPARISONS (not imported: JAX)
 
 
 def fig_ppc(analysis_dir: Path) -> list:
@@ -221,7 +224,7 @@ def fig_recovery(analysis_dir: Path) -> list:
     groups = list(mr.groupby(["comparison", "generating"], sort=False))
     for y, ((c, g), rows) in enumerate(groups):
         for _, q in rows.iterrows():                       # ΔELPD is A − B; flipped for B-generated rows so "right of zero" is always correct
-            dot_whisker(b, y, q["delta"] if g == COMPARISON_A[c] else -q["delta"], q["se"])
+            dot_whisker(b, y, q["delta"] if g == q["a"] else -q["delta"], q["se"])
     b.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
     b.set(yticks=range(len(groups)), yticklabels=[f"{c}: {NAME.get(g, g)}" for (c, g), _ in groups],
           xlabel="ΔELPD towards the generating model (2 SE)", title=f"{int(mr['correct'].sum())} of {len(mr)} recovered")

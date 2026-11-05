@@ -27,8 +27,16 @@ from inference.sessions import load_shots, validate_sessions
 from inference.simulate import simulate_session
 
 SOCIAL = {seq: cond for seq, cond in CONDITION.items() if cond != "solo"}   # game sequence -> expert-first / novice-first
-N_RECOVERY, N_DATASETS, COVER_AT_LEAST = 100, int(os.environ.get("N_DATASETS", 25)), 22   # open decision 5; the 95%-coverage rule
-COMPARISONS = {"S1a": ("HOS", "recent"), "S2a": ("HOS", "naive-recent"), "S4": ("Switch-by-round", "Switch")}   # (A, B) behind each rule: the hardest part per claim
+N_RECOVERY, N_DATASETS = 100, int(os.environ.get("N_DATASETS", 25))   # open decision 5; the checks are reported, not gates (4 Nov)
+RIVALS = {"S1": ("recent", "novice"), "S2": ("naive-recent", "naive-expert", "naive")}   # the rivals of HOS behind each claim's parts
+RECOVERY_CLAIMS = ("S1", "S2", "S4")   # the model-recovery pairs: HOS against its nearest rival for S1 and S2, the fixed S4 pair
+
+
+def comparisons(ladder: pd.DataFrame) -> dict:
+    """The model-recovery pairs (A, B) per claim (prereg, Recovery checks (b)): for S1 and S2, HOS against its nearest rival,
+    the model with the smallest ΔELPD from HOS in the fit to the analysed data (the ladder's ``delta`` is model − HOS, so
+    the largest); for S4, Switch-by-round against Switch."""
+    return {c: ("HOS", max(rs, key=lambda m: float(ladder.loc[m, "delta"]))) for c, rs in RIVALS.items()} | {"S4": ("Switch-by-round", "Switch")}
 N_MODEL_RECOVERY = int(os.environ.get("N_MODEL_RECOVERY", 5))   # datasets per generating side
 N_PPC_DRAWS = int(os.environ.get("N_PPC_DRAWS", 50))            # posterior draws replayed in the free-running PPC
 PPC_MODELS = ("HOS", "Switch-by-round")                          # the models given the free-running PPC and the split-half check
@@ -86,42 +94,35 @@ def recover_delta(posterior: dict, pools: dict, model, normalizer, cache_dir: Pa
     return pd.DataFrame(rows)
 
 
-def recovery_verdict(rows: pd.DataFrame) -> dict:
-    """Coverage count, sign count and the pass flag (prereg 4.7.3): the 95% intervals cover the truth, and exclude zero on
-    its side, in at least COVER_AT_LEAST of N_DATASETS datasets."""
-    covered, sign = int(rows["covered"].sum()), int(rows["sign"].sum())
-    return dict(covered=covered, sign=sign, n=len(rows), passed=bool(covered >= COVER_AT_LEAST and sign >= COVER_AT_LEAST))
+def recovery_summary(rows: pd.DataFrame) -> dict:
+    """Reported descriptives of the δ_N recovery (no pass rule, 4 Nov): datasets whose 95% interval covers the truth, datasets
+    whose interval excludes zero on the truth's side, the count, and the bias (mean of the posterior means minus the truths)."""
+    return dict(covered=int(rows["covered"].sum()), sign=int(rows["sign"].sum()), n=len(rows), bias=float((rows["mean"] - rows["truth"]).mean()))
 
 
-GATING = ("S1a", "S2a")   # the model-recovery comparisons that gate a claim; S4's is reported beside E9 (29 Oct): S4 is decided on δ_N
-
-
-def model_recovery_verdict(rows: pd.DataFrame) -> dict:
-    """Per comparison: A's wins on A-generated and on B-generated datasets, and the pass flag (prereg 4.7.3): A wins a
-    majority of the datasets generated from A and at most a minority of those generated from B (undecided counts as
-    correct on B's side, since the nested S4 pair cannot have Switch win outright)."""
+def model_recovery_summary(rows: pd.DataFrame, comps: dict) -> dict:
+    """Per comparison in ``comps`` (``comparisons``), reported (no pass rule, 4 Nov): A's wins on the datasets generated from A
+    and on those generated from B, with the count per side. An undecided dataset is never a win for A."""
     out = {}
-    for c, (a, b) in COMPARISONS.items():
+    for c, (a, b) in comps.items():
         on_a, on_b = rows[(rows["comparison"] == c) & (rows["generating"] == a)], rows[(rows["comparison"] == c) & (rows["generating"] == b)]
-        wins_a, wins_b = int((on_a["winner"] == a).sum()), int((on_b["winner"] == a).sum())
-        out[c] = dict(a_wins_on_a=wins_a, n_a=len(on_a), a_wins_on_b=wins_b, n_b=len(on_b), gating=c in GATING,
-                      passed=bool(len(on_a) and len(on_b) and wins_a > len(on_a) / 2 and wins_b < len(on_b) / 2))
+        out[c] = dict(a_wins_on_a=int((on_a["winner"] == a).sum()), n_a=len(on_a), a_wins_on_b=int((on_b["winner"] == a).sum()), n_b=len(on_b))
     return out
 
 
-def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: Path, n_per_side: int = N_MODEL_RECOVERY,
+def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: Path, comps: dict, n_per_side: int = N_MODEL_RECOVERY,
                    n_people: int = N_RECOVERY, seed: int = 0, units=None) -> pd.DataFrame:
-    """Model recovery for the comparisons in COMPARISONS. Dataset (comparison, side, d) is generated from ``side``'s fitted model at a posterior
+    """Model recovery for the comparisons in ``comps`` (``comparisons``). Dataset (comparison, side, d) is generated from ``side``'s fitted model at a posterior
     draw seeded by its indices, both models of the comparison are fitted on it, and the 2 SE rule names the winner
     (A, B or undecided). One row per dataset; ``units`` = [(comparison, side, d), ...] restricts an array task.
     Simulation, tables and fits are cached under ``cache_dir`` like ``recover_delta``'s."""
     rows = []
-    for ci, (c, (a, b)) in enumerate(COMPARISONS.items()):
+    for c, (a, b) in comps.items():
         for si, side in enumerate((a, b)):
             for d in range(n_per_side):
                 if units is not None and (c, side, d) not in units:
                     continue
-                key, rng = f"{c}_{side}_{d:02d}", np.random.default_rng([seed, ci, si, d])
+                key, rng = f"{c}_{a}_vs_{b}_{side}_{d:02d}", np.random.default_rng([seed, RECOVERY_CLAIMS.index(c), si, d])
                 path = Path(cache_dir) / f"{key}.pkl"
                 if not path.exists():
                     post = posteriors[side]
@@ -132,7 +133,7 @@ def model_recovery(posteriors: dict, pools: dict, model, normalizer, cache_dir: 
                 fa, fb = (fit_simulated(REGISTRY[m], T, Path(cache_dir), key) for m in (a, b))
                 q = paired(loo(fa), loo(fb), T.part)
                 winner = a if q["delta"] > 2 * q["se"] else b if q["delta"] < -2 * q["se"] else "undecided"
-                rows.append(dict(comparison=c, generating=side, dataset=d, delta=q["delta"], se=q["se"], winner=winner, correct=winner == side, passed=fa.passed and fb.passed))
+                rows.append(dict(comparison=c, a=a, b=b, generating=side, dataset=d, delta=q["delta"], se=q["se"], winner=winner, correct=winner == side, passed=fa.passed and fb.passed))
     return pd.DataFrame(rows)
 
 

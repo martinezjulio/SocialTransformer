@@ -179,6 +179,19 @@ def loso_loo(p: Paths, T, name: str, l):
     return pickle.load(open(path, "rb"))
 
 
+def recovery_pairs(p: Paths, T) -> dict:
+    """The model-recovery pairs (``checks.comparisons``): from the choice stage's ladder, or, in a cluster unit that runs before
+    that stage, from the same cached fits and fallback refits (every candidate is in FALLBACK_MODELS)."""
+    import pandas as pd
+    from analysis.checks import RIVALS, comparisons
+    from analysis.compare import loo
+    path = p.analysis_dir / "choice" / "ladder.csv"
+    if path.exists():
+        return comparisons(pd.read_csv(path, index_col="model"))
+    elpd = {n: loso_loo(p, T, n, loo(choice_fit(p, T, n))).elpd for n in ("HOS", *sum(RIVALS.values(), ()))}
+    return comparisons(pd.DataFrame({"delta": {n: e - elpd["HOS"] for n, e in elpd.items()}}))
+
+
 def checks_setup(p: Paths) -> tuple:
     """What the checks stage and its units share: trials, the checks dir, the choice stage's posterior by model name, the
     transformer (the inference run's unless ``checkpoint`` overrides it) and its normaliser, the session template pools
@@ -198,29 +211,32 @@ def checks_setup(p: Paths) -> tuple:
 
 @stage("checks")
 def run_checks(p: Paths) -> None:
-    """Simulation checks of the fitted models: δ_N recovery, model recovery for S1a, S2a and S4, free-running PPC. The transformer
+    """Simulation checks of the fitted models: δ_N recovery, model recovery for S1 and S2 (HOS against its nearest rival in the
+    ladder, ``recovery_pairs``) and S4, free-running PPC. The transformer
     is the one the inference CSVs came from (eval metadata) unless ``checkpoint`` overrides it. Every unit is cached
     under checks/, so a rerun only fills what is missing. Outputs: recovery.csv, model_recovery.csv, confusion.csv,
     ppc.csv, numbers.json."""
     import pandas as pd
-    from analysis.checks import COMPARISONS, PPC_MODELS, confusion, model_recovery, model_recovery_verdict, ppc, recover_delta, recovery_verdict, split_half
+    from analysis.checks import PPC_MODELS, confusion, model_recovery, model_recovery_summary, ppc, recover_delta, recovery_summary, split_half
     from analysis.numbers import write_numbers
     from analysis.policies import REGISTRY
     T, out, posterior, model, norm, pools, frames = checks_setup(p)
     rec = recover_delta(posterior("Switch-by-round"), pools, model, norm, out / "recovery")
     rec.to_csv(out / "recovery.csv", index=False)
-    mr = model_recovery({n: posterior(n) for pair in COMPARISONS.values() for n in pair}, pools, model, norm, out / "model_recovery")
+    comps = recovery_pairs(p, T)
+    mr = model_recovery({n: posterior(n) for pair in comps.values() for n in pair}, pools, model, norm, out / "model_recovery", comps)
     mr.to_csv(out / "model_recovery.csv", index=False)
     confusion(mr).to_csv(out / "confusion.csv")
     bands = pd.concat({n: ppc(REGISTRY[n], posterior(n), T, frames, model, norm, out / "ppc") for n in PPC_MODELS}, names=["model", "target"])
     halves = pd.concat({f"{n} split_half": split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half") for n in PPC_MODELS}, names=["model", "target"])
     bands = pd.concat([bands, halves])
     bands.to_csv(out / "ppc.csv")
-    mrv = model_recovery_verdict(mr)   # per-comparison pass flags; S1a and S2a gate their claims (report stage), S4's is reported
-    pd.DataFrame(mrv).T.to_csv(out / "model_recovery_verdict.csv")
-    numbers = {**{f"recovery_{k}": v for k, v in recovery_verdict(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
-               **{f"model_recovery_{c}_passed": v["passed"] for c, v in mrv.items()},
-               **{f"ppc_{m}_{t}_inside": bool(r["inside"]) for (m, t), r in bands.iterrows()}}
+    mrs = model_recovery_summary(mr, comps)   # per-comparison win counts, reported beside the claims (no gate, 4 Nov)
+    pd.DataFrame(mrs).T.to_csv(out / "model_recovery_summary.csv")
+    numbers = {**{f"recovery_{k}": v for k, v in recovery_summary(rec).items()}, "model_recovery_correct": int(mr["correct"].sum()), "model_recovery_n": len(mr),
+               **{f"model_recovery_{c}_{k}": v[f] for c, v in mrs.items() for k, f in (("own_count", "a_wins_on_a"), ("rival_count", "a_wins_on_b"), ("side_n", "n_a"))},
+               **{f"model_recovery_{c}_rival": comps[c][1] for c in ("S1", "S2")},
+               **{f"ppc_{m}_{t}_{f}": (bool(r[f]) if f == "inside" else float(r[f])) for (m, t), r in bands.iterrows() for f in ("human", "lo", "hi", "inside")}}
     write_numbers(out, numbers)
     print(rec.round(3).to_string(), "\n", confusion(mr).to_string(), "\n", bands.round(4).to_string(), "\n", numbers)
 
@@ -281,9 +297,9 @@ def run_report(p: Paths) -> None:
 
 def units(p: Paths) -> dict:
     """Every cluster unit (scripts/slurm) as name -> (level, thunk), in dependency order: 0 table blocks (CPU), 1 table
-    assembly, 2 human fits, 3 recovery and model-recovery datasets, split-half fits and PPC draws (GPU), 4 split-half
-    draws, with the loso refits of the S1/S2 models at level 3. Each fills one cache piece (one writer per file); the stages then run on the full caches."""
-    from analysis.checks import COMPARISONS, N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS, PPC_MODELS, model_recovery, ppc, recover_delta, split_half
+    assembly, 2 human fits, 3 recovery datasets, split-half fits and PPC draws (GPU), 4 split-half draws and model-recovery
+    datasets, with the loso refits of the S1/S2 models at level 3 (the model-recovery pair is read from them). Each fills one cache piece (one writer per file); the stages then run on the full caches."""
+    from analysis.checks import N_DATASETS, N_MODEL_RECOVERY, N_PPC_DRAWS, PPC_MODELS, RECOVERY_CLAIMS, model_recovery, ppc, recover_delta, split_half
     from analysis.compare import loo
     from analysis.data import load_sessions, trial_data
     from analysis.fitting import run_many
@@ -303,11 +319,11 @@ def units(p: Paths) -> dict:
         u[f"loso:{n}"] = (3, lambda n=n: (lambda l: dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, n, l).elpd))(loo(choice_fit(p, T, n))))
     for d in range(N_DATASETS):
         u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])))
-    for c, pair in COMPARISONS.items():
-        for side in pair:
+    for c in RECOVERY_CLAIMS:   # side i of the pair, resolved at run time by recovery_pairs (after the level-3 fallback refits)
+        for i in range(2):
             for d in range(N_MODEL_RECOVERY):
-                u[f"model_recovery:{c}:{side}:{d}"] = (3, lambda c=c, side=side, d=d, pair=pair: check(lambda T, out, post, model, norm, pools, frames: model_recovery(
-                    {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", units=[(c, side, d)])))
+                u[f"model_recovery:{c}:{i}:{d}"] = (4, lambda c=c, i=i, d=d: check(lambda T, out, post, model, norm, pools, frames: (lambda pair: model_recovery(
+                    {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", {c: pair}, units=[(c, pair[i], d)]))(recovery_pairs(p, T)[c])))
     for n in PPC_MODELS:
         u[f"split_fit:{n}"] = (3, lambda n=n: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[])))
         for i in range(N_PPC_DRAWS):

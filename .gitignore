@@ -157,4 +157,3 @@ reports/*
 reports/preregistration/*
 !reports/preregistration/preregistration.qmd
 !reports/preregistration/preregistration.html
-!reports/preregistration/preregistration.pdf

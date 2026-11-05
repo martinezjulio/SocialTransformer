@@ -11,15 +11,14 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from analysis.numbers import MANIFEST, kind_of  # noqa: E402
-from analysis.report import STAGES_WITH_NUMBERS, final_verdicts, merge_numbers, write_results, write_tables  # noqa: E402
+from analysis.report import STAGES_WITH_NUMBERS, merge_numbers, write_results, write_tables  # noqa: E402
 
 VALUE = {"text": "supported", "flag": True, "count": 3, "pvalue": 0.0004, "integer": -2674.0, "two": -1.25, "three": 0.012}
 
 
 def synthetic(tmp_path):
-    """Every manifest key with a value of its kind, spread over the stages' numbers.json files; provenance apart, the final
-    verdicts left to the report stage."""
-    numbers = {k: VALUE[kind_of(k)] for b, ks in MANIFEST.items() if not b.startswith("final") for k in ks}
+    """Every manifest key with a value of its kind, spread over the stages' numbers.json files, provenance apart."""
+    numbers = {k: VALUE[kind_of(k)] for b, ks in MANIFEST.items() for k in ks}
     prov = {k: numbers.pop(k) for k in MANIFEST["provenance"]}
     keys = list(numbers)
     for i, stage in enumerate(STAGES_WITH_NUMBERS):
@@ -41,23 +40,6 @@ def test_merge_names_a_removed_and_a_duplicated_number(tmp_path):
         merge_numbers(tmp_path, prov)
 
 
-def test_final_verdicts_gate_claims_by_their_checks(tmp_path):
-    """Prereg 4.7.3: a failed check makes its claim not evaluable and no other; a missing check counts as failed; the report
-    stage derives the final verdicts and refuses them from a stage."""
-    base = {"S1_verdict": "supported", "S2_verdict": "contradicted", "S3_verdict": "not supported", "S4_verdict": "supported",
-            "model_recovery_S1a_passed": True, "model_recovery_S2a_passed": True, "model_recovery_S4_passed": False, "recovery_passed": True}
-    final = lambda n: [final_verdicts(n)[f"S{i}_final_verdict"] for i in (1, 2, 3, 4)]
-    assert final(base) == ["supported", "contradicted", "not supported", "supported"], "S4's model recovery is reported, not gating"
-    assert final(base | {"model_recovery_S2a_passed": False}) == ["supported", "not evaluable", "not supported", "supported"]
-    assert final(base | {"recovery_passed": False}) == ["supported", "contradicted", "not supported", "not evaluable"]
-    assert final({k: v for k, v in base.items() if "passed" not in k}) == ["not evaluable", "not evaluable", "not supported", "not evaluable"]
-    prov = synthetic(tmp_path)
-    assert {k: v for k, v in merge_numbers(tmp_path, prov).items() if k.endswith("_final_verdict")} == {f"S{i}_final_verdict": "supported" for i in (1, 2, 3, 4)}
-    choice = json.load(open(tmp_path / "choice" / "numbers.json"))
-    json.dump(choice | {"S1_final_verdict": "supported"}, open(tmp_path / "choice" / "numbers.json", "w"))
-    with pytest.raises(ValueError, match="report stage derives"):
-        merge_numbers(tmp_path, prov)
-
 
 @pytest.mark.skipif(shutil.which("tectonic") is None, reason="tectonic not installed")
 def test_results_and_tables_compile(tmp_path):
@@ -71,7 +53,7 @@ def test_results_and_tables_compile(tmp_path):
     paper = tmp_path / "paper"
     write_results(numbers, paper), write_tables(tmp_path, paper)
     (paper / "test.tex").write_text(r"\documentclass{article}\usepackage{booktabs}\input{results.tex}\begin{document}"
-                                    r"\resSOneACI, \resHOnePayoffP, \resElpdHOS, \resRecoveryPassed, \resCommit. \input{tables/hypotheses.tex}\input{tables/ladder.tex}\end{document}")
+                                    r"\resSOneACI, \resHOnePayoffP, \resElpdHOS, \resRecoveryCovered, \resCommit. \input{tables/hypotheses.tex}\input{tables/ladder.tex}\end{document}")
     r = subprocess.run(["tectonic", "test.tex"], cwd=paper, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-800:]
     assert (paper / "test.pdf").stat().st_size > 1000

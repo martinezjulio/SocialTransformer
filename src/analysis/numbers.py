@@ -20,7 +20,7 @@ from analysis.policies import REGISTRY
 DIGITS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
 # Quantity type by key pattern, first match wins: p-values; logit-scale posteriors (S4 is δ_N); ELPD and SE as integers;
 # yes/no flags; counts; readout confidence (a Beta concentration); everything else (payoff, correlation, share) two decimals.
-KINDS = [(r"^(commit|checkpoint_sha256|run_date)$|_verdict$", "text"), (r"(_p|_p_holm)$", "pvalue"), (r"^S4_", "two"), (r"_eps_(estimate|lo|hi)$", "three"),
+KINDS = [(r"^(commit|checkpoint_sha256|run_date)$|_verdict$|_spec$|_rival$", "text"), (r"(_p|_p_holm)$", "pvalue"), (r"^S4_", "two"), (r"_eps_(estimate|lo|hi)$", "three"),
          (r"^S\d|^own_on_top|^switch_round_term|^social_vs_own|^elpd_|_delta$|_se$|_elpd$|^age_(min|max)$", "integer"), (r"_inside$|_passed$", "flag"),
          (r"_n$|_correct$|_sign$|_covered$|_count$|_kept$|^excluded_|^(participants|sessions|trials)$", "count"), (r"confidence$", "integer")]
 
@@ -61,7 +61,9 @@ def check_keys(numbers: dict) -> None:
 # The numbers the paper cites, one block per figure or text section; the report stage fails when any is missing or unlisted.
 OUTCOMES = {"H1": ("payoff", "reward", "entropy"), "H2": ("payoff", "reward", "entropy"), "H3": ("entropy",), "H5": ("payoff", "reward")}
 EXPLORATORY = {"novice_vs_solo_improvement": OUTCOMES["H1"], "expert_round_change": OUTCOMES["H1"], "solo_round_change": OUTCOMES["H1"],
-               "H5_round2": OUTCOMES["H5"], "social_vs_solo4": OUTCOMES["H5"], "novice_vs_solo4": OUTCOMES["H5"]}
+               "H5_round2": OUTCOMES["H5"], "social_vs_solo4": OUTCOMES["H5"], "novice_vs_solo4": OUTCOMES["H5"],
+               "H2_expert_first": OUTCOMES["H1"], "H2_novice_first": OUTCOMES["H1"], "solo_play_change": OUTCOMES["H1"]}   # E5a, E5b, E13
+RANDOM_SLOPES = [f"random_slopes_{o}_{f}" for o in OUTCOMES["H1"] for f in ("round_sd", "play_sd", "spec")]   # E6: slope SDs and the specification reached
 EXCLUSION_RULES = ("returned", "colour_vision", "speed_floor", "span_ceiling", "no_gameplay", "incomplete_rounds", "short_play", "reload",
                    "restarted", "never_moved", "not_three_sessions")
 DEMOGRAPHICS = ("age_mean", "age_sd", "age_min", "age_max", "sex_female_count", "sex_male_count", "sex_other_count")   # demographics_summary.csv
@@ -72,17 +74,17 @@ interval = lambda stem, p=True: [f"{stem}_{f}" for f in ("estimate", "lo", "hi")
 MANIFEST = {
     "provenance": ["commit", "checkpoint_sha256", "run_date", "participants", "sessions", "trials"] + [f"excluded_{r}" for r in EXCLUSION_RULES] + ["participants_kept", "sessions_kept"] + list(DEMOGRAPHICS),
     "descriptive (Fig 2, H1-H5)": [k for h, outs in OUTCOMES.items() for o in outs for k in interval(f"{h}_{o}") + ([f"{h}_{o}_p_holm", f"{h}_{o}_verdict"] if o != "reward" else [])]
-                                 + [k for h, outs in EXPLORATORY.items() for o in outs for k in interval(f"{h}_{o}")],
+                                 + [k for h, outs in EXPLORATORY.items() for o in outs for k in interval(f"{h}_{o}")] + RANDOM_SLOPES,
     "partner choice (Fig 2c, H4)": interval("H4_choice") + ["H4_choice_verdict", "H4_choice_count", "H4_choice_n"] + interval("recency"),
     "policy models (Fig 3, S1-S4)": [k for c in CLAIMS for k in interval(c, p=False)] + [f"{c}_verdict" for c in CLAIMS if c[0] == "S"] + [f"elpd_{m}" for m in REGISTRY]
                                    + [k for s in POSTERIORS for k in interval(s, p=False)],
     "unseen expert (Fig 4)": [f"unseen_expert_round{r}_{s}" for r in (1, 2) for s in ("confidence", "rank_corr", "favourite_payoff")] + ["exploit_unseen_round1", "exploit_unseen_round2", "exploit_chance"]
                             + [f"split_{c}_{f}" for c in ("after_novice_expert_unseen_round_1", "after_novice_expert_unseen_round_2", "after_novice_expert_seen_round_1",
                                                            "after_novice_expert_seen_round_2", "round_1", "round_2") for f in ("delta", "se")],
-    "checks (Fig S, PPC and recovery)": ["recovery_covered", "recovery_sign", "recovery_n", "recovery_passed", "model_recovery_correct", "model_recovery_n"]
-                                       + [f"model_recovery_{c}_passed" for c in ("S1a", "S2a", "S4")]
-                                       + [f"ppc_{m}{h}_{t}_inside" for m in ("HOS", "Switch-by-round") for h in ("", " split_half") for t in PPC_TARGETS],
-    "final verdicts (report stage, check-gated)": [f"S{i}_final_verdict" for i in (1, 2, 3, 4)],
+    "checks (Fig S, PPC and recovery)": ["recovery_covered", "recovery_sign", "recovery_n", "recovery_bias", "model_recovery_correct", "model_recovery_n"]
+                                       + [f"model_recovery_{c}_{k}" for c in ("S1", "S2", "S4") for k in ("own_count", "rival_count", "side_n")]
+                                       + [f"model_recovery_{c}_rival" for c in ("S1", "S2")]
+                                       + [f"ppc_{m}{h}_{t}_{f}" for m in ("HOS", "Switch-by-round") for h in ("", " split_half") for t in PPC_TARGETS for f in ("human", "lo", "hi", "inside")],
 }
 
 
