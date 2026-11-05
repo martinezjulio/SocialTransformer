@@ -19,6 +19,7 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 - [x] A.3 (4 Nov: pilot 8-block tasks on 16 cores peaked at 5.8-6.2 GB (`MaxRSS`), cached ones 2.8 GB, 15-26 min; a 32-block pilot task is a quarter of the rows, so 16 GB is ample; at 350 participants a 32-block task holds ~2.3× the rows of a pilot 8-block task, projected peak ~10-14 GB: set `SLURM_TABLE_MEM=24G` for the full run and re-check with `seff` on the pilot's 32-block tasks) Level-0 memory: read the pilot's peak (`seff <jobid>_<task>` on a few completed block tasks, `MaxRSS` in
   `sacct -o JobID,MaxRSS`) and scale by rows per block at 350 participants (a 32-block task holds about the same rows as a
   pilot 8-block task: 350/38 × 1/4 ≈ 2.3×). Keep `--mem` ≥ 1.5× the projected peak.
+- [ ] A.4a (4 Nov: `SLURM_GPU_OPTS=--gpu_cmode=shared` is required on Sherlock for every GPU level; without it the fit worker cannot open a CUDA context; set in `.env` by the setup script) GPU compute mode.
 - [ ] A.4 GPU unit time limit (2 h): confirm from the pilot that the slowest level-3/4 unit (recovery dataset, loso refit,
   split fit) finished well inside 2 h; fits at 350 are expected at ~35 min. Raise to 4 h only if the pilot's slowest unit
   exceeded 1 h (the simulated datasets do not grow with N; the fits and loso refits do).

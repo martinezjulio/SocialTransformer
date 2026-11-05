@@ -42,6 +42,7 @@ export WANDB_MODE=offline
 export SLURM_CPU_PARTITION=owners,normal
 export SLURM_GPU_PARTITION=owners
 export SLURM_FINAL_PARTITION=hns,normal
+export SLURM_GPU_OPTS=--gpu_cmode=shared
 export N_TABLE_BLOCKS=8
 export RENV_PATHS_CACHE=$ENV_ROOT/renv-cache
 export CONTAINER=$IMAGE
