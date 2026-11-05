@@ -794,7 +794,7 @@ ssh sherlock "mkdir -p $S/experiments/pilot_E $S/output/eval/pilot_E \
               $S/output/training_runs/<run>/checkpoints"   # rsync creates only the last component
 
 # never the whole folder: it holds the raw files and the ID map
-rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv} \
+rsync -av $EXPERIMENT_DATA_DIR/pilot_E/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv} \
       sherlock:$S/experiments/pilot_E/
 rsync -av $OUTPUT_DATA_DIR/eval/pilot_E/ sherlock:$S/output/eval/pilot_E/
 rsync -av $OUTPUT_DATA_DIR/training_runs/<run>/checkpoints/<ckpt>.pt \
