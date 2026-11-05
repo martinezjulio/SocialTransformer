@@ -28,6 +28,7 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 - [x] A.5 (4 Nov: `mcfrank` AllowGroups includes mcfrank, 24 cores, 192 GB, 7 d, 8 GB/core; `SLURM_CPU_PARTITION=owners,normal,mcfrank` in `.env`; applied to the pilot chain) Partitions: CPU levels `owners,normal,mcfrank` (the group's own 24-core node, 7 d, no campus competition); GPU
   levels stay `owners` (the `gpu` partition's QOS refuses arrays of 130+ tasks); final `hns,normal`. Check `mcfrank`
   eligibility first: `scontrol show partition mcfrank` (AllowGroups) and a 1-minute test job.
+- [ ] A.5b Resubmission cost (5 Nov): a resubmitted chain re-queues every unit, cached or not, and a cached task still costs a scheduler slot and ~1 min (288 + 9 + 21 of them took ~35 min at night and over an hour in the morning queue). Before the full run, make `submit.sh` skip units whose cache piece exists (a `--list-units --missing` mode of `run_analysis.py`, which knows each unit's cache path), and skip a whole level whose list is empty. Code change: do it after the pilot chain has finished, never while one runs.
 - [ ] A.6 `sh_quota` before submitting: tables at 350 ≈ 9 × 3.5 GB plus the recovery datasets' tables; scratch has room (100 TB),
   group home (55% used) is not touched by the run.
 - [ ] A.7 Lab clone on `main`, pulled, with the Sherlock `.env` values mirrored where they matter (`N_TABLE_BLOCKS` only affects the cluster).
