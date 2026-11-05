@@ -50,7 +50,7 @@ submission Friday night, results wanted by end of Monday 10 Nov.
   pipeline ignores them (9.13).
 - [ ] C.3 Transfer through the DTN (README §6 lines with `<full>` for `pilot_E`; `mkdir -p` the two nested targets first);
   only the two anonymised files from `experiments/<full>/`, never the folder.
-- [ ] C.4 On Sherlock, dev session: checksums of the two files and the checkpoint against the lab machine's `sha256sum`;
+- [ ] C.4 (the pilot's run of this configuration: jobs 51150993-51150998, 4 Nov) On Sherlock, dev session: checksums of the two files and the checkpoint against the lab machine's `sha256sum`;
   `bash scripts/run_analysis.sh --version <full> --stages games,inference-check,descriptive,partner_choice` (minutes) as the
   smoke test; `bash scripts/slurm/submit.sh --version <full> --dry-run` and the unit counts; then the real submission.
   Record the job ids here. Do not edit the repo while the chain runs.
