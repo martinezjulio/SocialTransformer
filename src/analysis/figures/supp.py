@@ -104,8 +104,13 @@ def fig_robustness(analysis_dir: Path) -> list:
 
 
 def fig_power(analysis_dir: Path) -> list:
-    """Decision rate of each confirmatory test by N, at the pilot effect and at half of it; the 0.9 target."""
-    r = pd.read_csv(Path(analysis_dir) / "power" / "decision_rates.csv")
+    """Decision rate of each confirmatory test by N, at the pilot effect and at half of it; the 0.9 target. Skipped when the
+    power stage has not run for this version (it resamples the pilot for the registration and runs only when named)."""
+    path = Path(analysis_dir) / "power" / "decision_rates.csv"
+    if not path.exists():
+        print(f"figS_power skipped: {path} not present (run the power stage to produce it)")
+        return []
+    r = pd.read_csv(path)
     fig, axes = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.6), sharey=True, gridspec_kw=dict(wspace=0.15))
     for ax, effect in zip(axes, ("pilot", "half")):
         for (h, o), g in r[r["effect"] == effect].groupby(["hypothesis", "outcome"]):   # the weakest test in black, the rest grey
