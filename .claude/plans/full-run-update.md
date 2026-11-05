@@ -31,7 +31,7 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 
 ## B. Thursday review of the pilot chain (feeds A)
 
-- [ ] B.1 Per-level wall time and the slowest unit per level: `sacct -j <jobid> -o JobID,State,Elapsed,MaxRSS,ExitCode -P`
+- [ ] B.1 (interim, 4 Nov 20:30: level 0 submitted 19:19, 288 tasks done by ~20:20, 13-23 min each, peak 45-104 concurrent, 0 failed, a few preemptions requeued; level 1's 9 assemblies done within minutes of level 0; level 2 pending on `owners` at 20:30) Per-level wall time and the slowest unit per level: `sacct -j <jobid> -o JobID,State,Elapsed,MaxRSS,ExitCode -P`
   for each of the six jobs; record a table here (level, tasks, median, max, failures, preemptions).
 - [ ] B.2 Preemptions: count of `PREEMPTION` lines in `level*-*.out`; how much work they cost (elapsed before the kill).
 - [ ] B.3 Any task that failed and why; the fix, committed, before Friday.
