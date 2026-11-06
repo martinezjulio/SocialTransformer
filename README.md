@@ -11,6 +11,13 @@ it fits a registry of choice models to participants' play, runs simulation-based
 checks on those fits, and emits every number the paper cites as a LaTeX macro —
 no figure or statistic is typed by hand.
 
+**Preregistration.** The full study is preregistered on OSF at
+<https://osf.io/etxw9> (registered 5 November 2026, before data collection;
+embargoed while data are collected). The registered state of this repository is
+tag `prereg-2026-11-05`; the document is `reports/preregistration/` and the
+checkpoint it names is `epoch_119_best.pt`, sha256
+`9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac`.
+
 Internals — architecture, data format, losses, masking, per-stage analysis
 details and cluster operations — live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 Design decisions not to revisit are in

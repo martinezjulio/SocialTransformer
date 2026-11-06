@@ -30,7 +30,7 @@ format:
 ::: {.callout-note appearance="simple" icon=false}
 ## Project links
 
-- **Preregistration:** OSF registration (registered 2026-11-05, before data collection)<!-- TODO: link "OSF registration" to the registration once posted -->
+- **Preregistration:** [OSF registration](https://osf.io/etxw9) (registered 2026-11-05, before data collection)
 - **Live experiment:** <https://asteroidadventure.com/ver2_2026_11_05/>
 - **Experiment repository:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `prereg-2026-11-05`
 - **Modeling repository:** <https://github.com/martinezjulio/SocialTransformer>, tag `prereg-2026-11-05`
