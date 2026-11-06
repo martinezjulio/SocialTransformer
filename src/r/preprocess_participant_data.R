@@ -46,6 +46,12 @@ demographics <- demographics |>
 mongologs <- read_csv(mongologs_path,
                       col_types = cols(timestamp = col_character(), .default = col_guess()))  # keep ms
 
+# 3a) Log format, detected from the data rather than the version name so a new version of the same game
+# needs no edit here. Pilot E and the full study label the demonstrators demo-1 / demo-2 in game_sequence
+# and run two rounds per session; the earlier pilots used expert / novice labels and three rounds.
+legacy_demo_labels <- any(str_detect(mongologs$game_sequence, "demo-[12]"), na.rm = TRUE)
+cat(sprintf("Log format: %s\n", if (legacy_demo_labels) "demo-1 / demo-2 labels, two rounds" else "expert / novice labels, three rounds"))
+
 # 3b) Speed floor (participant-level, whole study). The experimenter's fastest possible run through
 # the whole study, instructions and practice included, took 4 min 30 s; a participant under 5 min
 # was not attending to the task. Measured on the logged span (first to last event, practice
@@ -89,8 +95,8 @@ shot_rows <- mongologs %>%
 sessions_no_gameplay <- setdiff(unique(mongologs$session_id),
                                 unique(shot_rows$session_id))
 
-# pilot_E ran 2 rounds per session; every other version ran 3.
-expected_rounds <- if (version == "pilot_E") c(0, 1) else c(0, 1, 2)
+# Two rounds per session in the demo-1 / demo-2 format (pilot E, full study); three in the earlier pilots.
+expected_rounds <- if (legacy_demo_labels) c(0, 1) else c(0, 1, 2)
 expected_games_per_round <- 4
 session_structure <- shot_rows %>%
   group_by(session_id) %>%
@@ -132,10 +138,13 @@ if (length(bad_sessions) > 0) {
   cat("No sessions dropped by quality filter.\n")
 }
 
-# 5d) Reload rule (session-level). refresh_count is stamped on every row at log time and, when the
-# participant leaves the end screen, bumped retroactively on every row of the final expedition, so a
-# constant 1 on one session is normal completion. A value above 1, or a value that changes within a
-# session, means the page was reloaded while that session was being logged.
+# 5d) Reload rule (session-level, X8). refresh_count is stamped on every row at log time and never
+# updated afterwards, so a normal completion is a constant 0 on every session. (Pilot E's client also
+# bumped it on the final expedition when the participant left the end screen, hence a constant 1 there;
+# the full study's client does not.) A value above 1, or a value that changes within a session, means
+# the page was reloaded before or while that session was being logged. A reload also restarts the
+# study under a new page load, so every reload that logged rows is caught again by the restart rule
+# (X9) below; the pageunloads collection records when each reload happened and is not needed here.
 sessions_reloaded <- mongologs %>%
   group_by(session_id) %>%
   summarise(n_values = n_distinct(refresh_count), max_refresh = max(refresh_count), .groups = "drop") %>%
@@ -169,13 +178,13 @@ note("participant", "restarted", restarted); note("participant", "never_moved", 
 note("participant", "not_three_sessions", incomplete)
 mongologs <- mongologs %>% filter(!anonymous_id %in% c(restarted, never_moved, incomplete))
 
-# 5c) pilot_E labels its demonstrators demo-1 / demo-2 and leaves demonstrator_type and
+# 5c) The demo-1 / demo-2 format (pilot E, full study) leaves demonstrator_type and
 # choice_demonstrator_type empty. The identity is still recorded: demonstrator_index (0 = demo-1,
 # 1 = demo-2) on every watch row, and demonstrator_experience (128 shots = expert, 0 = novice)
 # on one row per watch game; choice_demonstrator_index uses the same 0/1. Derive the pilot_D
 # labels so every downstream reader works unchanged. Solo-play sessions keep their own
 # game_sequence ("play-play-play-play") and are skipped by run_inference.py.
-if (version == "pilot_E") {
+if (legacy_demo_labels) {
   idx_to_type <- c(`0` = "expert", `1` = "novice")
   exp_check <- mongologs |>
     filter(game == "watch", !is.na(demonstrator_experience)) |>
@@ -195,7 +204,7 @@ if (version == "pilot_E") {
         "watch-demo-1-play-watch-demo-2-play-choice" = "expert-play-novice-play-choice",
         "watch-demo-2-play-watch-demo-1-play-choice" = "novice-play-expert-play-choice"))
   stopifnot(all(!is.na(mongologs$demonstrator_type[mongologs$game == "watch"])))
-  # pilot_E's game_index skips one slot per round (0-3, 5-8, choice 10-11). Downstream code
+  # This format's game_index skips one slot per round (0-3, 5-8, choice 10-11). Downstream code
   # takes the position within a round from game_index %% 4 and expects pilot_D's numbering
   # (4 * round + position, choice games after the last round), so renumber densely per session.
   mongologs <- mongologs |>
@@ -205,7 +214,7 @@ if (version == "pilot_E") {
   stopifnot(all(mongologs$game_index[mongologs$game != "choice"] ==
                 4L * mongologs$round_index[mongologs$game != "choice"] +
                   (mongologs$game_index[mongologs$game != "choice"] %% 4L)))
-  cat("pilot_E: derived demonstrator_type / choice_demonstrator_type, renamed game_sequence, renumbered game_index\n")
+  cat("demo-1 / demo-2 format: derived demonstrator_type / choice_demonstrator_type, renamed game_sequence, renumbered game_index\n")
   print(mongologs |> distinct(session_id, game_sequence) |> count(game_sequence))
 }
 
