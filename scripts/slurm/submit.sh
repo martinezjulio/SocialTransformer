@@ -6,7 +6,7 @@
 #   bash scripts/slurm/submit.sh --version pilot_E [--dev] [--dry-run]
 # .env: SLURM_CPU_PARTITION (default normal), SLURM_GPU_PARTITION (owners, preemptible: the tasks requeue),
 # SLURM_FINAL_PARTITION (hns), SLURM_ACCOUNT (optional), N_TABLE_BLOCKS (8; rows per table block unit), SLURM_TABLE_CPUS (16) and
-# SLURM_TABLE_MEM (64G) per table block task, SLURM_FINAL_TIME (12:00:00) for the final run, SLURM_GPU_OPTS (extra sbatch options
+# SLURM_TABLE_MEM (64G) per table block task, SLURM_FINAL_TIME (12:00:00) and SLURM_FINAL_MEM (64G; the pilot's final run peaked at 64 GB) for the final run, SLURM_GPU_OPTS (extra sbatch options
 # for the GPU levels; Sherlock needs --gpu_cmode=shared, since its GPUs default to one CUDA context per job and the fits run in a
 # spawned worker process beside the parent), SLURM_GPU_MEM (32G) and SLURM_GPU_TIME (2:00:00) per GPU unit (pilot recovery datasets:
 # 16-120 min and 22 GB peak on owners' mixed GPUs; 4:00:00 and 48G there).
@@ -46,5 +46,5 @@ for level in 0 1 2 3 4; do
   JOB=$(submit "level$level" $ACCOUNT ${LEVELS[$level]} ${DEP:+--dependency=afterok:$DEP} --array="1-$n" --export=ALL,UNIT_LIST="$LIST" --output="$DIR/level$level-%A_%a.out" scripts/slurm/units.sbatch)
   echo "level $level: $n units, job $JOB"; DEP="$JOB"
 done
-JOB=$(submit final $ACCOUNT --partition="${SLURM_FINAL_PARTITION:-hns}" --cpus-per-task=16 --mem=64G --time="${SLURM_FINAL_TIME:-12:00:00}" ${DEP:+--dependency=afterok:$DEP} --job-name=analysis-final --output="$DIR/final-%j.out" --wrap "bash scripts/run_analysis.sh --version $VERSION $DEV")
+JOB=$(submit final $ACCOUNT --partition="${SLURM_FINAL_PARTITION:-hns}" --cpus-per-task=16 --mem="${SLURM_FINAL_MEM:-64G}" --time="${SLURM_FINAL_TIME:-12:00:00}" ${DEP:+--dependency=afterok:$DEP} --job-name=analysis-final --output="$DIR/final-%j.out" --wrap "bash scripts/run_analysis.sh --version $VERSION $DEV")
 echo "final run: job $JOB (lists and logs under $DIR)"
