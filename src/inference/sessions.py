@@ -23,12 +23,14 @@ def load_shots(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path, dtype={"timestamp": str})
     for col in ("shot", "reward_generated"):
         df[col] = df[col].astype(str).str.upper().isin(TRUE_STRINGS)
-    shots = df[df["shot"] & df["game"].isin(["watch", "play"])][SHOT_COLUMNS]
+    cols = SHOT_COLUMNS if "timestamp" in df.columns else [c for c in SHOT_COLUMNS if c != "timestamp"]
+    shots = df[df["shot"] & df["game"].isin(["watch", "play"])][cols]
     shots = shots.sort_values(["session_id", "round_index", "game_index", "step"]).reset_index(drop=True)
     game_steps = shots.groupby(["session_id", "game_index"])["step"]
     assert not game_steps.apply(lambda s: s.duplicated().any()).any(), "duplicate step within a game"
-    in_time_order = shots.groupby(["session_id", "game_index"])["timestamp"].apply(lambda t: t.is_monotonic_increasing)
-    assert in_time_order.all(), f"step order disagrees with timestamps in games: {in_time_order.index[~in_time_order].tolist()}"
+    if "timestamp" in shots.columns:   # absent from the public release, which keeps only the step order
+        in_time_order = shots.groupby(["session_id", "game_index"])["timestamp"].apply(lambda t: t.is_monotonic_increasing)
+        assert in_time_order.all(), f"step order disagrees with timestamps in games: {in_time_order.index[~in_time_order].tolist()}"
     # Solo sessions have no demonstrators, so there is nothing for the network to read out.
     has_watch = shots.groupby("session_id")["game"].apply(lambda g: (g == "watch").any())
     solo = sorted(has_watch.index[~has_watch])

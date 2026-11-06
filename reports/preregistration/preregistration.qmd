@@ -18,6 +18,10 @@ format:
     number-sections: true
     embed-resources: true
     theme: cosmo
+  pdf:
+    pdf-engine: tectonic
+    number-sections: true
+    toc: false
 ---
 
 <!-- Structure adapted from the Psych 251 experiment template (github.com/psych251/experiment-template, MIT),
@@ -29,27 +33,28 @@ format:
 - **Live experiment:** <https://asteroid-mining-game-31128277324.us-east4.run.app/> (the version deployed for this study; take the study exactly as participants do)
 - **Experiment code:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `[TODO: 6.1]`
 - **Modelling and analysis code:** <https://github.com/martinezjulio/SocialTransformer>, tag `[TODO: 6.1]`
-- **Transformer checkpoint:** sha256 `[TODO: 6.1]`, uploaded with the registration
-- **Preregistration:** [OSF registration](https://osf.io/XXXXX) *(registered `[TODO: 6.3]`, before recruitment)*
+- **Transformer checkpoint:** attached to the registration; sha256\
+  `\footnotesize`{=latex} `9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac` `\normalsize`{=latex}
+- **Preregistration:** OSF registration, link `[TODO: after posted to OSF]`; registered before recruitment
 :::
 
 # AI use statement {.unnumbered}
 
-I used Claude Code (various version of Sonnet, Opus 5.5 and Fable 5.1) to help me implement the experiment, code, the modeling and analysis pipeline and tests. Claude Code was also used to set up this document, its Quarto structure, rendering and the tables of pipeline numbers. The text of this registration however is my own. 
+I used Claude Code (various versions of Sonnet, Opus 5.5 and Fable 5.1) to help me implement the experiment code, the modeling and analysis pipeline and tests. Claude Code was also used to set up this document, its Quarto structure, rendering and the tables of pipeline numbers. The text of this registration however is my own. 
 
 # Introduction {#sec-introduction}
-This study asks whether a social learner's theory of mind representations of a social partner, i.e their latent environmental beliefs and experience, shape the learner's choices, and results in improved outcomes in a new environment with prior exposure to the same social partner. We study this in a multi-armed bandit task where participants both play and watch demonstrations of simualated partners with different levels of experience. 
+This study asks whether a social learner's theory of mind representations of a social partner, i.e. their latent environmental beliefs and experience, shape the learner's choices, and results in improved outcomes in a new environment with prior exposure to the same social partner. We study this in a multi-armed bandit task where participants both play and watch demonstrations of simulated partners with different levels of experience. 
 
 # Task and design {#sec-design}
 
 ## Materials {#sec-materials}
 <!-- 2.1 task, arms, payoffs, games, partners -->
 
-**The task.** The task is a 12-armed bernoulli bandit themed as a asteroid mining adventure game. Participants mine by shooting asteroids which represent the arms of the game. Asteroids represent the arms of the game and shooting them result in reward of 0 or 1 based on a hidden underlying payoff probability. All bandits re-used the same set of payoff probabilities from $\{0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8\}$ where different bandits are permutations of these payoffs. 
+**The task.** The task is a 12-armed Bernoulli bandit themed as an asteroid mining adventure game. Participants mine by shooting asteroids, which represent the arms of the game; shooting one results in a reward of 0 or 1 based on a hidden underlying payoff probability. All bandits re-used the same set of payoff probabilities from $\{0, 0.1, 0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.75, 0.8\}$ where different bandits are permutations of these payoffs. 
 
-**Games.** Conditions in the task are made up of games. Each game is a either a watch play game or a watch game. Play games allow exactly 6 trials of play on the bandit done by the participant. Watch games also alloow exactly 6 trials but they are done by a simulated partner which the participant watches. Both types of games show the outcomes of the trials both the choice that was made and the reward outcome received. In addition there is a choice game that only applies to the social conditions. The choice game is a single trial where participants are asked to select one of the two demonstrator partners they watched during the watch games. 
+**Games.** Conditions in the task are made up of games. Each game is either a play game or a watch game. Play games allow exactly 6 trials of play on the bandit done by the participant. Watch games also allow exactly 6 trials but they are done by a simulated partner which the participant watches. Both types of games show the outcomes of the trials, both the choice that was made and the reward outcome received. In addition there is a choice game that only applies to the social conditions. The choice game is a single trial where participants are asked to select one of the two demonstrator partners they watched during the watch games. 
 
-**Partners.** There are two types of demonstrator partners that can be watched during the watch games: an expert or a novice. Both are Thompson samplers where the novice has no prior experience and hence starts from uniform prior beliefs whereas the expert has 128 trials of prior experience that forms their beleifs over the bandit. Experience however is hidden to the participant and can only be inferred from oberving their demonstrations and outcomes. One key detail participants are informed about is that partners that have more experience have more experience across all bandits and vice versa for novice partners. Thompson samplers for the demonstrators are generated prior to each watch game and only filters for the expert's choices being better in expectation than the novice's on that bandit however this doesn't prevent reward outcomes from favouring the novice. 
+**Partners.** There are two types of demonstrator partners that can be watched during the watch games: an expert or a novice. Both are Thompson samplers where the novice has no prior experience and hence starts from uniform prior beliefs whereas the expert has 128 trials of prior experience that forms their beliefs over the bandit. Experience however is hidden to the participant and can only be inferred from observing their demonstrations and outcomes. One key detail participants are informed about is that partners that have more experience have more experience across all bandits and vice versa for novice partners. Thompson samplers for the demonstrators are generated prior to each watch game and only filters for the expert's choices being better in expectation than the novice's on that bandit; however, this doesn't prevent reward outcomes from favouring the novice. 
 
 ## Procedure {#sec-procedure}
 <!-- 2.2 session structure, conditions, design cells, randomisation, practice -->
@@ -100,7 +105,7 @@ The list below shows each confirmatory claim, both primary and secondary. For ea
   - Estimand: the probability that a participant chooses the expert in the choice game that ends a social session, estimated with a participant-level intercept; the claim is that it exceeds one half.
   - Model: the mixed-effects model of partner choice, @sec-partner-choice.
   - Rule: Wald $z$-test on $\beta_0$, two-sided $\alpha = 0.05$ with 95% CI; predicted sign $\beta_0 > 0$ on the logit scale.
-  - Fit: `glmer(chose_expert ~ condition + (1 | participant), family = binomial)`, sum-to-zero coding; the intercept
+  - Fit: `glmer(chose_expert ~ condition + (1 | participant), family = binomial)`, sum-to-zero coding; the intercept is the group-level log-odds of choosing the expert, averaged over the two conditions.
 - **H5.** Participants play better after watching the expert, in both rounds, than solo participants do in their final game.
   - Estimand: mean payoff of the play games that follow an expert demonstration minus mean payoff of the solo condition's fourth and final play game of the round, averaged over rounds. The solo game comes after 18 own choices; the after-expert game after 6 (expert-first) or 18 (novice-first) revealed choices, so solo has at least as much information in every comparison.
   - Model: the mixed-effects model of play outcomes, @sec-descriptive.
@@ -168,9 +173,9 @@ chose_expert ~ condition + (1 | participant), family = binomial
 
 ## Policy models {#sec-policy-models}
 
-**Setup.** A policy model is a generative model of a participant's choices during the play games. The first part of the pipeline uses a transformer to generate predictions of each demonstrator's beleifs over the payoffs of the arms of the bandit, given each of the demonstrators observed choices and outcomes. These are called the readouts. The second part of the pipeline determines the different terms that enter the policy model, including the demonstrators' beleifs, the participant's own outcomes, and the participant's own previous step's choice and reward outcome. Each of these terms are combined into what becomes the policy model, and is fitted to the participant's choices and outputs a log-likelihood of the choices given the model computed as a soft-max.
+**Setup.** A policy model is a generative model of a participant's choices during the play games. The first part of the pipeline uses a transformer to generate predictions of each demonstrator's beliefs over the payoffs of the arms of the bandit, given each of the demonstrators observed choices and outcomes. These are called the readouts. The second part of the pipeline determines the different terms that enter the policy model, including the demonstrators' beliefs, the participant's own outcomes, and the participant's own previous step's choice and reward outcome. Each of these terms are combined into what becomes the policy model, and is fitted to the participant's choices and outputs a log-likelihood of the choices given the model computed as a soft-max.
 
-The policy models are fitted to every shot of the play games of the two social conditions (expert-first and novice-first). For each of the two conditions there two rounds, two play games, six shots, making 48 shots total per participant. Each shot is a trial $t$ of participant $i$ choosing arm $a_t$ from $K = 12$ arms. The readouts from the transformer are the parameters of a Beta distribution per arm $k$, $(\alpha^{\mathrm{demo}}_k, \beta^{\mathrm{demo}}_k)$. The participant's own outcomes are the counts of successes and failures on each arm $k$ in the current play game, $s^{\mathrm{curr}}_k$ and $f^{\mathrm{curr}}_k$, and in the earlier play game of the same round, $s^{\mathrm{prev}}_k$ and $f^{\mathrm{prev}}_k$. The previous arm chosen is $a_{t-1}$ with its reward outcome $r_{t-1} \in \{0, 1\}$.
+The policy models are fitted to every shot of the play games of the two social conditions (expert-first and novice-first). For each of the two conditions there are two rounds, two play games and six shots, making 48 shots total per participant. Each shot is a trial $t$ of participant $i$ choosing arm $a_t$ from $K = 12$ arms. The readouts from the transformer are the parameters of a Beta distribution per arm $k$, $(\alpha^{\mathrm{demo}}_k, \beta^{\mathrm{demo}}_k)$. The participant's own outcomes are the counts of successes and failures on each arm $k$ in the current play game, $s^{\mathrm{curr}}_k$ and $f^{\mathrm{curr}}_k$, and in the earlier play game of the same round, $s^{\mathrm{prev}}_k$ and $f^{\mathrm{prev}}_k$. The previous arm chosen is $a_{t-1}$ with its reward outcome $r_{t-1} \in \{0, 1\}$.
 
 
 **The full model, ROS.** The full model includes all terms: the repeat term (R), a bias toward repeating the previous arm scaled by whether it just won, the own-experience term (O) and the social-belief term built on the readouts (S), hence the name ROS. Each term carries its own weight.  
@@ -179,7 +184,7 @@ $$
 \alpha_k = \kappa_i\, \alpha^{\mathrm{demo}}_k + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k, \qquad \beta_k = \kappa_i\, \beta^{\mathrm{demo}}_k + \lambda_{\mathrm{w}}\, f^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, f^{\mathrm{prev}}_k,
 $$ {#eq-belief}
 
-Each arm's belief distrubiton is a $\mathrm{Beta}(\alpha_k, \beta_k)$ distributiopn. Under Thompson sampling an arm is chosen with the probability that its draw from this distribution is the highest among the twelve arms. This is 
+Each arm's belief is a $\mathrm{Beta}(\alpha_k, \beta_k)$ distribution. Under Thompson sampling an arm is chosen with the probability that its draw from this distribution is the highest among the twelve arms. This is 
 
 $$
 p_k = \int_0^1 f_k(x) \prod_{j \ne k} F_j(x)\, dx,
@@ -199,7 +204,7 @@ $$ {#eq-choice}
 
 Without the readout, the readout term of @eq-belief is replaced by 1, so $\alpha_k = 1 + \lambda_{\mathrm{w}}\, s^{\mathrm{curr}}_k + \lambda_{\mathrm{c}}\, s^{\mathrm{prev}}_k$ and likewise $\beta_k$ with the failure counts, or $\alpha_k = \beta_k = 1$ for the repeat term alone. Without the win-stay lose-shift $\ell_k = \log p_k$ and $\pi_k = p_k$. 
 
-**Hierarchical and group-level parameters.** $\kappa_i$ and $\rho_i$ are fitted per participant since every trial carries evidence for them: $\kappa_i$ scales the readout, and is present on all 48 shots, and $\rho_i$ acts on the previous arm, which exists on every trial after the first. However $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ only act on the arms a participant has already attempted. Because there are 12 arms, 48 trials total results in a participant providing very few informative shots to estimate them. Hence why they are strictly pooled across participants. The lapse rate $\varepsilon$ is fixed at 0.02 rather than fitted. This allows every every arm to have some probability of occuring so that a single stray trials do not dominate the likelihood.
+**Hierarchical and group-level parameters.** $\kappa_i$ and $\rho_i$ are fitted per participant since every trial carries evidence for them: $\kappa_i$ scales the readout, and is present on all 48 shots, and $\rho_i$ acts on the previous arm, which exists on every trial after the first. However $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ only act on the arms a participant has already attempted. Because there are 12 arms, 48 trials total results in a participant providing very few informative shots to estimate them. Hence they are pooled across participants. The lapse rate $\varepsilon$ is fixed at 0.02 rather than fitted. This allows every arm to have some probability of occurring so that a single stray trial does not dominate the likelihood.
 
 **The ladder.** Every other model is @eq-belief to @eq-choice with a term replaced or removed. ROS is the model with all terms. Models missing the repeat term drop the R, and similarly for O and S. The models of S1 to S3, each described as a change from ROS:
 
@@ -255,9 +260,9 @@ and likewise for $E$ with $\delta_E$.
 
 **Thompson probabilities.** @eq-thompson is evaluated with trapezoidal quadrature on a uniform grid of the logit scale, over a dense grid of $\kappa$, $\lambda_{\mathrm{w}}$ and $\lambda_{\mathrm{c}}$ and interpolated. This was checked to be accurate to about $10^{-7}$.
 
-**Sampling and gate.** Every model is fitted with NUTS in NumPyro. Here we use four chains of 1,000 warm-up iterations and 1,000 sampling iterations with the sampler set to target accerptance of 0.9. A fit passes when $\hat{R} < 1.01$ and bulk and tail effective sample sizes are at least 400 on every parameter and no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations with target acceptance increased to 0.95, then 4,000 + 4,000 with target acceptance increase to 0.99. Any fit that fails the last rung is not reported.
+**Sampling and gate.** Every model is fitted with NUTS in NumPyro. Here we use four chains of 1,000 warm-up iterations and 1,000 sampling iterations with the sampler set to target acceptance of 0.9. A fit passes when $\hat{R} < 1.01$ and bulk and tail effective sample sizes are at least 400 on every parameter and no divergent transitions. A failing fit is refitted at 2,000 + 2,000 iterations with target acceptance increased to 0.95, then 4,000 + 4,000 with target acceptance increased to 0.99. Any fit that fails the last rung is not reported.
 
-**Comparison.** Models are compared by expected log predictive density estimated (ELPD) with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over trials. For any two given models $A$ and $B$, where $d_i$ the sum over participant $i$'s shots of the pointwise difference between the two models, and $N$ is the the number of participants we compute
+**Comparison.** Models are compared by expected log predictive density (ELPD) estimated with Pareto-smoothed importance-sampling leave-one-out cross-validation (PSIS-LOO) from the pointwise log-likelihoods of the posterior draws, summed over trials. For any two given models $A$ and $B$, where $d_i$ is the sum over participant $i$'s shots of the pointwise difference between the two models, and $N$ is the number of participants we compute
 
 $$
 \Delta\mathrm{ELPD}_{AB} = \sum_{i=1}^{N} d_i, \qquad \mathrm{SE}_{AB} = \sqrt{N}\; \mathrm{sd}(d_1, \ldots, d_N),
@@ -309,7 +314,7 @@ For each statistic we report the human value against the 95% ETI of the statisti
 ## Pilot Data {#sec-existing-data}
 <!-- 1.1 the pilots statement (MP 5.4) -->
 
-Multiple pilots of this was were run prior to this preregistration. These were used to develop the task along with the specific framing reward labeling and clarify of partners and zones (the bandits) to clearly distinguish them from each other. These were also helpful as data for developing and debugging the models and finally in generating the hypotheses and estimating the sample size. Only the final pilot, referred to as pilot E, was used in the power analysis since only that pilot used the finalized version of the task. Pilot E was run with 38 participants after all exclusions. 
+Multiple pilots of this task were run prior to this preregistration. These were used to develop the task along with the specific framing, reward labeling and clarity of partners and zones (the bandits) to clearly distinguish them from each other. These were also helpful as data for developing and debugging the models and finally in generating the hypotheses and estimating the sample size. Only the final pilot, referred to as pilot E, was used in the power analysis since only that pilot used the finalized version of the task. Pilot E was run with 38 participants after all exclusions. 
 
 ## Power analysis and sample size {#sec-power}
 <!-- 3.4 simulation on pilot E, decision rates by N, chosen N -->
@@ -347,9 +352,9 @@ Multiple pilots of this was were run prior to this preregistration. These were u
 ## Participants and sampling {#sec-participants}
 <!-- 3.1 population, prescreens, consent and data-sharing check; 3.3 stopping rule -->
 
-**Recruitment.** Participants are recruited on Porlific. The following prescreens are applied: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. These are all self-reported on prolific and unverified. In addition anyone who took prior pilots of this task or related experiments of our earlier work is excluded in advance through Prilific's prescreening feature.
+**Recruitment.** Participants are recruited on Prolific. The following prescreens are applied: resident in the United States, aged 18 to 50, fluent in English, and no colour-vision deficiency. These are all self-reported on Prolific and unverified. In addition anyone who took prior pilots of this task or related experiments of our earlier work is excluded in advance through Prolific's prescreening feature.
 
-**Stopping rule.** Recruitment will run in batcheson Prolific until we have N=350 participants that pass all exclusion rules. After each batch only the exclusion script is run to count survivors. Batches are sized so that the last batch is expected to reach N with a small overshoot. Every participant in the final batch who passes the rules will be included in the analysis. 
+**Stopping rule.** Recruitment will run in batches on Prolific until we have N=350 participants that pass all exclusion rules. After each batch only the exclusion script is run to count survivors. Batches are sized so that the last batch is expected to reach N with a small overshoot. Every participant in the final batch who passes the rules will be included in the analysis. 
 
 **Payment.** A base payment of $2 will be paid to all participants who complete the task within the 60 minute cutoff. $2 assumes a payment of $12 per hour at a 10 minute completion pace. Pilot E median time to completion was 12 minutes. In addition participants will receive a 2 cent bonus for every point earned during the game. Participants who decline consent are returned right away and unpaid. 
 
@@ -359,7 +364,7 @@ Multiple pilots of this was were run prior to this preregistration. These were u
 ## Exclusions {#sec-exclusions}
 <!-- 3.2 rules verbatim from preprocess_participant_data.R with pilot E rates -->
 
-Every exclusion rule lives `src/r/preprocess_participant_data.R`, which writes a ledger of counts per rule (`exclusions.csv`). Nothing else is excluded.
+Every exclusion rule lives in `src/r/preprocess_participant_data.R`, which writes a ledger of counts per rule (`exclusions.csv`). Nothing else is excluded.
 
 | | Level | Rule | Reason | Pilot E |
 |--|----------|----------------------|----------------|-----|
@@ -380,3 +385,5 @@ A Prolific time-out is not considered an exclusion and participant data will sti
 # Reporting and data availability {#sec-availability}
 
 **Reporting.** Once data collection for the full study is complete, the results are written by the pipeline's report stage into `results.md` in the order of the pipeline's manifest (`numbers.py`). That file is released with the data.
+
+**Data availability.** Released publicly with the results: `preprocessed_participant_data_public.csv`, the analysed participants' anonymised trial data (the preprocessed file without timestamps); `exclusions.csv`, the ledger of counts per exclusion rule; `demographics_summary.csv`, age and sex summarised over the analysed sample; and the aggregate outputs of every analysis stage. No per-participant demographics are released. From the public file, the tagged code and the checkpoint named above, inference and every analysis stage from `games` onward can be rerun to regenerate `results.md`.

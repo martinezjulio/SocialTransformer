@@ -589,7 +589,7 @@ def main():
         # Load experiment data
         df = load_shots(args.experiment_data_path)
         validate_sessions(df)
-        df = df.drop(columns=['step', 'timestamp'])   # ordering columns only; keeps the CSV schema unchanged
+        df = df.drop(columns=['step', 'timestamp'], errors='ignore')   # ordering columns only (no timestamp in the public release)
         
         if len(df) == 0:
             print("\nERROR: No data after filtering!")
