@@ -31,8 +31,8 @@ format:
 ## Project links
 
 - **Live experiment:** <https://asteroid-mining-game-31128277324.us-east4.run.app/> (the version deployed for this study; take the study exactly as participants do)
-- **Experiment code:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `[TODO: 6.1]`
-- **Modelling and analysis code:** <https://github.com/martinezjulio/SocialTransformer>, tag `[TODO: 6.1]`
+- **Experiment code:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `prereg-2026-11-05`
+- **Modelling and analysis code:** <https://github.com/martinezjulio/SocialTransformer>, tag `prereg-2026-11-05`
 - **Transformer checkpoint:** attached to the registration; sha256\
   `\footnotesize`{=latex} `9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac` `\normalsize`{=latex}
 - **Preregistration:** OSF registration, link `[TODO: after posted to OSF]`; registered before recruitment
