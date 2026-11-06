@@ -30,12 +30,12 @@ format:
 ::: {.callout-note appearance="simple" icon=false}
 ## Project links
 
-- **Live experiment:** [asteroidadventure.com](https://asteroidadventure.com/)
+- **Preregistration:** OSF registration (registered 2026-11-05, before data collection)<!-- TODO: link "OSF registration" to the registration once posted -->
+- **Live experiment:** <https://asteroidadventure.com/ver2_2026_11_05/>
 - **Experiment repository:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `prereg-2026-11-05`
 - **Modeling repository:** <https://github.com/martinezjulio/SocialTransformer>, tag `prereg-2026-11-05`
 - **Transformer checkpoint:** attached to the registration; sha256\
   `\footnotesize`{=latex} `9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac` `\normalsize`{=latex}
-- **Preregistration:** OSF registration (registered 2026-11-05, before data collection)<!-- TODO: link "OSF registration" to the registration once posted -->
 - **Posit Cloud:** <https://01a195f7-7159-fe92-44c1-649f97c62b24.share.connect.posit.cloud>
 :::
 
