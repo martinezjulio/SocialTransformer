@@ -30,12 +30,13 @@ format:
 ::: {.callout-note appearance="simple" icon=false}
 ## Project links
 
-- **Live experiment:** <https://asteroid-mining-game-31128277324.us-east4.run.app/> (the version deployed for this study; take the study exactly as participants do)
-- **Experiment code:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `prereg-2026-11-05`
-- **Modelling and analysis code:** <https://github.com/martinezjulio/SocialTransformer>, tag `prereg-2026-11-05`
+- **Live experiment:** [asteroidadventure.com](https://asteroidadventure.com/) (take the study exactly as participants do, without data collection)
+- **Experiment repository:** <https://github.com/martinezjulio/AsteroidMiningAdenture>, tag `prereg-2026-11-05`
+- **Modeling repository:** <https://github.com/martinezjulio/SocialTransformer>, tag `prereg-2026-11-05`
 - **Transformer checkpoint:** attached to the registration; sha256\
   `\footnotesize`{=latex} `9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac` `\normalsize`{=latex}
-- **Preregistration:** OSF registration, link `[TODO: after posted to OSF]`; registered before recruitment
+- **Preregistration:** OSF registration (registered 2026-11-05, before data collection)<!-- TODO: link "OSF registration" to the registration once posted -->
+- **This document online:** <https://01a195f7-7159-fe92-44c1-649f97c62b24.share.connect.posit.cloud>
 :::
 
 # AI use statement {.unnumbered}
