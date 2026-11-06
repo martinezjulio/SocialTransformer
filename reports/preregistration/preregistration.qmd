@@ -40,7 +40,7 @@ format:
 
 # AI use statement {.unnumbered}
 
-I used Claude Code (various versions of Sonnet, Opus 5.5 and Fable 5.1) to help me implement the experiment code, the modeling and analysis pipeline and tests. Claude Code was also used to set up this document, its Quarto structure, rendering and the tables of pipeline numbers. The text of this registration however is my own. 
+I used Claude Code (various versions of Sonnet, Opus 5.5 and Fable 5.1) to help me implement the experiment code, the modeling and analysis pipeline and tests. Claude Code was also used to set up this document, its Quarto structure, rendering and the tables of pipeline numbers. The text of this registration is my own with edits from Claude Fable 5.1.
 
 # Introduction {#sec-introduction}
 This study asks whether a social learner's theory of mind representations of a social partner, i.e. their latent environmental beliefs and experience, shape the learner's choices, and results in improved outcomes in a new environment with prior exposure to the same social partner. We study this in a multi-armed bandit task where participants both play and watch demonstrations of simulated partners with different levels of experience. 
