@@ -49,23 +49,33 @@ submission Friday night, results wanted by end of Monday 10 Nov.
 
 ## C. Friday: from the last participant to the submission (lab machine, then Sherlock)
 
+Version name (user, 5 Nov): `2026_11_05_full_study`. Transfer targets `$SCRATCH/SocialBanditsProject/experiments/2026_11_05_full_study/` and
+`output/eval/2026_11_05_full_study/` already exist on scratch. Lab-side lines, from the lab clone with `.env` sourced:
+
+```bash
+V=2026_11_05_full_study; D=juliomz@dtn.sherlock.stanford.edu:SocialBanditsProject
+rsync -avP $EXPERIMENT_DATA_DIR/$V/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv} $D/experiments/$V/
+rsync -avP $OUTPUT_DATA_DIR/eval/$V/ $D/output/eval/$V/
+sha256sum $EXPERIMENT_DATA_DIR/$V/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv}   # paste into the chat for C.4
+```
+
 - [ ] C.1 Lab machine: `anonymize_participant_data.py` (uncommitted) on the raw logs and the Prolific export; then
-  `src/r/preprocess_participant_data.R` → `$EXPERIMENT_DATA_DIR/<full>/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv}`;
+  `src/r/preprocess_participant_data.R` → `$EXPERIMENT_DATA_DIR/2026_11_05_full_study/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv}`;
   check the exclusion counts and that exactly 350 participants with three sessions survive (the stopping rule).
-- [ ] C.2 Lab machine: `bash scripts/run_inference.sh` for `<full>` on the lab GPU (checkpoint `epoch_119_best.pt`, unchanged);
-  runtime not yet measured at 350 (pilot: minutes). Note `eval/<full>/metadata/inference_config.yaml` records lab paths; the
+- [ ] C.2 Lab machine: `bash scripts/run_inference.sh` for `2026_11_05_full_study` on the lab GPU (checkpoint `epoch_119_best.pt`, unchanged);
+  runtime not yet measured at 350 (pilot: minutes). Note `eval/2026_11_05_full_study/metadata/inference_config.yaml` records lab paths; the
   pipeline ignores them (9.13).
-- [ ] C.3 Transfer through the DTN (README §6 lines with `<full>` for `pilot_E`; `mkdir -p` the two nested targets first);
-  only the three anonymised files from `experiments/<full>/` (preprocessed, exclusions, demographics summary), never the folder.
-- [ ] C.4 (the pilot's run of this configuration: jobs 51150993-51150998, 4 Nov) On Sherlock, dev session: checksums of the two files and the checkpoint against the lab machine's `sha256sum`;
-  `bash scripts/run_analysis.sh --version <full> --stages games,inference-check,descriptive,partner_choice` (minutes) as the
-  smoke test; `bash scripts/slurm/submit.sh --version <full> --dry-run` and the unit counts; then the real submission.
+- [ ] C.3 Transfer through the DTN (README §6 lines with `2026_11_05_full_study` for `pilot_E`; `mkdir -p` the two nested targets first);
+  only the three anonymised files from `experiments/2026_11_05_full_study/` (preprocessed, exclusions, demographics summary), never the folder.
+- [ ] C.4 (the pilot's run of this configuration: jobs 51150993-51150998, 4 Nov) On Sherlock, dev session: checksums of the three files against the lab machine's `sha256sum` (the checkpoint is already here and verified);
+  `bash scripts/run_analysis.sh --version 2026_11_05_full_study --stages games,inference-check,descriptive,partner_choice` (minutes) as the
+  smoke test; `bash scripts/slurm/submit.sh --version 2026_11_05_full_study --dry-run` and the unit counts; then the real submission.
   Record the job ids here. Do not edit the repo while the chain runs.
 
 ## D. Weekend monitoring and the rule for failures
 
 - [ ] D.1 Saturday morning and Sunday morning, from a dev session (`claude --continue`, "check the run", or by hand
-  `bash scripts/slurm/status.sh --version <full> --missing`): per-job task states, running tasks, tracebacks, preemptions, units still missing. Checks at least a
+  `bash scripts/slurm/status.sh --version 2026_11_05_full_study --missing`): per-job task states, running tasks, tracebacks, preemptions, units still missing. Checks at least a
   minute apart, no loops.
 - [ ] D.2 On a failed task: read its log, fix, commit; cancel the whole remaining chain (`scancel` the dependents and the
   pending tasks, let running tasks finish) before resubmitting, so no two tasks ever compute the same unit at once
