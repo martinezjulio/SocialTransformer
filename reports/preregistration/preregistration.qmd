@@ -37,6 +37,7 @@ format:
 - **Transformer checkpoint:** attached to the registration; sha256\
   `\footnotesize`{=latex} `9f3586bd30704526da7042c87f5492a6109867b5eb50dc8b4ddf211f538decac` `\normalsize`{=latex}
 - **Posit Cloud:** <https://01a195f7-7159-fe92-44c1-649f97c62b24.share.connect.posit.cloud>
+- **Earlier registration:** <https://doi.org/10.17605/OSF.IO/9J4C2> (12 September 2025), superseded by this registration
 :::
 
 # AI use statement {.unnumbered}
