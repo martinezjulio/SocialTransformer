@@ -85,6 +85,7 @@ sha256sum $EXPERIMENT_DATA_DIR/$V/{preprocessed_participant_data.csv,exclusions.
 - [ ] D.3 Monday: `final-*.out` ends with the report line; `paper/` copied to group home (scratch purges after 90 days);
   `git status` clean, every fix pushed.
 
+- [x] A.9 Container start failures (6 Nov 21:30): level-0 task 51410011_78 failed in 50 s with `FATAL: container creation failed ... squashfuse_ll failed to mount` on sh02-16n08, a node-side transient that Slurm does not requeue, and one such failure breaks the level's `afterok`. `units.sbatch` now retries a container start that exits 255 up to three times a minute apart; other exit codes are not retried. The failed task was requeued by hand where possible; otherwise the missing-unit resubmission covers it.
 - [x] A.8 Thread counts (6 Nov 21:10, from an administrators' notice on job 51410990): a 4-core table task ran 24 threads at 283% CPU, because `thompson.p_win_all` defaulted to 16 workers and numpy/scipy/torch sized their pools to the node. Fixed in ae51a1e: the builder uses `cpu_workers()` (the cores the cgroup grants, at most 16) and `with_env.sh` exports OMP, MKL, OpenBLAS, numexpr and XLA thread counts equal to `SLURM_CPUS_PER_TASK` inside any Slurm task. Applied mid-run: tasks starting after the commit comply; the ~150 already running finished within 20 min. The notice warns that repeats can lead to cancellations, so this is a precondition for every future submission.
 
 ## E. Known residual risks after a clean pilot

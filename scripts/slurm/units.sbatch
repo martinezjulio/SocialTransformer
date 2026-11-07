@@ -19,7 +19,14 @@ main() {
   REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
   ENV_FILE="${ENV_FILE:-${REPO_DIR}/.env}"
   set -a; source "$ENV_FILE"; set +a
-  [ -z "${CONTAINER:-}" ] || [ -n "${APPTAINER_CONTAINER:-}" ] || exec bash "$REPO_DIR/scripts/with_env.sh" bash "$REPO_DIR/scripts/slurm/units.sbatch"   # Sherlock: re-run inside the image
+  if [ -n "${CONTAINER:-}" ] && [ -z "${APPTAINER_CONTAINER:-}" ]; then   # Sherlock: re-run inside the image; a container that fails to start (exit 255, e.g. a transient squashfuse mount error) is retried
+    for attempt in 1 2 3; do
+      bash "$REPO_DIR/scripts/with_env.sh" bash "$REPO_DIR/scripts/slurm/units.sbatch" && exit 0
+      rc=$?; [ "$rc" -eq 255 ] || exit "$rc"
+      echo "== container start failed (attempt $attempt, exit 255); retrying in 60 s"; sleep 60
+    done
+    exit 255
+  fi
   source "$CONDA_SETUP"
   conda activate SocialTransformer
   cd "$REPO_DIR"
