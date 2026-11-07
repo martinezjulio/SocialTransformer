@@ -34,7 +34,8 @@ main() {
   : "${VERSION:?VERSION is not set}" "${UNIT_LIST:?UNIT_LIST is not set}" "${SLURM_ARRAY_TASK_ID:?not an array task}"
   UNIT="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$UNIT_LIST")"
   [ -n "$UNIT" ] || { echo "no unit on line $SLURM_ARRAY_TASK_ID of $UNIT_LIST" >&2; exit 2; }
-  echo "== $UNIT on ${SLURMD_NODENAME:-$(hostname)} ($(date +%H:%M:%S))"
+  export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1   # array tasks: the table builder's own pool uses the allocated cores; BLAS pools would only add idle threads beyond the allocation
+  echo "== $UNIT on ${SLURMD_NODENAME:-$(hostname)} ($(date +%H:%M:%S)), threads: $(nproc) cores allocated"
   python src/run_analysis.py --version "$VERSION" --unit "$UNIT"
   echo "== done ($(date +%H:%M:%S))"
 }
