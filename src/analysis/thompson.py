@@ -11,6 +11,7 @@ The 5.6 benchmark chose tables over an in-sampler quadrature (see the plan's Run
 """
 
 import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -40,9 +41,14 @@ def p_win(ab: np.ndarray, X: int = 4096, L: float = 80.0) -> np.ndarray:
     return body + S[..., -1] * np.exp(logF[..., -1].sum(-1, keepdims=True) - logF[..., -1])
 
 
-def p_win_all(ab: np.ndarray, chunk: int = 128, workers: int = 16) -> np.ndarray:
+def cpu_workers(limit: int = 16) -> int:
+    """Threads for the CPU builder: the cores this process may use (a Slurm task's allocation, not the node), at most ``limit``."""
+    return max(1, min(limit, len(os.sched_getaffinity(0))))
+
+
+def p_win_all(ab: np.ndarray, chunk: int = 128, workers: int = None) -> np.ndarray:
     """p_win in chunks on a thread pool (the scipy ufuncs release the GIL); bitwise equal to one call."""
-    with ThreadPoolExecutor(workers) as ex:
+    with ThreadPoolExecutor(workers or cpu_workers()) as ex:
         return np.concatenate(list(ex.map(p_win, [ab[i:i + chunk] for i in range(0, len(ab), chunk)])))
 
 
@@ -104,7 +110,7 @@ def build(prior, social, own_seg, own_prev, kappa, lam_w, lam_c, workers, builde
 
 
 def table(name: str, prior: np.ndarray, social: np.ndarray, own_seg: np.ndarray, own_prev: np.ndarray, cache_dir: Path, kappa: np.ndarray = KAPPA,
-          lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = 16, block: int = None, n_blocks: int = 1,
+          lam_w: np.ndarray = LAM_W, lam_c: np.ndarray = LAM_C, workers: int = None, block: int = None, n_blocks: int = 1,
           builder: str = "scipy") -> np.ndarray:
     """Cached log-policy table for a belief source; built on a cache miss. The trials split into ``n_blocks`` contiguous
     blocks: ``block=b`` builds, caches and returns block b alone (one cluster array task); ``block=None`` returns the
