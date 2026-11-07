@@ -10,6 +10,10 @@ back to exact leave-one-session-out refits (``loso``). ``by_cell`` splits a diff
 
 from dataclasses import dataclass, replace
 
+import gc
+
+import jax
+
 import arviz as az
 import numpy as np
 import pandas as pd
@@ -89,4 +93,5 @@ def loso(l: Loo, spec, T: TrialData, tab, tab2=None, seed: int = 0) -> Loo:
         draws = {s: v.reshape(-1, *v.shape[2:]) for s, v in f.posterior.items()}
         ll = np.asarray(log_likelihood(model, draws, spec, subset(T, held), tab[held], True, None if tab2 is None else tab2[held])["a"])
         elpd_i[held], k[held] = logsumexp(ll, 0) - np.log(len(ll)), 0.0
+        del f, draws, ll; gc.collect(); jax.clear_caches()   # release the refit's device arrays and executables: at full size they accumulated across sessions until the GPU ran out
     return Loo(l.name, float(elpd_i.sum()), elpd_i, k, int((k > K_BAD).sum()))
