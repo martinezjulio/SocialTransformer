@@ -18,10 +18,10 @@ awk -F'\t' -v s="$STAMP" '$1 == s' "$DIR/jobs.tsv" | while IFS=$'\t' read -r _ l
   printf "  %-6s job %-9s %4s tasks: %s\n" "$level" "$job" "$n" "${states:-not in sacct yet}"
   if [ "$level" = final ]; then logs=("$DIR/final-$job.out"); else logs=("$DIR/level$level-$job"_*.out); fi
   [ -e "${logs[0]}" ] || continue
-  tb=$(grep -l "Traceback" "${logs[@]}" 2>/dev/null | wc -l); pre=$(grep -l "PREEMPTION" "${logs[@]}" 2>/dev/null | wc -l)
-  [ "$tb" -gt 0 ] && echo "    tracebacks in $tb log(s): $(grep -l Traceback "${logs[@]}" | head -3 | xargs -n1 basename | tr '\n' ' ')"
-  [ "$pre" -gt 0 ] && echo "    preempted and requeued: $pre"
-  [ "$level" = final ] && grep -E "^== |^report:" "${logs[0]}" | tail -2 | sed 's/^/    /'
+  tb=$( (grep -l "Traceback" "${logs[@]}" 2>/dev/null || true) | wc -l); pre=$( (grep -l "PREEMPTION" "${logs[@]}" 2>/dev/null || true) | wc -l)   # grep's "no match" must not trip set -e/pipefail
+  [ "$tb" -gt 0 ] && echo "    tracebacks in $tb log(s): $(grep -l Traceback "${logs[@]}" | head -3 | xargs -n1 basename | tr '\n' ' ')" || true
+  [ "$pre" -gt 0 ] && echo "    preempted and requeued: $pre" || true
+  [ "$level" = final ] && { grep -E "^== |^report:" "${logs[0]}" || true; } | tail -2 | sed 's/^/    /'
 done
 running=$(squeue --me -h -o "%i %P %M %N" 2>/dev/null | grep -E "^($(awk -F'\t' -v s="$STAMP" '$1 == s {print $3}' "$DIR/jobs.tsv" | paste -sd'|'))(_|$)" || true)
 [ -n "$running" ] && { echo "  running or queued:"; echo "$running" | sed 's/^/    /' | head -20; }
