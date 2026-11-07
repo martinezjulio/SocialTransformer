@@ -179,6 +179,18 @@ def loso_loo(p: Paths, T, name: str, l):
     return pickle.load(open(path, "rb"))
 
 
+def loso_unit(p: Paths, T, name: str) -> dict:
+    """The level-3 fallback unit: the model's LOO, its fallback refits if any session has k > 0.7, and a `.nobad` marker beside
+    the would-be cache when none has (so `--list-units --missing` can tell without recomputing the LOO)."""
+    from analysis.compare import loo
+    from analysis.fitting import cache_path
+    l = loo(choice_fit(p, T, name))
+    path = cache_path(name, "-".join(t.stem.split("_")[-1] for t in human_tables(p, T, name)), p.analysis_dir / "choice" / "loso")
+    if l.n_bad == 0:
+        path.parent.mkdir(parents=True, exist_ok=True); path.with_suffix(".nobad").touch()
+    return dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, name, l).elpd)
+
+
 def recovery_pairs(p: Paths, T) -> dict:
     """The model-recovery pairs (``checks.comparisons``): from the choice stage's ladder, or, in a cluster unit that runs before
     that stage, from the same cached fits and fallback refits (every candidate is in FALLBACK_MODELS)."""
@@ -316,7 +328,7 @@ def units(p: Paths) -> dict:
     check = lambda call: call(*checks_setup(p))   # a checks unit: the stage's setup, then one call restricted to the unit
     fits, checks = p.analysis_dir / "choice" / "fits", p.analysis_dir / "checks"
     fit_key = lambda n: "-".join(x.stem.split("_")[-1] for x in human_tables(p, T, n))
-    pairs = {}   # recovery_pairs, computed once on first use (needs the level-3 caches)
+    pairs, sizes = {}, {}   # recovery_pairs and the fits' posterior sizes, computed once on first use
 
     def quiet(f):
         try:
@@ -325,14 +337,20 @@ def units(p: Paths) -> dict:
             return False
 
     def draw_path(n, i, cache_dir, key, sub, tag):   # the json of draw i of the evenly spaced grid over a cached fit's posterior
-        f = pickle.load(open(cache_path(n, key, cache_dir), "rb"))
-        size = next(iter(f.posterior.values())).shape[0] * next(iter(f.posterior.values())).shape[1]
+        fp = cache_path(n, key, cache_dir)
+        if fp not in sizes:
+            v = next(iter(pickle.load(open(fp, "rb")).posterior.values())); sizes[fp] = v.shape[0] * v.shape[1]
+        size = sizes[fp]
         return checks / sub / f"{REGISTRY[n].name.replace(':', '-')}{tag}_draw{int(np.linspace(0, size - 1, N_PPC_DRAWS).astype(int)[i]):05d}.json"
 
-    def pair(c):
-        if not pairs:
-            pairs.update(recovery_pairs(p, T))
-        return pairs[c]
+    def mr_done(c, i, d):   # both fits of the pair exist for dataset d of side i; the pair is read from the file names (no LOO)
+        from collections import Counter
+        groups = Counter(f.name.split(f"_{c}_", 1)[1] for f in (checks / "model_recovery" / "fits").glob(f"*_{c}_*_vs_*_{d:02d}.pkl"))
+        for suffix, n in groups.items():   # suffix = "{a}_vs_{b}_{side}_{dd}.pkl"
+            a, rest = suffix.split("_vs_", 1); b_side = rest.rsplit("_", 1)[0]   # "{b}_{side}": the side is a (i = 0) when it ends with a
+            if n >= 2 and ((b_side.endswith("_" + a) and i == 0) or (not b_side.endswith("_" + a) and i == 1)):
+                return True
+        return False
 
     for n, m in REGISTRY.items():
         for s in (m.source, "novice") if m.mixture != "none" else (m.source,):
@@ -345,8 +363,8 @@ def units(p: Paths) -> dict:
         u[f"fit:{n}"] = (2, lambda n=n, t=t: run_many([n], p.eval_dir, p.version, {n: (t[0], t[1] if len(t) > 1 else None)}, "-".join(x.stem.split("_")[-1] for x in t), fits)[n].diagnostics,
                          lambda n=n: cache_path(n, fit_key(n), fits).exists())
     for n in FALLBACK_MODELS:   # the Pareto-k fallback refits (loso_loo) after the fits, on a GPU; the choice stage then reads the cache
-        u[f"loso:{n}"] = (3, lambda n=n: (lambda l: dict(n_bad=l.n_bad, elpd=l.elpd, elpd_after=loso_loo(p, T, n, l).elpd))(loo(choice_fit(p, T, n))),
-                          lambda n=n: cache_path(n, fit_key(n), p.analysis_dir / "choice" / "loso").exists() or quiet(lambda: loo(choice_fit(p, T, n)).n_bad == 0))
+        u[f"loso:{n}"] = (3, lambda n=n: loso_unit(p, T, n),
+                          lambda n=n: cache_path(n, fit_key(n), p.analysis_dir / "choice" / "loso").exists() or cache_path(n, fit_key(n), p.analysis_dir / "choice" / "loso").with_suffix(".nobad").exists())
     for d in range(N_DATASETS):
         u[f"recovery:{d}"] = (3, lambda d=d: check(lambda T, out, post, model, norm, pools, frames: recover_delta(post("Switch-by-round"), pools, model, norm, out / "recovery", datasets=[d])),
                               lambda d=d: cache_path("Switch-by-round", f"dataset_{d:02d}", checks / "recovery" / "fits").exists())
@@ -355,7 +373,7 @@ def units(p: Paths) -> dict:
             for d in range(N_MODEL_RECOVERY):
                 u[f"model_recovery:{c}:{i}:{d}"] = (4, lambda c=c, i=i, d=d: check(lambda T, out, post, model, norm, pools, frames: (lambda pair: model_recovery(
                     {n: post(n) for n in pair}, pools, model, norm, out / "model_recovery", {c: pair}, units=[(c, pair[i], d)]))(recovery_pairs(p, T)[c])),
-                    lambda c=c, i=i, d=d: quiet(lambda: all(cache_path(m, f"{c}_{pair(c)[0]}_vs_{pair(c)[1]}_{pair(c)[i]}_{d:02d}", checks / "model_recovery" / "fits").exists() for m in pair(c))))
+                    lambda c=c, i=i, d=d: mr_done(c, i, d))
     for n in PPC_MODELS:
         u[f"split_fit:{n}"] = (3, lambda n=n: check(lambda T, out, post, model, norm, pools, frames: split_half(REGISTRY[n], T, table_arrays(p, T, n), frames, model, norm, out / "split_half", draws=[])),
                                lambda n=n: cache_path(REGISTRY[n].name, "split0", checks / "split_half" / "fits").exists())
