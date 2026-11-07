@@ -60,18 +60,19 @@ rsync -avP $OUTPUT_DATA_DIR/eval/$V/ $D/output/eval/$V/
 sha256sum $EXPERIMENT_DATA_DIR/$V/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv}   # paste into the chat for C.4
 ```
 
-- [ ] C.1 Lab machine: `anonymize_participant_data.py` (uncommitted) on the raw logs and the Prolific export; then
+- [x] C.1 (6 Nov, user) Lab machine: `anonymize_participant_data.py` (uncommitted) on the raw logs and the Prolific export; then
   `src/r/preprocess_participant_data.R` → `$EXPERIMENT_DATA_DIR/2026_11_05_full_study/{preprocessed_participant_data.csv,exclusions.csv,demographics_summary.csv}`;
   check the exclusion counts and that exactly 350 participants with three sessions survive (the stopping rule).
-- [ ] C.2 Lab machine: `bash scripts/run_inference.sh` for `2026_11_05_full_study` on the lab GPU (checkpoint `epoch_119_best.pt`, unchanged);
+- [x] C.2 (6 Nov, user) Lab machine: `bash scripts/run_inference.sh` for `2026_11_05_full_study` on the lab GPU (checkpoint `epoch_119_best.pt`, unchanged);
   runtime not yet measured at 350 (pilot: minutes). Note `eval/2026_11_05_full_study/metadata/inference_config.yaml` records lab paths; the
   pipeline ignores them (9.13).
-- [ ] C.3 Transfer through the DTN (README §6 lines with `2026_11_05_full_study` for `pilot_E`; `mkdir -p` the two nested targets first);
+- [x] C.3 (6 Nov, user; verified by sha256 on both ends) Transfer through the DTN (README §6 lines with `2026_11_05_full_study` for `pilot_E`; `mkdir -p` the two nested targets first);
   only the three anonymised files from `experiments/2026_11_05_full_study/` (preprocessed, exclusions, demographics summary), never the folder.
-- [ ] C.4 (the pilot's run of this configuration: jobs 51150993-51150998, 4 Nov) On Sherlock, dev session: checksums of the three files against the lab machine's `sha256sum` (the checkpoint is already here and verified);
+- [x] C.4 (6 Nov 20:1x; the pilot's run of this configuration: jobs 51150993-51150998, 4 Nov) On Sherlock, dev session: checksums of the three files against the lab machine's `sha256sum` (the checkpoint is already here and verified);
   `bash scripts/run_analysis.sh --version 2026_11_05_full_study --stages games,inference-check,descriptive,partner_choice` (minutes) as the
   smoke test; `bash scripts/slurm/submit.sh --version 2026_11_05_full_study --dry-run` and the unit counts; then the real submission.
   Record the job ids here. Do not edit the repo while the chain runs.
+  Submitted 2026-11-06 20:18: level 0: 576 units, job(s) 51409892:51409896:51409898:51409901:51409903:51409904; level 1: 9 units, job(s) 51409906; level 2: 21 units, job(s) 51409909; sbatch: error: QOSMaxSubmitJobPerUserLimit; sbatch: error: Batch job submission failed: Job violates accounting/QOS policy (job submit limit, user's size and/or time limits). Smoke test passed at 20:05 (353 participants, 706 social sessions, 1,059 sessions; descriptive and partner-choice stages fit cleanly). Checksums of the three files equal the lab's (c5307ebb…, 73b57a03…, e6718d30…).
 
 ## D. Weekend monitoring and the rule for failures
 
