@@ -6,7 +6,7 @@
 #   bash scripts/slurm/submit.sh --version pilot_E [--dev] [--dry-run]
 # .env: SLURM_CPU_PARTITION (default normal), SLURM_GPU_PARTITION (owners, preemptible: the tasks requeue),
 # SLURM_FINAL_PARTITION (hns), SLURM_ACCOUNT (optional), N_TABLE_BLOCKS (8; rows per table block unit), SLURM_TABLE_CPUS (16) and
-# SLURM_TABLE_MEM (64G) per table block task, SLURM_FINAL_TIME (12:00:00) and SLURM_FINAL_MEM (64G; the pilot's final run peaked at 64 GB) for the final run, SLURM_GPU_OPTS (extra sbatch options
+# SLURM_TABLE_MEM (64G) and SLURM_TABLE_TIME (4:00:00) per table block task, SLURM_FINAL_TIME (12:00:00) and SLURM_FINAL_MEM (64G; the pilot's final run peaked at 64 GB) for the final run, SLURM_GPU_OPTS (extra sbatch options
 # for the GPU levels; Sherlock needs --gpu_cmode=shared, since its GPUs default to one CUDA context per job and the fits run in a
 # spawned worker process beside the parent), SLURM_GPU_MEM (32G) and SLURM_GPU_TIME (2:00:00) per GPU unit (pilot recovery datasets:
 # 16-120 min and 22 GB peak on owners' mixed GPUs; 4:00:00 and 48G there), SLURM_ARRAY_CHUNK (96): a level's units are submitted as
@@ -38,7 +38,7 @@ done
 export VERSION N_TABLE_BLOCKS="${N_TABLE_BLOCKS:-8}" REPO_DIR="$PWD"
 CPU="--partition=${SLURM_CPU_PARTITION:-normal}"; GPU="--partition=${SLURM_GPU_PARTITION:-owners} --gpus=1 ${SLURM_GPU_OPTS:-} --cpus-per-task=4 --mem=${SLURM_GPU_MEM:-32G} --time=${SLURM_GPU_TIME:-2:00:00}"
 ACCOUNT="${SLURM_ACCOUNT:+--account=$SLURM_ACCOUNT}"
-LEVELS=("$CPU --cpus-per-task=${SLURM_TABLE_CPUS:-16} --mem=${SLURM_TABLE_MEM:-64G} --time=4:00:00" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
+LEVELS=("$CPU --cpus-per-task=${SLURM_TABLE_CPUS:-16} --mem=${SLURM_TABLE_MEM:-64G} --time=${SLURM_TABLE_TIME:-4:00:00}" "$CPU --cpus-per-task=8 --mem=64G --time=1:00:00" "$GPU" "$GPU" "$GPU")   # assembly: 8 cores for 64 GB under normal's 8 GB/core cap
 DIR="$OUTPUT_DATA_DIR/analysis/$VERSION/slurm"; mkdir -p "$DIR"
 bash scripts/with_env.sh python src/run_analysis.py --version "$VERSION" --list-units --missing > "$DIR/units.tsv"   # inside the image on Sherlock; cached units are not queued, a level with none is skipped
 submit() { local name="$1"; shift; if [ "$DRY" -eq 1 ]; then echo "sbatch $*" >&2; echo "dry-$name"; else sbatch --parsable "$@"; fi; }
