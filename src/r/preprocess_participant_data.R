@@ -42,9 +42,18 @@ note("participant", "colour_vision", demographics$anonymous_id[grepl("^Yes", dem
 demographics <- demographics |>
   dplyr::filter(!(Status == "RETURNED" | grepl("^Yes", Colourblindness)))
 
-# 3) Read the anonymised trial logs
+# 3) Read the anonymised trial logs and drop duplicate uploads. The client posts every event once, but a
+# retried request can store the same event twice (full study: five such pairs, identical in every field
+# the client sends, millisecond timestamp included; four in practice rows and one shot of a watch game).
+# The anonymiser removes the server-side fields (_id, created_at), so a duplicate upload is an exact
+# duplicate row here. Removed before any rule so no count below sees it; it is not an exclusion of a
+# participant or a session, so it is reported on the console and not in the ledger. (Added 7 Nov 2026,
+# after the full study's first export; pilot E has no such rows, its outputs are unchanged.)
 mongologs <- read_csv(mongologs_path,
                       col_types = cols(timestamp = col_character(), .default = col_guess()))  # keep ms
+n_uploaded <- nrow(mongologs)
+mongologs <- distinct(mongologs)
+cat(sprintf("Duplicate uploads removed: %d row(s) of %d\n", n_uploaded - nrow(mongologs), n_uploaded))
 
 # 3a) Log format, detected from the data rather than the version name so a new version of the same game
 # needs no edit here. Pilot E and the full study label the demonstrators demo-1 / demo-2 in game_sequence

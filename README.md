@@ -190,7 +190,9 @@ A **separate step, not an analysis stage.** Reads the anonymized export from
 `$EXPERIMENT_DATA_DIR/<version>/` and writes
 `preprocessed_participant_data.csv`, `exclusions.csv`,
 `demographics_summary.csv` and a timestamp-free public CSV. Every exclusion rule
-lives in this script.
+lives in this script; before the rules it drops exact duplicate rows, which a
+retried upload of one event leaves behind (counted on the console, not in the
+ledger).
 
 ### Analyse
 
