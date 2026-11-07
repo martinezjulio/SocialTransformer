@@ -12,6 +12,7 @@ submission Friday night, results wanted by end of Monday 10 Nov.
   `normal` allow 7 d). Make it an `.env` variable (`SLURM_FINAL_TIME`, default 12:00:00, documented in `.env.example`) and set
   24:00:00 in the Sherlock `.env`. Set from the pilot's measured final-run time × ~8 (the choice stage was estimated at ~7 h
   at 300 participants on the lab box).
+- [x] A.2b (6 Nov, full-run values set in the Sherlock `.env` before the submission: `N_TABLE_BLOCKS=64` (a 4-core block of the full data holds ~530 trials, 9× a pilot 32-block, so 64 blocks keep it near 45 min; 576 level-0 tasks in 6 arrays), `SLURM_TABLE_MEM=24G` (A.3 projection), `SLURM_GPU_TIME=8:00:00` (the pilot's slowest fits, Switch-8 and Switch-by-round+eps at 20-25 min, scale with trials and could approach 4 h at 353 participants; recovery datasets are unchanged in size)).
 - [x] A.2 (4 Nov: `N_TABLE_BLOCKS=32`, `SLURM_TABLE_CPUS=4`, `SLURM_TABLE_MEM=16G` in the Sherlock `.env`, the two new variables read by `submit.sh`; dry run gives 288 level-0 units; applied to the pilot chain) Table blocks: `N_TABLE_BLOCKS=32` in `.env` (288 level-0 tasks instead of 72). Each block then takes ~25 min at 350
   participants instead of ~1.5 h, fits scheduler gaps better and loses less to a preemption. Check that `--list-units`
   gives 288 level-0 units and that level 0's `--cpus-per-task=16` still suits a 32-block task (the builder is threaded;
