@@ -85,6 +85,8 @@ sha256sum $EXPERIMENT_DATA_DIR/$V/{preprocessed_participant_data.csv,exclusions.
 - [ ] D.3 Monday: `final-*.out` ends with the report line; `paper/` copied to group home (scratch purges after 90 days);
   `git status` clean, every fix pushed.
 
+- [x] A.8 Thread counts (6 Nov 21:10, from an administrators' notice on job 51410990): a 4-core table task ran 24 threads at 283% CPU, because `thompson.p_win_all` defaulted to 16 workers and numpy/scipy/torch sized their pools to the node. Fixed in ae51a1e: the builder uses `cpu_workers()` (the cores the cgroup grants, at most 16) and `with_env.sh` exports OMP, MKL, OpenBLAS, numexpr and XLA thread counts equal to `SLURM_CPUS_PER_TASK` inside any Slurm task. Applied mid-run: tasks starting after the commit comply; the ~150 already running finished within 20 min. The notice warns that repeats can lead to cancellations, so this is a precondition for every future submission.
+
 ## E. Known residual risks after a clean pilot
 
 (5 Nov: one of these materialised on the pilot: the data-dependent recovery pair picked a rival the simulator could not play; fixed in the simulator, see `sherlock-setup.md` 5.3. The full data can pick any of the three S2 rivals; all three are now simulable, and `naive-expert` is covered by the same change.)
