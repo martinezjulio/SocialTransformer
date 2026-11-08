@@ -33,8 +33,13 @@ def omega8(fit) -> np.ndarray:
 
 
 def panel_weights(ax, analysis_dir: Path) -> None:
-    """(a) Median and 95% ETI of each game's weight, in session order, by condition."""
-    fit = load_fit(analysis_dir, "Switch-8")
+    """(a) Median and 95% ETI of each game's weight, in session order, by condition; a note when the Switch-8 fit is not available."""
+    try:
+        fit = load_fit(analysis_dir, "Switch-8")
+    except FileNotFoundError:
+        ax.text(0.5, 0.5, "Switch-8 fit not available\n(exploratory; did not converge within the compute budget)", ha="center", va="center", transform=ax.transAxes, fontsize=7, color="#666666")
+        ax.set(xticks=[], yticks=[], ylabel="weight on the expert's belief")
+        return
     om = omega8(fit)
     for cond, dx, ls in (("expert-first", -0.08, "-"), ("novice-first", 0.08, "--")):
         idx = [(w == "E") * 4 + (g >= 3) * 2 + (cond == "expert-first") for g, w in enumerate(GAMES[cond], 1)]

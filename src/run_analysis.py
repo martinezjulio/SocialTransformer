@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 STAGES = {}   # name -> function(Paths); insertion order is pipeline order
-N_TABLE_BLOCKS = int(os.environ.get("N_TABLE_BLOCKS", 1))   # row blocks per human table in the cluster units (scripts/slurm)
+N_TABLE_BLOCKS = int(os.environ.get("N_TABLE_BLOCKS", 1))
+SKIP_MODELS = frozenset(filter(None, os.environ.get("SKIP_MODELS", "").split(",")))   # registry models not fitted in this run (an exploratory fit that did not converge within the compute budget); their numbers read "not evaluable"   # row blocks per human table in the cluster units (scripts/slurm)
 
 
 def stage(name):
@@ -98,7 +99,7 @@ def run_choice(p: Paths) -> None:
         if path not in pending:
             pending[path] = builder.submit(lambda *a, **kw: table(*a, **kw).shape, *args, kappa=k, lam_w=w, lam_c=c)
         return path
-    paths = {n: (tab(m.source, m), tab("novice", m) if m.mixture != "none" else None) for n, m in REGISTRY.items()}
+    paths = {n: (tab(m.source, m), tab("novice", m) if m.mixture != "none" else None) for n, m in REGISTRY.items() if n not in SKIP_MODELS}
     fits = {}
     for n, (a, b) in paths.items():   # fit cache keyed by the model's own table hashes; wait only for this model's tables
         pending[a].result(), b and pending[b].result()
@@ -131,7 +132,8 @@ def run_choice(p: Paths) -> None:
         rows[claim] = dict(estimate=np.nan, lo=np.nan, hi=np.nan, rule="all parts > 2 SE", verdict=claim_verdict([r["verdict"] for k, r in rows.items() if k.startswith(claim) and len(k) == 3]))
     pd.DataFrame(rows).T.to_csv(out / "verdicts.csv")
     write_numbers(out, {f"{k}_{f}": float(v) for k, r in rows.items() for f, v in r.items() if f != "verdict" and f != "rule"}
-                  | {f"{k}_verdict": r["verdict"] for k, r in rows.items() if r["verdict"]} | {f"elpd_{n}": l.elpd for n, l in loos.items()})
+                  | {f"{k}_verdict": r["verdict"] for k, r in rows.items() if r["verdict"]} | {f"elpd_{n}": (loos[n].elpd if n in loos else float("nan")) for n in REGISTRY}
+                  | {"models_not_evaluable": ", ".join(n for n in REGISTRY if n not in loos) or "none"})   # failed the gate or skipped (SKIP_MODELS): their numbers print as not evaluable
     print(lad[["elpd", "delta", "se", "n_bad_k", "rung", "seconds"]].round(1).to_string(), "\n", pd.DataFrame(rows).T.to_string())
 
 
@@ -354,6 +356,8 @@ def units(p: Paths) -> dict:
         return False
 
     for n, m in REGISTRY.items():
+        if n in SKIP_MODELS:
+            continue
         for s in (m.source, "novice") if m.mixture != "none" else (m.source,):
             tp = tpath(s, m)
             for b in range(N_TABLE_BLOCKS):

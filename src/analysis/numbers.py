@@ -20,7 +20,7 @@ from analysis.policies import REGISTRY
 DIGITS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
 # Quantity type by key pattern, first match wins: p-values; logit-scale posteriors (S4 is δ_N); ELPD and SE as integers;
 # yes/no flags; counts; readout confidence (a Beta concentration); everything else (payoff, correlation, share) two decimals.
-KINDS = [(r"^(commit|checkpoint_sha256|run_date)$|_verdict$|_spec$|_rival$", "text"), (r"(_p|_p_holm)$", "pvalue"), (r"^S4_", "two"), (r"_eps_(estimate|lo|hi)$", "three"),
+KINDS = [(r"^(commit|checkpoint_sha256|run_date|models_not_evaluable)$|_verdict$|_spec$|_rival$", "text"), (r"(_p|_p_holm)$", "pvalue"), (r"^S4_", "two"), (r"_eps_(estimate|lo|hi)$", "three"),
          (r"^S\d|^own_on_top|^switch_round_term|^social_vs_own|^elpd_|_delta$|_se$|_elpd$|^age_(min|max)$", "integer"), (r"_inside$|_passed$", "flag"),
          (r"_n$|_correct$|_sign$|_covered$|_count$|_kept$|^excluded_|^(participants|sessions|trials)$", "count"), (r"confidence$", "integer")]
 
@@ -76,7 +76,7 @@ MANIFEST = {
     "descriptive (Fig 2, H1-H5)": [k for h, outs in OUTCOMES.items() for o in outs for k in interval(f"{h}_{o}") + ([f"{h}_{o}_p_holm", f"{h}_{o}_verdict"] if o != "reward" else [])]
                                  + [k for h, outs in EXPLORATORY.items() for o in outs for k in interval(f"{h}_{o}")] + RANDOM_SLOPES,
     "partner choice (Fig 2c, H4)": interval("H4_choice") + ["H4_choice_verdict", "H4_choice_count", "H4_choice_n"] + interval("recency"),
-    "policy models (Fig 3, S1-S4)": [k for c in CLAIMS for k in interval(c, p=False)] + [f"{c}_verdict" for c in CLAIMS if c[0] == "S"] + [f"elpd_{m}" for m in REGISTRY]
+    "policy models (Fig 3, S1-S4)": [k for c in CLAIMS for k in interval(c, p=False)] + [f"{c}_verdict" for c in CLAIMS if c[0] == "S"] + [f"elpd_{m}" for m in REGISTRY] + ["models_not_evaluable"]
                                    + [k for s in POSTERIORS for k in interval(s, p=False)],
     "unseen expert (Fig 4)": [f"unseen_expert_round{r}_{s}" for r in (1, 2) for s in ("confidence", "rank_corr", "favourite_payoff")] + ["exploit_unseen_round1", "exploit_unseen_round2", "exploit_chance"]
                             + [f"split_{c}_{f}" for c in ("after_novice_expert_unseen_round_1", "after_novice_expert_unseen_round_2", "after_novice_expert_seen_round_1",

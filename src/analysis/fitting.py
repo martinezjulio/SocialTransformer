@@ -68,12 +68,19 @@ def cache_path(name: str, key: str, cache_dir) -> Path:
 
 
 def fit(spec: ModelSpec, T: TrialData, tab, key: str, cache_dir: Path, tab2=None, seed: int = 0) -> Fit:
-    """Cached fit of ``spec``: climbs the ladder until the gate passes; ``key`` names the data/table the fit used."""
+    """Cached fit of ``spec``: climbs the ladder until the gate passes; ``key`` names the data/table the fit used. Every
+    finished rung is cached too (``<name>_<key>_rung<r>.pkl``), so a task killed mid-ladder resumes at the first unfinished rung."""
     path = cache_path(spec.name, key, cache_dir)
     if path.exists():
         return pickle.load(open(path, "rb"))
     for rung in range(len(LADDER)):
-        result = fit_once(spec, T, tab, tab2, rung, seed)
+        rung_path = cache_path(spec.name, f"{key}_rung{rung}", cache_dir)
+        if rung_path.exists():
+            result = pickle.load(open(rung_path, "rb"))
+        else:
+            result = fit_once(spec, T, tab, tab2, rung, seed)
+            rung_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(rung_path, lambda t: pickle.dump(result, open(t, "wb")))
         if result.passed:
             break
     path.parent.mkdir(parents=True, exist_ok=True)
