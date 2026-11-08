@@ -11,6 +11,7 @@ back to exact leave-one-session-out refits (``loso``). ``by_cell`` splits a diff
 from dataclasses import dataclass, replace
 
 import gc
+from pathlib import Path
 
 import jax
 
@@ -76,22 +77,36 @@ def subset(T: TrialData, mask: np.ndarray) -> TrialData:
     return replace(T, **per_trial, read={k: v[mask] for k, v in T.read.items()})
 
 
+def _loso_session(name: str, T: TrialData, held: np.ndarray, tab, tab2, seed: int) -> np.ndarray:
+    """One held-out session: refit the model without it (climbing the ladder until the gate passes) and return the exact
+    held-out log predictive density of its trials (log mean over draws). Runs in a spawned process, so the refit's host
+    and device memory are returned when it exits (in one process the refits accumulated across sessions until the task
+    ran out of memory at full size). ``tab``/``tab2`` are table arrays or paths of cached tables, memory-mapped here."""
+    from numpyro.infer import log_likelihood
+    from analysis.fitting import LADDER, fit_once
+    from analysis.policies import REGISTRY, model
+    load = lambda t: None if t is None else (np.load(t, mmap_mode="r") if isinstance(t, (str, Path)) else t)
+    spec, tab, tab2 = REGISTRY[name], load(tab), load(tab2)
+    for rung in range(len(LADDER)):
+        f = fit_once(spec, subset(T, ~held), np.asarray(tab[~held]), None if tab2 is None else np.asarray(tab2[~held]), rung, seed)
+        if f.passed:
+            break
+    draws = {s: v.reshape(-1, *v.shape[2:]) for s, v in f.posterior.items()}
+    ll = np.asarray(log_likelihood(model, draws, spec, subset(T, held), np.asarray(tab[held]), True, None if tab2 is None else np.asarray(tab2[held]))["a"])
+    return logsumexp(ll, 0) - np.log(len(ll))
+
+
 def loso(l: Loo, spec, T: TrialData, tab, tab2=None, seed: int = 0) -> Loo:
     """Pareto-k fallback: for every session holding a trial with k > K_BAD, refit without that session and replace
-    its trials' pointwise elpd by the exact held-out log predictive density (log mean over draws); k set to 0 there."""
-    from numpyro.infer import log_likelihood
-    from scipy.special import logsumexp
-    from analysis.fitting import LADDER, fit_once
-    from analysis.policies import model
+    its trials' pointwise elpd by the exact held-out log predictive density (log mean over draws); k set to 0 there.
+    Each session's refit runs in its own spawned process (``_loso_session``); pass ``tab``/``tab2`` as the cached tables'
+    paths so the child memory-maps them instead of receiving a copy."""
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
     elpd_i, k = l.elpd_i.copy(), l.pareto_k.copy()
     for sid in np.unique(T.session[k > K_BAD]):
         held = T.session == sid
-        for rung in range(len(LADDER)):
-            f = fit_once(spec, subset(T, ~held), tab[~held], None if tab2 is None else tab2[~held], rung, seed)
-            if f.passed:
-                break
-        draws = {s: v.reshape(-1, *v.shape[2:]) for s, v in f.posterior.items()}
-        ll = np.asarray(log_likelihood(model, draws, spec, subset(T, held), tab[held], True, None if tab2 is None else tab2[held])["a"])
-        elpd_i[held], k[held] = logsumexp(ll, 0) - np.log(len(ll)), 0.0
-        del f, draws, ll; gc.collect(); jax.clear_caches()   # release the refit's device arrays and executables: at full size they accumulated across sessions until the GPU ran out
+        with ProcessPoolExecutor(1, mp_context=mp.get_context("spawn")) as ex:
+            elpd_i[held] = ex.submit(_loso_session, spec.name, T, held, tab, tab2, seed).result()
+        k[held] = 0.0
     return Loo(l.name, float(elpd_i.sum()), elpd_i, k, int((k > K_BAD).sum()))

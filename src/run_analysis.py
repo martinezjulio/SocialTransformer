@@ -175,7 +175,8 @@ def loso_loo(p: Paths, T, name: str, l):
     path = cache_path(name, "-".join(t.stem.split("_")[-1] for t in human_tables(p, T, name)), p.analysis_dir / "choice" / "loso")
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(path, lambda t: pickle.dump(loso(l, REGISTRY[name], T, *table_arrays(p, T, name)), open(t, "wb")))
+        tabs = [str(x) for x in human_tables(p, T, name)]   # paths: each session's refit runs in a spawned process that memory-maps them
+        atomic_write(path, lambda t: pickle.dump(loso(l, REGISTRY[name], T, tabs[0], tabs[1] if len(tabs) > 1 else None), open(t, "wb")))
     return pickle.load(open(path, "rb"))
 
 
