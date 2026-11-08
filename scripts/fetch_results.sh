@@ -1,9 +1,40 @@
 #!/bin/bash
 # Run on the lab machine: pulls one version's analysis outputs from Sherlock into this machine's $OUTPUT_DATA_DIR/analysis/<version>/
-# through the data transfer node. Fetches the report (paper/: results.tex, results.md, tables, figures) and every stage's
-# CSV and JSON outputs; leaves the caches (belief tables, fit pickles, fallback refits, simulated datasets) on scratch unless
-# fits are named. Reads the lab .env for OUTPUT_DATA_DIR. One Duo prompt per rsync.
+# through the data transfer node. Reads the lab .env for OUTPUT_DATA_DIR. One Duo prompt per rsync.
 #   bash scripts/fetch_results.sh --version 2026_11_05_full_study [--sunet juliomz] [--fits ROS,Switch-by-round]
+#
+# What the plain fetch brings (about 7 MB for the full study), enough to remake every figure and table that is drawn from
+# summaries or trial-level data:
+#   paper/            the report: results.tex (one macro per number), results.md, tables/*.tex, figures/*.{pdf,png}
+#   games/            play_games.csv, one row per play game (participant, session, condition, round, slot, play, demonstrator,
+#                     payoff, reward, entropy): the source of Fig 2a and of any per-game descriptive plot
+#   descriptive/      cell_means.csv (lmer cell estimates), contrasts.csv (every hypothesis and exploratory contrast with CI,
+#                     p, Holm p, verdict), contrast_weights.csv, robustness.csv, robustness_variance.csv: Fig 2b, Fig S robustness
+#   partner_choice/   choices.csv (one row per social session), rates.csv, model.csv: Fig 2c
+#   choice/           ladder.csv (ELPD, ΔELPD vs ROS, SE, Pareto-k counts, sampler diagnostics per model), ladder_by_round.csv,
+#                     elpd_per_participant.csv (the per-participant differences behind every paired SE), verdicts.csv (S1-S4
+#                     with the posterior summaries of the exploratory parameters): Fig 3a-c, Fig S ladder and per-participant dots
+#   checks/           recovery.csv (δ_N recovery per dataset), model_recovery.csv and model_recovery_summary.csv, ppc.csv (human
+#                     value, 95% band and inside flag per target), the per-draw JSONs under ppc/ and split_half/: Fig S PPC, recovery
+#   unseen/           readout_table.csv, copying.csv, elpd_split.csv, exploit.csv: Fig 4b, 4c, the supplementary split table
+#   */numbers.json    every number each stage emitted (the report merges these)
+#
+# What it leaves on Sherlock's scratch (about 134 GB), and what cannot be made without it:
+#   tables/           the belief tables (18 GB): only needed to refit or re-score a policy model
+#   choice/fits/      the fit pickles, ~300 MB each: the posterior draws and pointwise log-likelihoods. Needed for any panel or
+#                     new figure drawn from draws: Fig 3d (ω after the expert and after the novice by round, from Switch-by-round),
+#                     Fig 4a (the eight weights, from Switch-8), the supplementary posterior figure (ROS, Switch-by-round, ROS+eps,
+#                     Switch-by-round+eps), densities or new summaries of any parameter. The report's numbers.json hold means and
+#                     95% intervals of the cited parameters only. Fetch what is needed with --fits <name,...> (names as in the
+#                     ladder: ROS, recent, novice, naive-recent, naive-expert, naive, RS, RO, R, O, S, OS, Random, Switch,
+#                     Switch-by-round, Switch-by-round+ktrend, Switch-8, ROS+persev, ROS-reset, ROS+eps, Switch-by-round+eps).
+#   choice/loso/      the Pareto-k fallback refits (pointwise ELPD after refitting flagged sessions); their effect is already in
+#                     ladder.csv and verdicts.csv
+#   checks/recovery/, checks/model_recovery/   the simulated datasets and their fits (109 GB); summarised in the CSVs above
+#   slurm/            unit lists and job logs
+#
+# Re-running figure code on the lab machine against the fetched folder works for everything in the first list; a figure that
+# calls load_fit(<model>) needs that model's pickle fetched first.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a; source "${ENV_FILE:-.env}"; set +a
