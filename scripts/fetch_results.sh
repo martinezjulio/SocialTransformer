@@ -21,7 +21,9 @@
 #
 # What it leaves on Sherlock's scratch (about 134 GB), and what cannot be made without it:
 #   tables/           the belief tables (18 GB): only needed to refit or re-score a policy model
-#   choice/fits/      the fit pickles, ~300 MB each: the posterior draws and pointwise log-likelihoods. Needed for any panel or
+#   choice/fits/      the fit pickles (~300 MB each; 1.3 GB for Switch-8 and Switch-by-round+ktrend, which needed the ladder's last
+#                     rung): the posterior draws and pointwise log-likelihoods. --fits pulls only the named models' final pickles
+#                     (not the cached rungs, not the +eps/+ktrend variants that share a name prefix). Needed for any panel or
 #                     new figure drawn from draws: Fig 3d (ω after the expert and after the novice by round, from Switch-by-round),
 #                     Fig 4a (the eight weights, from Switch-8), the supplementary posterior figure (ROS, Switch-by-round, ROS+eps,
 #                     Switch-by-round+eps), densities or new summaries of any parameter. The report's numbers.json hold means and
@@ -58,7 +60,7 @@ if [ -n "$FITS" ]; then
   mkdir -p "$DST/choice/fits"
   for m in ${FITS//,/ }; do
     stem=$(python3 -c "import re,sys; print(re.sub(r'[^\w.-]', '_', sys.argv[1]))" "$m")
-    rsync -avP --include="${stem}_*.pkl" --exclude='*' "$SRC/choice/fits/" "$DST/choice/fits/"
+    rsync -avP --exclude='*_rung*.pkl' --include="${stem}_????????????????-????????????????.pkl" --exclude='*' "$SRC/choice/fits/" "$DST/choice/fits/"
   done
 fi
 echo "== done: $(find "$DST" -type f | wc -l) files, $(du -sh "$DST" | cut -f1)"
