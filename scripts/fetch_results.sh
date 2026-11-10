@@ -1,7 +1,9 @@
 #!/bin/bash
 # Run on the lab machine: pulls one version's analysis outputs from Sherlock into this machine's $OUTPUT_DATA_DIR/analysis/<version>/
-# through the data transfer node. Reads the lab .env for OUTPUT_DATA_DIR. One Duo prompt per rsync.
+# through the data transfer node. Reads the lab .env for OUTPUT_DATA_DIR.
 #   bash scripts/fetch_results.sh --version 2026_11_05_full_study [--sunet juliomz] [--fits ROS,Switch-by-round]
+# The two rsyncs share one SSH connection (ControlMaster, kept for 10 min), so Duo asks once. The script ends with a
+# '== done' line listing the fit pickles present; if that line is missing, an rsync failed and its error is just above.
 #
 # What the plain fetch brings (about 7 MB for the full study), enough to remake every figure and table that is drawn from
 # summaries or trial-level data:
@@ -41,26 +43,20 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a; source "${ENV_FILE:-.env}"; set +a
 VERSION=""; SUNET="${SUNET:-juliomz}"; FITS=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --version) VERSION="$2"; shift 2 ;;
-    --sunet) SUNET="$2"; shift 2 ;;
-    --fits) FITS="$2"; shift 2 ;;
-    *) echo "unknown argument: $1" >&2; exit 2 ;;
-  esac
-done
+while [ $# -gt 0 ]; do case "$1" in --version) VERSION="$2"; shift 2 ;; --sunet) SUNET="$2"; shift 2 ;; --fits) FITS="$2"; shift 2 ;; *) echo "unknown argument: $1" >&2; exit 2 ;; esac; done
 [ -n "$VERSION" ] || { echo "--version is required (e.g. 2026_11_05_full_study)" >&2; exit 2; }
 SRC="$SUNET@dtn.sherlock.stanford.edu:/scratch/users/$SUNET/SocialBanditsProject/output/analysis/$VERSION"
 DST="$OUTPUT_DATA_DIR/analysis/$VERSION"
-mkdir -p "$DST"
-echo "== outputs of $VERSION -> $DST (caches excluded)"
-rsync -avP --exclude='tables/' --exclude='fits/' --exclude='loso/' --exclude='*.pkl' --exclude='slurm/' --exclude='*.block*.npy' "$SRC/" "$DST/"
+mkdir -p "$DST" ~/.ssh
+SSH="ssh -o ControlMaster=auto -o ControlPath=$HOME/.ssh/fetch-%r@%h:%p -o ControlPersist=600"
+# Excludes are anchored to the version folder, so paper/tables/ (hypotheses.tex, ladder.tex) is kept while the belief tables,
+# the fit pickles, the fallback refits, the simulated recovery datasets and the Slurm logs stay on scratch.
+rsync -avP -e "$SSH" --exclude='/tables/' --exclude='/slurm/' --exclude='/choice/fits/' --exclude='/choice/loso/' \
+  --exclude='/checks/*/fits/' --exclude='/checks/*/tables/' --exclude='*.pkl' --exclude='*.block*.npy' "$SRC/" "$DST/"
 if [ -n "$FITS" ]; then
-  echo "== cached fits: $FITS"
-  mkdir -p "$DST/choice/fits"
-  for m in ${FITS//,/ }; do
-    stem=$(python3 -c "import re,sys; print(re.sub(r'[^\w.-]', '_', sys.argv[1]))" "$m")
-    rsync -avP --exclude='*_rung*.pkl' --include="${stem}_????????????????-????????????????.pkl" --exclude='*' "$SRC/choice/fits/" "$DST/choice/fits/"
-  done
+  mkdir -p "$DST/choice/fits"; INC=()
+  for m in ${FITS//,/ }; do stem=$(python3 -c "import re,sys; print(re.sub(r'[^\w.-]', '_', sys.argv[1]))" "$m"); INC+=(--include="${stem}_????????????????-????????????????.pkl"); done
+  rsync -avP -e "$SSH" --exclude='*_rung*.pkl' "${INC[@]}" --exclude='*' "$SRC/choice/fits/" "$DST/choice/fits/"
 fi
-echo "== done: $(find "$DST" -type f | wc -l) files, $(du -sh "$DST" | cut -f1)"
+$SSH -O exit "$SUNET@dtn.sherlock.stanford.edu" 2>/dev/null || true
+echo "== done: $(find "$DST" -type f | wc -l) files, $(du -sh "$DST" | cut -f1); fit pickles: $(ls "$DST/choice/fits/" 2>/dev/null | grep -c '\.pkl$')"
