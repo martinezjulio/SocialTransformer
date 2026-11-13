@@ -1,7 +1,9 @@
 #!/bin/bash
 # Run on the lab machine: pulls one version's analysis outputs from Sherlock into this machine's $OUTPUT_DATA_DIR/analysis/<version>/
 # through the data transfer node. Reads the lab .env for OUTPUT_DATA_DIR.
-#   bash scripts/fetch_results.sh --version 2026_11_05_full_study [--sunet juliomz] [--fits ROS,Switch-by-round]
+#   bash scripts/fetch_results.sh --version 2026_11_05_full_study [--sunet juliomz] [--fits ROS,Switch-by-round]   # light fetch
+#   bash scripts/fetch_results.sh --version 2026_11_05_full_study --all           # the whole run, 146 GB for the full study
+#   bash scripts/fetch_results.sh --version 2026_11_05_full_study --all caches    # the whole run minus simulated tables, ~37 GB
 # The two rsyncs share one SSH connection (ControlMaster, kept for 10 min), so Duo asks once. The script ends with a
 # '== done' line listing the fit pickles present; if that line is missing, an rsync failed and its error is just above.
 #
@@ -39,20 +41,41 @@
 #
 # Re-running figure code on the lab machine against the fetched folder works for everything in the first list; a figure that
 # calls load_fit(<model>) needs that model's pickle fetched first.
+#
+# Full copy (--all): mirrors the whole version folder except slurm/, so a lab run of the pipeline finds every cache and
+# recomputes nothing. Sizes for the full study:
+#   --all          146 GB (136 GiB; 619 files): tables 18 GB, choice/fits 11 GB (2.2 GB of it ladder rung caches), checks/recovery 53 GB and
+#                  checks/model_recovery 56 GB (each 50 GB of belief tables for the simulated datasets plus their fits),
+#                  split_half 0.4 GB, the rest 15 MB.
+#   --all caches    37 GB (34 GiB; 506 files): the same without checks/*/tables/ (the simulated-dataset tables, only needed to refit a simulated
+#                  dataset; the recovery stages reuse their cached fits) and without the *_rung*.pkl resume caches.
+# The copy resumes if interrupted: rerun the same command. Before transferring it prints the destination disk's free space;
+# the full copy needs 150 GB free, the caches copy 40 GB. Cache keys are content hashes of the preprocessed data and the
+# model grids, so the lab machine reuses them only with the same preprocessed_participant_data.csv and the same commit, and
+# the table names carry the builder's 'gpu' tag, so a lab run must also build tables on the GPU for the keys to match.
+# Scratch purges files untouched for 90 days: the full-study outputs (5-9 Nov 2026) go in early February 2027.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a; source "${ENV_FILE:-.env}"; set +a
-VERSION=""; SUNET="${SUNET:-juliomz}"; FITS=""
-while [ $# -gt 0 ]; do case "$1" in --version) VERSION="$2"; shift 2 ;; --sunet) SUNET="$2"; shift 2 ;; --fits) FITS="$2"; shift 2 ;; *) echo "unknown argument: $1" >&2; exit 2 ;; esac; done
+VERSION=""; SUNET="${SUNET:-juliomz}"; FITS=""; ALL=""
+while [ $# -gt 0 ]; do case "$1" in --version) VERSION="$2"; shift 2 ;; --sunet) SUNET="$2"; shift 2 ;; --fits) FITS="$2"; shift 2 ;; --all) ALL="full"; if [ $# -gt 1 ] && [ "${2#--}" = "$2" ]; then ALL="$2"; shift; fi; shift ;; *) echo "unknown argument: $1" >&2; exit 2 ;; esac; done
 [ -n "$VERSION" ] || { echo "--version is required (e.g. 2026_11_05_full_study)" >&2; exit 2; }
+case "$ALL" in ""|full|caches) ;; *) echo "--all takes 'full' (default) or 'caches', not '$ALL'" >&2; exit 2 ;; esac
+[ -z "$ALL" ] || [ -z "$FITS" ] || { echo "note: --all already brings every fit pickle; --fits ignored"; FITS=""; }
 SRC="$SUNET@dtn.sherlock.stanford.edu:/scratch/users/$SUNET/SocialBanditsProject/output/analysis/$VERSION"
 DST="$OUTPUT_DATA_DIR/analysis/$VERSION"
 mkdir -p "$DST" ~/.ssh
 SSH="ssh -o ControlMaster=auto -o ControlPath=$HOME/.ssh/fetch-%r@%h:%p -o ControlPersist=600"
 # Excludes are anchored to the version folder, so paper/tables/ (hypotheses.tex, ladder.tex) is kept while the belief tables,
 # the fit pickles, the fallback refits, the simulated recovery datasets and the Slurm logs stay on scratch.
-rsync -avP -e "$SSH" --exclude='/tables/' --exclude='/slurm/' --exclude='/choice/fits/' --exclude='/choice/loso/' \
-  --exclude='/checks/*/fits/' --exclude='/checks/*/tables/' --exclude='*.pkl' --exclude='*.block*.npy' "$SRC/" "$DST/"
+LIGHT=(--exclude='/tables/' --exclude='/choice/fits/' --exclude='/choice/loso/' --exclude='/checks/*/fits/' --exclude='/checks/*/tables/' --exclude='*.pkl' --exclude='*.block*.npy')
+case "$ALL" in
+  "") EXCL=("${LIGHT[@]}") ;;
+  full) EXCL=() ;;
+  caches) EXCL=(--exclude='/checks/*/tables/' --exclude='*_rung*.pkl') ;;
+esac
+if [ -n "$ALL" ]; then echo "== full copy ($ALL) into $DST; free space on its disk:"; df -h "$DST" | tail -1; fi
+rsync -avP -e "$SSH" --exclude='/slurm/' ${EXCL[@]+"${EXCL[@]}"} "$SRC/" "$DST/"
 if [ -n "$FITS" ]; then
   mkdir -p "$DST/choice/fits"; INC=()
   for m in ${FITS//,/ }; do stem=$(python3 -c "import re,sys; print(re.sub(r'[^\w.-]', '_', sys.argv[1]))" "$m"); INC+=(--include="${stem}_????????????????-????????????????.pkl"); done
