@@ -38,7 +38,8 @@ main() {
   for stage in ${STAGES//,/ }; do
     echo "== $stage ($(date +%H:%M:%S))"
     case "$stage" in
-      descriptive|partner_choice) Rscript "src/r/$stage.R" ;;
+      descriptive) Rscript src/r/descriptive.R && Rscript src/r/contrast_levels.R ;;
+      partner_choice) Rscript src/r/partner_choice.R ;;
       power) echo "power resamples the pilot; it is an input to the registration, not a result"; Rscript src/r/power_analysis.R ;;
       games|inference-check|choice|checks|unseen|figures|report) python src/run_analysis.py --version "$VERSION" --stages "$stage" ;;
       *) echo "unknown stage: $stage" >&2; exit 2 ;;

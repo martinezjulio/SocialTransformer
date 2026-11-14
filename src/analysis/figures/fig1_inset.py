@@ -70,7 +70,7 @@ def fig1_inset(eval_dir: Path, version: str, analysis_dir: Path) -> list:
     T = trial_data(load_sessions(eval_dir, version))
     fig, ax = plt.subplots(figsize=(WIDTH["single"], 2.3))
     panel_readout(ax, T, pick(T))
-    return save(fig, "fig1c_readout_inset", analysis_dir)
+    return save(fig, "readout_inset", analysis_dir)
 
 
 if __name__ == "__main__":

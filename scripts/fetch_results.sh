@@ -9,7 +9,8 @@
 #
 # What the plain fetch brings (about 7 MB for the full study), enough to remake every figure and table that is drawn from
 # summaries or trial-level data:
-#   paper/            the report: results.tex (one macro per number), results.md, tables/*.tex, figures/*.{pdf,png}
+#   paper/            the report: results.tex (one macro per number), results.md, tables/*.tex
+#   figures/          every figure as .pdf, .png and .svg (paper, slides, webpage)
 #   games/            play_games.csv, one row per play game (participant, session, condition, round, slot, play, demonstrator,
 #                     payoff, reward, entropy): the source of Fig 2a and of any per-game descriptive plot
 #   descriptive/      cell_means.csv (lmer cell estimates), contrasts.csv (every hypothesis and exploratory contrast with CI,
@@ -28,8 +29,8 @@
 #   choice/fits/      the fit pickles (~300 MB each; 1.3 GB for Switch-8 and Switch-by-round+ktrend, which needed the ladder's last
 #                     rung): the posterior draws and pointwise log-likelihoods. --fits pulls only the named models' final pickles
 #                     (not the cached rungs, not the +eps/+ktrend variants that share a name prefix). Needed for any panel or
-#                     new figure drawn from draws: Fig 3d (ω after the expert and after the novice by round, from Switch-by-round),
-#                     Fig 4a (the eight weights, from Switch-8), the supplementary posterior figure (ROS, Switch-by-round, ROS+eps,
+#                     new figure drawn from draws: Fig 4a (ω after the expert and after the novice by round, from Switch-by-round),
+#                     Fig 4b (the eight weights, from Switch-8), the supplementary posterior figure (ROS, Switch-by-round, ROS+eps,
 #                     Switch-by-round+eps), densities or new summaries of any parameter. The report's numbers.json hold means and
 #                     95% intervals of the cited parameters only. Fetch what is needed with --fits <name,...> (names as in the
 #                     ladder: ROS, recent, novice, naive-recent, naive-expert, naive, RS, RO, R, O, S, OS, Random, Switch,

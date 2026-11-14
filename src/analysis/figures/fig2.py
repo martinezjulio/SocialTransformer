@@ -13,13 +13,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from analysis.figures.style import COLOR, ORDER, WIDTH, apply, save
+from matplotlib.lines import Line2D
+from matplotlib.transforms import offset_copy
+
+from analysis.figures.style import COLOR, MUTED, ORDER, WIDTH, apply, save
 from analysis.games import entropy_bits
 
-OUTCOMES = {"payoff": "chosen arm's payoff", "reward": "reward", "entropy": "entropy (bits)"}
+OUTCOMES = {"payoff": "chosen arm's payoff", "reward": "observed reward", "entropy": "choice entropy (bits)"}
 PLAY_SLOT = {("first", 1): 2, ("second", 1): 4, ("first", 2): 6, ("second", 2): 8}   # play games sit at even slots
-SLOT_LABEL = {1: "W", 2: "P", 3: "W", 4: "P", 5: "W", 6: "P", 7: "W", 8: "P"}
-DODGE = {"expert-first": -0.18, "solo": 0.0, "novice-first": 0.18}   # play-game points staggered in a fixed order; watch slots unmoved
+DODGE = {"expert-first": -0.16, "solo": 0.0, "novice-first": 0.16}   # play-game points staggered in a fixed order; watch slots unmoved
+WATCHED = {"expert-first": {2: "expert", 4: "novice", 6: "expert", 8: "novice"},   # who was watched just before each play game
+           "novice-first": {2: "novice", 4: "expert", 6: "novice", 8: "expert"}}
 
 
 def watch_games(preprocessed: Path) -> pd.DataFrame:
@@ -36,40 +40,120 @@ def watch_games(preprocessed: Path) -> pd.DataFrame:
     return pd.DataFrame(rows).groupby(["condition", "slot"]).agg(payoff=("payoff", "mean"), reward=("reward", "mean"), entropy=("entropy", "mean"), demonstrator=("demonstrator", "first")).reset_index()
 
 
-def panel_session(axes, analysis_dir: Path, preprocessed: Path) -> None:
-    """(a) on three axes, one per outcome; the legend goes under the last axis."""
-    from matplotlib.lines import Line2D
+def session_data(analysis_dir: Path, preprocessed: Path) -> dict:
+    """What the session plot draws: the descriptive model's cell estimates by slot, the play-game table (solo's exploratory
+    slots) and the demonstrators' watch games."""
     cells = pd.read_csv(Path(analysis_dir) / "descriptive" / "cell_means.csv")
     cells["slot"] = [PLAY_SLOT[(p, r)] for p, r in zip(cells["play"], cells["round"])]
-    solo = pd.read_csv(Path(analysis_dir) / "games" / "play_games.csv").query("exploratory").groupby(["participant", "round", "slot"])[list(OUTCOMES)].mean().groupby(["round", "slot"]).mean()
-    solo.index = [r * 4 + s - 4 for r, s in solo.index]                         # slots 1, 3, 5, 7
-    watch = watch_games(preprocessed)
-    for ax, (outcome, label) in zip(axes, OUTCOMES.items()):
-        for cond in ORDER:
-            c = cells[(cells["outcome"] == outcome) & (cells["condition"] == cond)].sort_values("slot")
-            x = c["slot"] + DODGE[cond]
-            if cond == "solo":   # one line through all eight play games: cell estimates at even slots, plain means (open) at odd
-                y = pd.concat([c.assign(x=x).set_index("x")["emmean"], solo[outcome].rename(index=lambda i: i + DODGE[cond])]).sort_index()
-                ax.plot(y.index, y.to_numpy(), color=COLOR[cond], zorder=2)
-                ax.plot(solo.index + DODGE[cond], solo[outcome], linestyle="none", marker="o", mfc="white", color=COLOR[cond], zorder=3)
-            else:
-                ax.plot(x, c["emmean"], color=COLOR[cond], zorder=2)
-                w = watch[watch["condition"] == cond]
-                ax.scatter(w["slot"], w[outcome], marker="D", s=22, facecolor="white", edgecolor=[COLOR[d] for d in w["demonstrator"]], linewidth=1.2, zorder=3)
-            ax.errorbar(x, c["emmean"], yerr=[c["emmean"] - c["lower.CL"], c["upper.CL"] - c["emmean"]], color=COLOR[cond], marker="o", linestyle="none", capsize=2, zorder=4)
-        ax.set_xticks(range(1, 9), [SLOT_LABEL[s] for s in range(1, 9)])
-        ax.set_ylabel(label)
-        ax.axvline(4.5, color="#555555", linewidth=0.8, linestyle="--")
-    top = axes[0].secondary_xaxis("top")   # solo sessions are eight play games: their own slot labels
-    top.set_xticks(range(1, 9), ["P"] * 8)
-    top.set_xlabel("solo session", fontsize=matplotlib.rcParams["legend.fontsize"])
-    for x, r in ((2.5, "round 1"), (6.5, "round 2")):   # the hierarchical level under the slot labels
-        axes[-1].annotate(r, (x, 0), xycoords=("data", "axes fraction"), xytext=(0, -22), textcoords="offset points", ha="center", va="top")
-    axes[-1].set_xlabel("W: watch, P: play", labelpad=22)
-    handles = [Line2D([], [], color=COLOR[c], marker="o", label=c) for c in ORDER]
-    handles += [Line2D([], [], linestyle="none", marker="D", mfc="white", mec=COLOR[d], label=f"{d}'s demonstration") for d in ("expert", "novice")]
-    handles += [Line2D([], [], linestyle="none", marker="o", mfc="white", mec=COLOR["solo"], label="solo, exploratory slots")]
-    axes[-1].legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.5), ncol=2)
+    return dict(cells=cells, games=pd.read_csv(Path(analysis_dir) / "games" / "play_games.csv"), watch=watch_games(preprocessed))
+
+
+def solo_open(games: pd.DataFrame, outcome: str) -> pd.Series:
+    """Solo's exploratory play games (slots 1, 3, 5, 7): plain means over participants."""
+    s = games.query("exploratory").groupby(["participant", "round", "slot"])[outcome].mean().groupby(["round", "slot"]).mean()
+    s.index = [r * 4 + sl - 4 for r, sl in s.index]
+    return s
+
+
+def draw_session(ax, d: dict, outcome: str, n_novice: int = 4, n_expert: int = 4, show_solo: bool = True, show_watch: bool = True) -> None:
+    """Solo first, then the demonstrators' diamonds, then the first ``n_novice`` play games of novice-first and the first
+    ``n_expert`` of expert-first (the slides build the plot up in that order). Lines take the session's colour; each
+    play-game point takes the colour of the demonstrator watched just before it."""
+    ms, lw = matplotlib.rcParams["lines.markersize"], matplotlib.rcParams["lines.linewidth"] * 0.75
+    k = matplotlib.rcParams["font.size"] / 15
+    cells = d["cells"][d["cells"]["outcome"] == outcome]
+    if show_solo:
+        c = cells[cells["condition"] == "solo"].sort_values("slot")
+        op = solo_open(d["games"], outcome)
+        y = pd.concat([c.set_index("slot")["emmean"], op]).sort_index()
+        ax.plot(y.index, y.to_numpy(), color=COLOR["solo"], linewidth=lw, zorder=2)
+        ax.plot(op.index, op.to_numpy(), linestyle="none", marker="o", mfc="white", mec=COLOR["solo"], mew=1.4 * k, markersize=ms, zorder=3)
+        ax.errorbar(c["slot"], c["emmean"], yerr=[c["emmean"] - c["lower.CL"], c["upper.CL"] - c["emmean"]], color=COLOR["solo"], marker="o", markersize=ms,
+                    linestyle="none", capsize=3 * k, elinewidth=1.4 * k, capthick=1.4 * k, zorder=4)
+    if show_watch:
+        w = d["watch"]
+        ax.scatter(w["slot"], w[outcome], marker="D", s=ms * ms * 1.1, facecolor="white", edgecolor=[COLOR[x] for x in w["demonstrator"]], linewidth=1.8 * k, zorder=3)
+    for cond, n in (("novice-first", n_novice), ("expert-first", n_expert)):
+        c = cells[cells["condition"] == cond].sort_values("slot").head(n).rename(columns={"lower.CL": "lo", "upper.CL": "hi"})
+        x = c["slot"] + DODGE[cond]
+        ax.plot(x, c["emmean"], color=COLOR[cond], linewidth=lw, zorder=2, alpha=0.55)
+        for xi, row in zip(x, c.itertuples()):
+            ax.errorbar([xi], [row.emmean], yerr=[[row.emmean - row.lo], [row.hi - row.emmean]], color=COLOR[WATCHED[cond][row.slot]], marker="o", markersize=ms,
+                        linestyle="none", capsize=3 * k, elinewidth=1.4 * k, capthick=1.4 * k, zorder=5)
+
+
+def session_ylim(d: dict, outcome: str) -> tuple:
+    """The range of everything the complete plot shows, with a margin, so every build-up frame has the same axis."""
+    c = d["cells"][d["cells"]["outcome"] == outcome]
+    v = np.concatenate([c["lower.CL"], c["upper.CL"], d["watch"][outcome], solo_open(d["games"], outcome)])
+    return v.min() - 0.06 * np.ptp(v), v.max() + 0.06 * np.ptp(v)
+
+
+def session_axes(ax, d: dict, outcome: str, top: bool = True, bottom: bool = True) -> None:
+    """Axis furniture: the social sessions' watch/play labels and round brackets below (``bottom``), the solo session's
+    eight play games above (``top``), each axis named at its left end."""
+    font = matplotlib.rcParams["font.size"]
+    ax.set_xlim(0.4, 8.6)
+    ax.set_ylim(*session_ylim(d, outcome))
+    ax.set_ylabel(OUTCOMES[outcome])
+    ax.set_xticks(range(1, 9), ["watch", "play"] * 4)
+    ax.axvline(4.5, color="#555555", linewidth=0.8, linestyle="--")
+    if bottom:
+        off = -(font * 2.0 + 6)
+        for x, r in ((2.5, "round 1"), (6.5, "round 2")):
+            ax.annotate(r, (x, 0), xycoords=("data", "axes fraction"), xytext=(0, off), textcoords="offset points", ha="center", va="top", fontweight="bold")
+        for x0, x1 in ((0.7, 4.3), (4.7, 8.3)):   # a bracket under each round's four games
+            ax.add_line(Line2D([x0, x1], [0, 0], transform=offset_copy(ax.get_xaxis_transform(), fig=ax.figure, y=off + 3, units="points"), color=MUTED, linewidth=0.9, clip_on=False))
+        ax.annotate("social\nsession", (0, 0), xycoords="axes fraction", xytext=(-4, -font * 0.55), textcoords="offset points", ha="right", va="top", fontsize=font - 2, color=MUTED)
+    if top:
+        sec = ax.secondary_xaxis("top")
+        sec.set_xticks(range(1, 9), ["play"] * 8)
+        sec.tick_params(colors=COLOR["solo"])
+        sec.spines["top"].set_visible(True)
+        sec.spines["top"].set_color(COLOR["solo"])
+        ax.annotate("solo\nsession", (0, 1), xycoords="axes fraction", xytext=(-4, font * 0.45), textcoords="offset points", ha="right", va="bottom", fontsize=font - 2, color=COLOR["solo"])
+
+
+def session_legend(ax, **kw) -> None:
+    e, n, so = COLOR["expert"], COLOR["novice"], COLOR["solo"]
+    h = [Line2D([], [], color=e, alpha=0.55, label="expert-first session"), Line2D([], [], color=n, alpha=0.55, label="novice-first session"),
+         Line2D([], [], color=so, marker="o", label="solo session"),
+         Line2D([], [], linestyle="none", marker="o", color=e, label="play right after the expert"), Line2D([], [], linestyle="none", marker="o", color=n, label="play right after the novice"),
+         Line2D([], [], linestyle="none", marker="D", mfc="white", mec=e, label="the expert's own game"), Line2D([], [], linestyle="none", marker="D", mfc="white", mec=n, label="the novice's own game")]
+    ax.legend(handles=h, handlelength=1.8, **kw)
+
+
+def panel_session(axes, analysis_dir: Path, preprocessed: Path, outcomes: tuple = tuple(OUTCOMES), stacked: bool = True) -> None:
+    """(a) One axis per outcome. Stacked: the solo labels above the first axis, the social labels and the legend under the
+    last. Side by side (``stacked=False``): every axis carries both sets of labels and the caller places the legend."""
+    d = session_data(analysis_dir, preprocessed)
+    for ax, outcome in zip(axes, outcomes):
+        draw_session(ax, d, outcome)
+        session_axes(ax, d, outcome, top=not stacked or ax is axes[0], bottom=not stacked or ax is axes[-1])
+    if stacked:
+        session_legend(axes[-1], ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.5), columnspacing=1.0, labelspacing=0.35)
+
+
+def session_figure(d: dict, name: str, analysis_dir: Path, outcome: str = "payoff", n_novice: int = 4, n_expert: int = 4, show_watch: bool = True) -> list:
+    """One outcome on its own, wide, with the legend at the right; the layout is fixed so the build-up frames register."""
+    apply(15)
+    fig, ax = plt.subplots(figsize=(11.83, 5.2))
+    session_axes(ax, d, outcome)
+    draw_session(ax, d, outcome, n_novice, n_expert, show_watch=show_watch)
+    fig.subplots_adjust(left=0.085, right=0.745, top=0.86, bottom=0.2)
+    session_legend(ax, ncol=1, loc="center left", bbox_to_anchor=(1.02, 0.5), labelspacing=0.9, fontsize=13)
+    return save(fig, name, analysis_dir, tight=False)
+
+
+def session(analysis_dir: Path, preprocessed: Path) -> list:
+    """``session_payoff``, ``session_entropy``, ``session_reward``, and the payoff plot built up in ten frames for the
+    slides (``session_payoff_slide_01`` … ``_10``): solo, the demonstrators' games, then one play game at a time."""
+    d = session_data(analysis_dir, preprocessed)
+    paths = [q for outcome in OUTCOMES for q in session_figure(d, f"session_{outcome}", analysis_dir, outcome)]
+    stages = [(0, 0, False), (0, 0, True)] + [(k, 0, True) for k in range(1, 5)] + [(4, k, True) for k in range(1, 5)]
+    for i, (nn, ne, sw) in enumerate(stages, 1):
+        paths += session_figure(d, f"session_payoff_slide_{i:02d}", analysis_dir, "payoff", nn, ne, sw)
+    return paths
 
 
 def panel_forest(ax_pr, ax_ent, analysis_dir: Path) -> None:
@@ -88,7 +172,7 @@ def panel_forest(ax_pr, ax_ent, analysis_dir: Path) -> None:
                        facecolor=[COLOR["human"] if v == "supported" else "white" for v in r["verdict"]], label=outcome if outcome != "reward" else "reward (reported)")
         ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
         ax.set_yticks(list(y.values()), list(y))
-    ax_pr.legend(loc="lower center", bbox_to_anchor=(0.62, 1.0), ncol=2, handletextpad=0.3, columnspacing=0.8)
+    ax_pr.legend(loc="lower center", bbox_to_anchor=(0.45, 1.0), ncol=2, handletextpad=0.3, columnspacing=0.8)
     ax_ent.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), handletextpad=0.3)   # same placement as the left legend
     ax_pr.set_xlabel("Δ payoff, Δ reward")
     ax_ent.set_xlabel("Δ entropy (bits)")
@@ -121,22 +205,32 @@ def panel_partner(ax, analysis_dir: Path, conditions_in_legend: bool = False) ->
 
 
 def fig2(analysis_dir: Path, preprocessed: Path) -> list:
-    """Assemble Figure 2 (a | b, c) and save ``fig2_primary``."""
+    """Assemble Figure 2 and save ``fig2_primary``: (a) payoff and entropy by game, (b) the two levels behind each
+    registered contrast (H1, H2, H3, H5), (c) the partner choice (H4). Also saves the panels on their own (the session plot
+    with all three outcomes, the forest plot of the contrasts, the partner choice) and the single-outcome session plots."""
+    from analysis.figures.talk import CONTRASTS, contrast_tables, panel_contrast_level   # here: talk imports nothing from this module
     apply()
-    fig = plt.figure(figsize=(WIDTH["double"], 6.4))
-    outer = fig.add_gridspec(1, 2, width_ratios=[1.15, 1], wspace=0.4)
-    gs_a, gs_r = outer[0].subgridspec(3, 1, hspace=0.3), outer[1].subgridspec(2, 1, height_ratios=[2, 1], hspace=0.55)
-    axes_a = [fig.add_subplot(gs_a[i]) for i in range(3)]
-    for ax in axes_a[:-1]:
-        ax.tick_params(labelbottom=False)
-    gs_b = gs_r[0].subgridspec(1, 2, width_ratios=[1.4, 1], wspace=0.12)
-    ax_pr, ax_ent, ax_c = fig.add_subplot(gs_b[0]), fig.add_subplot(gs_b[1]), fig.add_subplot(gs_r[1])
-    ax_ent.tick_params(labelleft=False)
-    panel_session(axes_a, analysis_dir, preprocessed)
-    panel_forest(ax_pr, ax_ent, analysis_dir)
-    panel_partner(ax_c, analysis_dir)
-    for ax, letter in ((axes_a[0], "a"), (ax_pr, "b"), (ax_c, "c")):
-        ax.set_title(letter, loc="left", fontweight="bold")
+    fig = plt.figure(figsize=(WIDTH["double"], 7.6))
+    outer = fig.add_gridspec(2, 1, height_ratios=[1, 1.75], hspace=0.7)
+    gs_a = outer[0].subgridspec(1, 2, wspace=0.3)
+    axes_a = [fig.add_subplot(gs_a[i]) for i in range(2)]
+    panel_session(axes_a, analysis_dir, preprocessed, outcomes=("payoff", "entropy"), stacked=False)
+    session_legend(axes_a[0], ncol=4, loc="upper center", bbox_to_anchor=(1.12, -0.36), columnspacing=1.2, labelspacing=0.35)
+    lower = outer[1].subgridspec(1, 2, width_ratios=[3.7, 1], wspace=0.3)
+    gs_b = lower[0].subgridspec(2, 3, hspace=0.85, wspace=0.85)
+    axes_b = [fig.add_subplot(gs_b[i]) for i in range(6)]
+    tables = contrast_tables(analysis_dir)
+    for ax, (hyp, outcome) in zip(axes_b, [(h, o) for h, outcomes, _ in CONTRASTS for o in outcomes]):
+        if tables is None:
+            ax.axis("off")
+        else:
+            panel_contrast_level(ax, *tables, hyp, outcome, compact=True)
+    gs_c = lower[1].subgridspec(3, 1, height_ratios=[0.35, 1, 0.75])
+    ax_c = fig.add_subplot(gs_c[1])
+    panel_partner(ax_c, analysis_dir, conditions_in_legend=True)
+    for ax, letter, pad in ((axes_a[0], "a", 24), (axes_b[0], "b", 22), (ax_c, "c", 6)):   # a: above the solo axis; b: above the panel's own title
+        ax.text(0.0, 1.0, letter, transform=ax.transAxes + matplotlib.transforms.ScaledTranslation(-0.42, pad / 72, fig.dpi_scale_trans), fontweight="bold",
+                fontsize=matplotlib.rcParams["axes.titlesize"], va="bottom", ha="left")
     paths = save(fig, "fig2_primary", analysis_dir)
     fa, axes = plt.subplots(3, 1, figsize=(WIDTH["single"], 6.6), sharex=True)   # the panels on their own as well
     panel_session(axes, analysis_dir, preprocessed)
@@ -145,7 +239,8 @@ def fig2(analysis_dir: Path, preprocessed: Path) -> list:
     panel_forest(bx1, bx2, analysis_dir)
     fc, cx = plt.subplots(figsize=(WIDTH["single"], 1.8))
     panel_partner(cx, analysis_dir, conditions_in_legend=True)
-    return paths + save(fa, "fig2a_session", analysis_dir) + save(fb, "fig2b_forest", analysis_dir) + save(fc, "fig2c_partner", analysis_dir)
+    paths += save(fa, "session_all", analysis_dir) + save(fb, "contrasts_forest", analysis_dir) + save(fc, "partner_choice_paper", analysis_dir)
+    return paths + session(analysis_dir, preprocessed)
 
 
 if __name__ == "__main__":

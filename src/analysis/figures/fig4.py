@@ -1,5 +1,6 @@
 # %% fig4
-"""Figure 4, the unseen expert (exploratory). (a) The weight on the expert's belief in each play game laid out in
+"""Figure 4, how the weight on the expert's belief changes (S4, then exploratory: the unseen expert). Panel letters below are
+this module's own panels; ``fig4`` puts ω by round (``fig3.panel_omega``) first. (a) The weight on the expert's belief in each play game laid out in
 session order, from the eight-weight switch model (one group weight per demonstrator just watched × round ×
 condition), one grey line per condition (solid expert-first, dashed novice-first), markers in the hue of the demonstrator just watched; the games where the
 expert has not yet played the bandit (novice-first, first play game of each round) are ringed. (b) What the readout
@@ -64,7 +65,7 @@ def panel_weights(ax, analysis_dir: Path) -> None:
 def panel_readout(axes, analysis_dir: Path) -> None:
     """(b) Confidence and favourite-arm payoff of the expert readout by round, expert unseen vs seen; novice readout in grey."""
     t = pd.read_csv(Path(analysis_dir) / "unseen" / "readout_table.csv", header=[0, 1], index_col=[0, 1, 2])
-    for ax, stat, lab in zip(axes, ("confidence", "favourite_payoff"), ("readout confidence (α + β)", "favourite arm's true payoff")):
+    for ax, stat, lab in zip(axes, ("confidence", "favourite_payoff"), ("readout confidence (α + β)", "favorite arm's true payoff")):
         for who, seen, col, ls, name in (("expert", False, COLOR["expert"], "--", "expert\nunseen"), ("expert", True, COLOR["expert"], "-", "expert\nseen"),
                                          ("novice", True, "#8C8C8C", "-", "novice")):   # the expert readout, with the expert unseen or seen; the novice readout
             r = t.loc[(who, seen)]
@@ -109,30 +110,38 @@ def panel_exploit(ax, analysis_dir: Path) -> None:
 
 
 def fig4(analysis_dir: Path, eval_dir: Path, version: str) -> list:
-    """Assemble Figure 4 (a | b, b; one session | c) and save ``fig4_unseen`` plus the panels on their own."""
+    """Assemble Figure 4 and save ``fig4_weights``: (a) the weight on the expert's belief by round (S4, the registered
+    Switch-by-round model); then, exploratory, (b) the weight in each play game (Switch-8) and (c) the readout with the
+    expert unseen or seen. Also saves the panels on their own (``weights_by_game``, ``unseen_readout``, and, not in the
+    composite, ``unseen_exploit`` and ``unseen_readout_inset``; (a) is ``omega_by_round``)."""
+    from analysis.figures.fig3 import panel_omega
     apply()
     T = trial_data(load_sessions(eval_dir, version))
     i1, i2 = unseen_pair(T)
-    fig = plt.figure(figsize=(WIDTH["double"], 4.8))
-    gs = fig.add_gridspec(2, 3, width_ratios=[1.3, 1, 1], height_ratios=[1.15, 1], hspace=0.72, wspace=0.75)
-    ax_a, ax_b1, ax_b2, ax_in, ax_c = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[0, 2]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[1, 1:])
-    panel_weights(ax_a, analysis_dir)
-    panel_readout((ax_b1, ax_b2), analysis_dir)
-    inset_readout(ax_in, T, i1, i2)
-    panel_exploit(ax_c, analysis_dir)
-    for ax, letter in ((ax_a, "a"), (ax_b1, "b"), (ax_in, "b, one session"), (ax_c, "c")):
+    fig = plt.figure(figsize=(WIDTH["double"], 5.4))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.1, 1], hspace=0.85, wspace=0.42)
+    ax_a, ax_b, ax_c1, ax_c2 = (fig.add_subplot(gs[i, j]) for i in (0, 1) for j in (0, 1))
+    panel_omega(ax_a, analysis_dir)
+    panel_weights(ax_b, analysis_dir)
+    if ax_b.get_legend() is not None:   # one legend for a and b, in a line centered under the two panels
+        handles = ax_b.get_legend().legend_handles
+        ax_b.get_legend().remove()
+        ax_a.get_legend().remove()
+        ax_a.legend(handles=handles, loc="upper center", bbox_to_anchor=(1.21, -0.3), ncol=5, handletextpad=0.3, handlelength=1.2, columnspacing=1.2)
+    panel_readout((ax_c1, ax_c2), analysis_dir)
+    for ax, letter in ((ax_a, "a"), (ax_b, "b  exploratory"), (ax_c1, "c  exploratory")):
         ax.set_title(letter, loc="left", fontweight="bold")
-    paths = save(fig, "fig4_unseen", analysis_dir)
-    for panel, name, h in ((panel_weights, "fig4a_weights", 2.6), (panel_exploit, "fig4c_exploit", 2.4)):
+    paths = save(fig, "fig4_weights", analysis_dir)
+    for panel, name, h in ((panel_weights, "weights_by_game", 2.6), (panel_exploit, "unseen_exploit", 2.4)):
         f, ax = plt.subplots(figsize=(WIDTH["single"], h))
         panel(ax, analysis_dir)
         paths += save(f, name, analysis_dir)
     f, axes = plt.subplots(1, 2, figsize=(WIDTH["single"], 2.2), gridspec_kw=dict(wspace=0.6))
     panel_readout(axes, analysis_dir)
-    paths += save(f, "fig4b_readout", analysis_dir)
+    paths += save(f, "unseen_readout", analysis_dir)
     f, ax = plt.subplots(figsize=(WIDTH["single"] * 0.6, 1.8))
     inset_readout(ax, T, i1, i2)
-    return paths + save(f, "fig4b_inset", analysis_dir)
+    return paths + save(f, "unseen_readout_inset", analysis_dir)
 
 
 if __name__ == "__main__":

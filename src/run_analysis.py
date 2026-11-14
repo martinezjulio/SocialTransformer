@@ -282,32 +282,33 @@ def run_unseen(p: Paths) -> None:
 
 @stage("figures")
 def run_figures(p: Paths) -> None:
-    """Every figure module on the stage outputs and the cached fits: Fig 1 inset, Figs 2–4, the supplement; PDF + PNG under
-    figures/. Headless: the Agg backend unless MPLBACKEND says otherwise."""
+    """Every figure module on the stage outputs and the cached fits: Fig 1 inset, Figs 2–4, the ΔELPD figures, the
+    supplement and the talk figures; PDF, PNG and SVG under figures/, the one folder the paper, the slides and the webpage
+    take figures from. Headless: the Agg backend unless MPLBACKEND says otherwise."""
     os.environ.setdefault("MPLBACKEND", "Agg")
+    from analysis.figures.elpd import elpd
+    from analysis.figures.fig1 import fig1
     from analysis.figures.fig1_inset import fig1_inset
     from analysis.figures.fig2 import fig2
     from analysis.figures.fig3 import fig3
     from analysis.figures.fig4 import fig4
     from analysis.figures.supp import supp
-    paths = (fig1_inset(p.eval_dir, p.version, p.analysis_dir) + fig2(p.analysis_dir, p.preprocessed) + fig3(p.analysis_dir)
-             + fig4(p.analysis_dir, p.eval_dir, p.version) + supp(p.analysis_dir, p.preprocessed.parent))
+    from analysis.figures.talk import talk
+    paths = (fig1(p.analysis_dir, p.eval_dir, p.version) + fig1_inset(p.eval_dir, p.version, p.analysis_dir) + fig2(p.analysis_dir, p.preprocessed) + fig3(p.analysis_dir) + elpd(p.analysis_dir)
+             + fig4(p.analysis_dir, p.eval_dir, p.version) + supp(p.analysis_dir, p.preprocessed.parent) + talk(p.analysis_dir, p.preprocessed.parent))
     print("figures:", len(paths), "files under", p.analysis_dir / "figures")
 
 
 @stage("report")
 def run_report(p: Paths) -> None:
     """Last: every stage's numbers merged with the provenance block and checked against the manifest (stops naming any
-    missing or extra number), then paper/: results.tex, results.md, tables/, and a copy of figures/."""
-    import shutil
+    missing or extra number), then paper/: results.tex, results.md, tables/. The figures stay in figures/."""
     from analysis.data import load_sessions, trial_data
     from analysis.report import merge_numbers, provenance, write_results, write_tables
     T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "paper"
     numbers = merge_numbers(p.analysis_dir, provenance(p.preprocessed, p.eval_dir, int(T.part.max() + 1), len(set(T.session)), len(T.act)))
     paths = write_results(numbers, out) + write_tables(p.analysis_dir, out)
-    (out / "figures").mkdir(exist_ok=True)
-    figures = [shutil.copy2(f, out / "figures" / f.name) for f in sorted((p.analysis_dir / "figures").glob("fig*"))]
-    print(f"report: {len(numbers)} numbers, {[q.name for q in paths]}, {len(figures)} figure files under {out}")
+    print(f"report: {len(numbers)} numbers, {[q.name for q in paths]} under {out}")
 
 
 def units(p: Paths) -> dict:

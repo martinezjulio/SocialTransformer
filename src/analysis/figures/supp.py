@@ -1,7 +1,7 @@
 # %% supp
-"""Supplementary figures, one file each (``figS_<name>``). Part 1, from the choice and unseen stages: the full ladder
-(every model against ROS, whole data) with the S1/S2 rivals by round; the per-participant ΔELPD behind every paired SE
-of the registered comparisons; the ELPD split and the copying comparison on the after-novice cells. Part 2, from the
+"""Supplementary figures, one file each, named by content. Part 1, from the choice and unseen stages: the
+per-participant ΔELPD behind every paired SE of the registered comparisons; the ELPD split and the copying comparison
+on the after-novice cells (the full ladder is ``analysis.figures.elpd``). ΔELPD is model minus ROS, as in every figure. Part 2, from the
 descriptive, power, partner-choice, games and preprocessing outputs: the confirmatory contrasts under the robustness
 fits; decision rates by N at the pilot and half effect; exclusion counts per rule; the solo session's four slots by
 round (slots 1 and 3 are exploratory); the partner choice's intercept and recency term. Part 3, from the cached fits:
@@ -16,33 +16,45 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from analysis.figures.fig3 import COUNTS, SOURCES, dot_whisker, headed_rows
+from analysis.figures.elpd import COUNTS, SOURCES
 from analysis.figures.fits import load_fit
 from analysis.figures.style import COLOR, FONT, WIDTH, apply, save
 
 NAME = {"ROS+persev": "ROS + perseveration", "ROS-reset": "ROS, no reset", "ROS+eps": "ROS + ε free", "Switch-by-round+eps": "Switch-by-round + ε free",
         "Switch-by-round+ktrend": "Switch-by-round + κ trend"}   # registry name -> figure name where they differ
-REGISTERED = {**{m: (m,) for m in SOURCES + COUNTS}, "ROS − RO": ("RO",), "RS − RO": ("RS", "RO")}   # per-participant ΔELPD: ROS minus the model, or the difference of two
+REGISTERED = {**{m: (m,) for m in SOURCES + COUNTS}, "RO": ("RO",), "RS − RO": ("RS", "RO")}   # per-participant ΔELPD: the model minus ROS, or the difference of two
 
 
-def fig_ladder(analysis_dir: Path) -> list:
-    """Every model against ROS on all trials (left), and the S1/S2 rivals by round (right)."""
-    lad = pd.read_csv(Path(analysis_dir) / "choice" / "ladder.csv", index_col=0).drop(index="ROS")
-    byr = pd.read_csv(Path(analysis_dir) / "choice" / "ladder_by_round.csv", index_col=[0, 1])
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(WIDTH["double"], 4.0), width_ratios=[1.3, 1], gridspec_kw=dict(wspace=0.9))
-    ys = headed_rows(ax1, {"ROS minus the model": [NAME.get(m, m) for m in lad.index]})
-    for y, m in zip(ys, lad.index):
-        dot_whisker(ax1, y, -lad.loc[m, "delta"], lad.loc[m, "se"])
-    rivals = SOURCES + COUNTS
-    ys = headed_rows(ax2, {"by round": rivals})
-    for y, m in zip(ys, rivals):
-        for r, dy, mk in (("round 1", -0.18, "o"), ("round 2", 0.18, "s")):
-            dot_whisker(ax2, y + dy, -byr.loc[(m, r), "delta"], byr.loc[(m, r), "se"], mk, r if m == rivals[0] else None)
-    for ax in (ax1, ax2):
-        ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-        ax.set_xlabel("ΔELPD, ROS minus the model")
-    ax2.legend(loc="upper right", handletextpad=0.3)
-    return save(fig, "figS_ladder", analysis_dir)
+def dot_whisker(ax, y, delta, se, marker="o", label=None, cleared=None):
+    """One mark: the ΔELPD with its 2 SE bar; filled when the margin is cleared (``cleared``, by default delta > 2 SE)."""
+    cleared = delta > 2 * se if cleared is None else cleared
+    ax.errorbar(delta, y, xerr=2 * se, linestyle="none", color=COLOR["human"], capsize=2, zorder=2)
+    ax.scatter(delta, y, marker=marker, s=28, color=COLOR["human"], facecolor=COLOR["human"] if cleared else "white", zorder=3, label=label)
+
+
+GROUPS = {"readout source": SOURCES, "Beta counts": COUNTS}
+
+
+def headed_rows(ax, groups: dict) -> list:
+    """y positions for rows under italic group headers (a gap holds each later header); returns the rows' y values."""
+    ys, heads, y = [], {}, 0.0
+    for g, labels in groups.items():
+        heads[y - 0.9] = g
+        ys += [y + i for i in range(len(labels))]
+        y += len(labels) + 1.2
+    ticks = sorted(list(heads) + ys)
+    labels = [lab for labs in groups.values() for lab in labs]
+    ax.set_yticks(ticks, [heads.get(t, "") or labels[ys.index(t)].replace("\n", " ") for t in ticks])
+    for t, lab in zip(ax.get_yticklabels(), ticks):
+        t.set_ha("left")   # left-aligned column: every name starts at the same x
+        if lab in heads:
+            t.set_fontstyle("italic"), t.set_fontweight("bold")
+    ax.figure.canvas.draw()   # the pad is the widest label, measured
+    widest = max(t.get_window_extent().width for t in ax.get_yticklabels()) * 72 / ax.figure.dpi
+    ax.tick_params(axis="y", length=0, pad=widest + 4)
+    ax.spines["left"].set_visible(False)   # the zero line is the reference, not the axis edge
+    ax.set_ylim(max(ys) + 0.6, -1.4)
+    return ys
 
 
 def fig_per_participant(analysis_dir: Path) -> list:
@@ -50,28 +62,28 @@ def fig_per_participant(analysis_dir: Path) -> list:
     e = pd.read_csv(Path(analysis_dir) / "choice" / "elpd_per_participant.csv", index_col=0)
     fig, ax = plt.subplots(figsize=(WIDTH["single"], 2.8))
     rng = np.random.default_rng(0)
-    ys = headed_rows(ax, {"belief rivals (ROS −)": list(REGISTERED)[:5], "ablations": list(REGISTERED)[5:]})
+    ys = headed_rows(ax, {"belief rivals minus ROS": list(REGISTERED)[:5], "ablations": list(REGISTERED)[5:]})
     for y, (lab, ms) in zip(ys, REGISTERED.items()):
-        d = -e[ms[0]] if len(ms) == 1 else e[ms[0]] - e[ms[1]]   # the file holds model − ROS: ROS − model, or (RS − ROS) − (RO − ROS) = RS − RO
-        ax.scatter(d, y + rng.uniform(-0.18, 0.18, len(d)), s=6, color=COLOR["model"], alpha=0.8, linewidths=0, zorder=2)
+        d = e[ms[0]] if len(ms) == 1 else e[ms[0]] - e[ms[1]]   # the file holds model − ROS; (RS − ROS) − (RO − ROS) = RS − RO
+        ax.scatter(d, y + rng.uniform(-0.18, 0.18, len(d)), s=6, color=COLOR["model"], alpha=0.8, linewidths=0, zorder=2, rasterized=True)
         ax.plot([d.mean()] * 2, [y - 0.3, y + 0.3], color=COLOR["human"], linewidth=1.4, zorder=3)
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    ax.set_xlabel("ΔELPD per participant (bar: mean)")
-    return save(fig, "figS_per_participant", analysis_dir)
+    ax.set_xlabel("ΔELPD per participant, model minus ROS (bar: mean)")
+    return save(fig, "elpd_per_participant", analysis_dir)
 
 
 def fig_split(analysis_dir: Path) -> list:
-    """The ELPD split (expert vs recent readout) and the copying comparison (expert readout vs naive-recent) on the
-    after-novice cells by expert seen × round, and the rounds whole."""
+    """The ELPD split (recent minus ROS) and the copying comparison (naive-recent minus ROS) on the after-novice cells by
+    expert seen × round, and the rounds whole. The unseen stage's tables hold ROS minus the rival; the sign is reversed here."""
     fig, ax = plt.subplots(figsize=(WIDTH["single"], 2.8))
-    tabs = {n: pd.read_csv(Path(analysis_dir) / "unseen" / f"{f}.csv", index_col=0) for n, f in (("expert readout minus recent (S1a by cell)", "elpd_split"), ("expert readout minus naive-recent (S2a by cell)", "copying_elpd"))}
+    tabs = {n: pd.read_csv(Path(analysis_dir) / "unseen" / f"{f}.csv", index_col=0) for n, f in (("recent minus ROS (S1a by cell)", "elpd_split"), ("naive-recent minus ROS (S2a by cell)", "copying_elpd"))}
     ys = headed_rows(ax, {n: [i.replace("after novice, ", "") for i in t.index] for n, t in tabs.items()})
     for y, (n, t) in zip([ys[:6], ys[6:]], tabs.items()):
         for yi, (_, r) in zip(y, t.iterrows()):
-            dot_whisker(ax, yi, r["delta"], r["se"])
+            dot_whisker(ax, yi, -r["delta"], r["se"], cleared=r["delta"] > 2 * r["se"])
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    ax.set_xlabel("ΔELPD on the cell's trials")
-    return save(fig, "figS_unseen_split", analysis_dir)
+    ax.set_xlabel("ΔELPD on the cell's trials, model minus ROS")
+    return save(fig, "unseen_split", analysis_dir)
 
 
 FITS = {"main": ("main", "o", 0.0), "random_slopes": ("random slopes", "s", -0.22), "session_order": ("session order", "^", 0.22)}
@@ -100,7 +112,7 @@ def fig_robustness(analysis_dir: Path) -> list:
     fig.text(0.5, -0.04, f"random slopes: {reached} reached", ha="center", va="top", fontsize=6, color="#666666")
     ax_e.tick_params(labelleft=False)
     ax_p.legend(loc="lower center", bbox_to_anchor=(0.95, 1.0), ncol=3, handletextpad=0.3, columnspacing=0.8)
-    return save(fig, "figS_robustness", analysis_dir)
+    return save(fig, "robustness", analysis_dir)
 
 
 def fig_power(analysis_dir: Path) -> list:
@@ -108,7 +120,7 @@ def fig_power(analysis_dir: Path) -> list:
     power stage has not run for this version (it resamples the pilot for the registration and runs only when named)."""
     path = Path(analysis_dir) / "power" / "decision_rates.csv"
     if not path.exists():
-        print(f"figS_power skipped: {path} not present (run the power stage to produce it)")
+        print(f"power skipped: {path} not present (run the power stage to produce it)")
         return []
     r = pd.read_csv(path)
     fig, axes = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.6), sharey=True, gridspec_kw=dict(wspace=0.15))
@@ -121,7 +133,7 @@ def fig_power(analysis_dir: Path) -> list:
         ax.set(title=f"{effect} effect", xlabel="N participants", ylim=(0, 1.02))
     axes[0].set_ylabel("rate of 'supported' (500 simulations)")
     axes[1].legend(loc="lower right", ncol=2, handletextpad=0.3, columnspacing=0.8)
-    return save(fig, "figS_power", analysis_dir)
+    return save(fig, "power", analysis_dir)
 
 
 def fig_exclusions(experiment_dir: Path, analysis_dir: Path) -> list:
@@ -132,7 +144,7 @@ def fig_exclusions(experiment_dir: Path, analysis_dir: Path) -> list:
     ax.barh(range(len(e)), e["n"], color=[COLOR["human"] if l == "participant" else COLOR["model"] for l in e["level"]], height=0.6)
     ax.set(yticks=range(len(e)), yticklabels=[f"{r.replace('_', ' ')} ({l})" for l, r in zip(e["level"], e["rule"])], xlabel="excluded (participants in black, sessions in grey)")
     ax.invert_yaxis()
-    return save(fig, "figS_exclusions", analysis_dir)
+    return save(fig, "exclusions_paper", analysis_dir)
 
 
 def fig_solo(analysis_dir: Path) -> list:
@@ -147,7 +159,7 @@ def fig_solo(analysis_dir: Path) -> list:
             ax.scatter(m.index, m["mean"], marker="o", s=22, color=COLOR["solo"], facecolor=[COLOR["solo"] if sl in (2, 4) else "white" for sl in m.index], zorder=3)
         ax.set(xticks=[1, 2, 3, 4], xlabel="play game (slot)", ylabel=outcome + (" (bits)" if outcome == "entropy" else ""))
     axes[0].legend(loc="lower right", handletextpad=0.3, handlelength=1.6)
-    return save(fig, "figS_solo", analysis_dir)
+    return save(fig, "solo", analysis_dir)
 
 
 def fig_recency(analysis_dir: Path) -> list:
@@ -160,7 +172,7 @@ def fig_recency(analysis_dir: Path) -> list:
         ax.errorbar(r["estimate"], y, xerr=[[r["estimate"] - r["lower"]], [r["upper"] - r["estimate"]]], marker="o", color=COLOR["human"], capsize=2, linestyle="none")
     ax.set(yticks=range(len(m)), yticklabels=[labels.get(t, t) for t in m["term"]], xlabel="log-odds, 95% CI", ylim=(len(m) - 0.4, -0.6))
     ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=1)
-    return save(fig, "figS_recency", analysis_dir)
+    return save(fig, "recency", analysis_dir)
 
 
 PARAMS = {"κ (group)": ("mu_log_kappa", np.exp), "λ_w": ("log_lambda_w", np.exp), "λ_c": ("lambda_c", None), "ρ0 (group)": ("mu_rho0", None), "ρ_win (group)": ("mu_rho_win", None),
@@ -184,7 +196,7 @@ def fig_posteriors(analysis_dir: Path) -> list:
         ax.tick_params(labelleft=ax in axes[:, 0], length=0, axis="y")
         if site.startswith("delta"):
             ax.axvline(0, color="#BBBBBB", linewidth=0.8, zorder=0)
-    return save(fig, "figS_posteriors", analysis_dir)
+    return save(fig, "posteriors", analysis_dir)
 
 
 TARGETS = {"after_novice_rise": "after-novice\npayoff rise", "entropy_fall": "entropy fall\nround 1 − 2", "zigzag": "novice-first\nzig-zag",
@@ -211,7 +223,7 @@ def fig_ppc(analysis_dir: Path) -> list:
             if row == 0:
                 ax.set_title(name, fontsize=FONT)
         axes[row][0].set_ylabel(label, fontsize=FONT)
-    return save(fig, "figS_ppc", analysis_dir)
+    return save(fig, "ppc", analysis_dir)
 
 
 def fig_recovery(analysis_dir: Path) -> list:
@@ -234,12 +246,12 @@ def fig_recovery(analysis_dir: Path) -> list:
     b.set(yticks=range(len(groups)), yticklabels=[f"{c}: {NAME.get(g, g)}" for (c, g), _ in groups],
           xlabel="ΔELPD towards the generating model (2 SE)", title=f"{int(mr['correct'].sum())} of {len(mr)} recovered")
     b.invert_yaxis()
-    return save(fig, "figS_recovery", analysis_dir)
+    return save(fig, "recovery", analysis_dir)
 
 
 def supp(analysis_dir: Path, experiment_dir: Path) -> list:
     apply()
-    return (fig_ladder(analysis_dir) + fig_per_participant(analysis_dir) + fig_split(analysis_dir) + fig_robustness(analysis_dir) + fig_power(analysis_dir)
+    return (fig_per_participant(analysis_dir) + fig_split(analysis_dir) + fig_robustness(analysis_dir) + fig_power(analysis_dir)
             + fig_exclusions(experiment_dir, analysis_dir) + fig_solo(analysis_dir) + fig_recency(analysis_dir) + fig_posteriors(analysis_dir)
             + fig_ppc(analysis_dir) + fig_recovery(analysis_dir))
 

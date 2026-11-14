@@ -44,7 +44,9 @@ Stages run in a fixed order (Python in `run_analysis.py`, R in `src/r/`) and eac
 simulation checks by unit, so reruns are cheap; stages overwrite their outputs unconditionally, so a
 reduced run needs `--dev`. The paper's numbers are never typed by hand: stages write `numbers.json`,
 `numbers.py` holds the manifest of every cited number, and the `report` stage emits `paper/`
-(`results.tex` macros, `results.md`, tables, figures) or fails naming any missing number. Model names
+(`results.tex` macros, `results.md`, tables) or fails naming any missing number. Every figure
+(paper, slides, webpage) comes from the `figures` stage into the one `figures/` folder; ΔELPD is
+drawn as model minus ROS there, while the numbers keep the registered ROS-minus-rival direction. Model names
 follow the ROS convention (R repeat, O own experience, S social belief) in `policies.py`'s registry.
 
 ## Design decisions (do not silently revisit)
