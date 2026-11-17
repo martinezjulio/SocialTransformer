@@ -15,7 +15,7 @@
 #                     payoff, reward, entropy): the source of Fig 2a and of any per-game descriptive plot
 #   descriptive/      cell_means.csv (lmer cell estimates), contrasts.csv (every hypothesis and exploratory contrast with CI,
 #                     p, Holm p, verdict), contrast_weights.csv, robustness.csv, robustness_variance.csv: Fig 2b, Fig S robustness
-#   partner_choice/   choices.csv (one row per social session), rates.csv, model.csv: Fig 2c
+#   partner_choice/   choices.csv (one row per social session), rates.csv, model.csv, model_rates.csv: Fig 2c
 #   choice/           ladder.csv (ELPD, ΔELPD vs ROS, SE, Pareto-k counts, sampler diagnostics per model), ladder_by_round.csv,
 #                     elpd_per_participant.csv (the per-participant differences behind every paired SE), verdicts.csv (S1-S4
 #                     with the posterior summaries of the exploratory parameters): Fig 3a-c, Fig S ladder and per-participant dots

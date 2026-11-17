@@ -36,6 +36,7 @@ ABLATION_COLOR, EXTENSION_COLOR = "#4A5568", "#009E73"
 ORDER = ["expert-first", "novice-first", "solo"]       # session types, fixed order in every legend
 INTERVAL = 0.95
 LINE, MARKER, FONT = 1.6, 5, 8                         # thin marks, small readable type
+MARK = 0.72                                            # markers that carry an interval, relative to the rc size: small enough that a narrow interval shows
 WIDTH = {"single": 3.4, "double": 7.0}                 # column widths in inches
 FORMATS = tuple(f.strip() for f in os.environ.get("FIGURE_FORMATS", "png").split(","))
 
@@ -60,6 +61,27 @@ def apply(font: float = FONT) -> None:
 
 def model_color(model: str, extensions: tuple = ()) -> str:
     return MODEL_COLOR.get(model, EXTENSION_COLOR if model in extensions else ABLATION_COLOR)
+
+
+def panel_letters(fig, letters: list, pad: float = 3) -> None:
+    """Panel letters on a grid. ``letters`` is a list of (text, axis, row, column): letters that share a row key sit at one
+    height, just above the tallest of that row's panels (axis, title and top labels included); letters that share a
+    column key sit at one x, the left edge of the widest of that column's panels (tick and axis labels included).
+    Legends are left out of the measure. Call it once the panels are drawn."""
+    fig.canvas.draw()
+    r = fig.canvas.get_renderer()
+
+    def box(ax):
+        parts = [ax.get_window_extent(r)] + [a.get_tightbbox(r) for a in (ax.xaxis, ax.yaxis, *ax.child_axes) if ax.axison]
+        parts += [t.get_window_extent(r) for t in (ax.title, *ax.texts) if t.get_text() and t.get_visible()]
+        return matplotlib.transforms.Bbox.union([b for b in parts if b is not None])
+
+    boxes = [box(ax) for _, ax, _, _ in letters]
+    top = {k: max(b.y1 for b, (_, _, row, _) in zip(boxes, letters) if row == k) for k in {row for _, _, row, _ in letters}}
+    left = {k: min(b.x0 for b, (_, _, _, col) in zip(boxes, letters) if col == k) for k in {col for _, _, _, col in letters}}
+    for text, _, row, col in letters:
+        fig.text(*fig.transFigure.inverted().transform((left[col], top[row] + pad * fig.dpi / 72)), text, fontweight="bold",
+                 fontsize=matplotlib.rcParams["axes.titlesize"], ha="left", va="bottom")
 
 
 def ci(lo: float, hi: float) -> str:

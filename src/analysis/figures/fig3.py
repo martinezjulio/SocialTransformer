@@ -2,7 +2,8 @@
 """Figure 3, policy models. Names: R repeat, O own experience, S social belief; ROS is the full model.
 (a) Whose belief, and a readout, not counts: every model is ROS with a different belief; the recent (S1a) and novice
 (S1b) readouts and the visible-pulls models of the last demonstration (S2a), of the expert (S2b) and of every pull seen
-(S2c), each minus ROS, all trials. (b) Ablations: each rung minus ROS (S3b is RO), with RS minus RO (S3a) as a bracket.
+(S2c), each minus ROS, all trials. (b) Ablations: each rung minus ROS (S3b is RO; S3a, RS minus RO, is the gap between
+the first two bars, bracketed only in the standalone ``elpd_S3``).
 Marks: the bars of ``analysis.figures.elpd`` (model minus ROS, ± 2 paired SE; the registered ΔELPD is the same number
 with the sign reversed). Saves ``fig3_policy``; the panels on their own are ``elpd_S1``, ``elpd_S2``, ``elpd_S3``.
 Also here, for Figure 4 and on its own as ``omega_by_round``: the weight on the expert's belief after the expert (ω_E)
@@ -17,7 +18,7 @@ import numpy as np
 
 from analysis.figures.elpd import panel_ablation, panel_belief
 from analysis.figures.fits import load_fit
-from analysis.figures.style import COLOR, WIDTH, apply, save
+from analysis.figures.style import COLOR, MARK, WIDTH, apply, panel_letters, save
 
 
 def panel_omega(ax, analysis_dir: Path) -> None:
@@ -27,7 +28,7 @@ def panel_omega(ax, analysis_dir: Path) -> None:
         mu, d = fit.posterior[f"mu_logit_omega_{s}"].reshape(-1), fit.posterior[f"delta_{s}"].reshape(-1)
         om = [1 / (1 + np.exp(-(mu + d * pm))) for pm in (-0.5, 0.5)]
         med, lo, hi = (np.array([np.percentile(o, q) for o in om]) for q in (50, 2.5, 97.5))
-        ax.errorbar(np.array([1, 2]) + dx, med, yerr=[med - lo, hi - med], marker="o", color=COLOR[who], capsize=2, label=f"after the {who}")
+        ax.errorbar(np.array([1, 2]) + dx, med, yerr=[med - lo, hi - med], marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color=COLOR[who], capsize=2, label=f"after the {who}")
     ax.set(xticks=[1, 2], xticklabels=["round 1", "round 2"], xlim=(0.6, 2.4), ylim=(0, 1.06), yticks=[0, 0.2, 0.4, 0.6, 0.8, 1.0], ylabel="weight on the expert's belief")
     ax.axhline(0.5, color="#BBBBBB", linewidth=0.8, zorder=0)
     ax.legend(loc="lower right", handletextpad=0.3, handlelength=1.2, borderaxespad=0.2)
@@ -36,10 +37,10 @@ def panel_omega(ax, analysis_dir: Path) -> None:
 def fig3(analysis_dir: Path) -> list:
     """Assemble Figure 3 (a | b) and save ``fig3_policy``, and the weights on their own as ``omega_by_round``."""
     apply()
-    fig, axes = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.9), gridspec_kw=dict(wspace=0.34))
-    for ax, (letter, panel) in zip(axes, {"a": panel_belief, "b": panel_ablation}.items()):
-        panel(ax, analysis_dir)
-        ax.set_title(letter, loc="left", fontweight="bold")
+    fig, axes = plt.subplots(1, 2, figsize=(WIDTH["double"], 2.7), gridspec_kw=dict(wspace=0.2))
+    panel_belief(axes[0], analysis_dir)
+    panel_ablation(axes[1], analysis_dir, bracket=False)   # S3a (RS − RO) is read off the two bars and given in the text
+    panel_letters(fig, [("a", axes[0], 0, 0), ("b", axes[1], 0, 1)])
     paths = save(fig, "fig3_policy", analysis_dir)
     f, ax = plt.subplots(figsize=(WIDTH["single"], 2.4))
     panel_omega(ax, analysis_dir)

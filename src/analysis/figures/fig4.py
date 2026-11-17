@@ -21,7 +21,7 @@ from scipy.stats import beta
 from analysis.data import TrialData, load_sessions, trial_data
 from analysis.figures.fig1_inset import PAYOFFS, SHADES, three_arms
 from analysis.figures.fits import load_fit
-from analysis.figures.style import COLOR, ORDER, WIDTH, apply, save
+from analysis.figures.style import COLOR, MARK, MUTED, ORDER, WIDTH, apply, panel_letters, save
 
 GAMES = {"expert-first": "ENEN", "novice-first": "NENE"}   # the demonstrator watched before play games 1–4
 UNSEEN = {"expert-first": (), "novice-first": (1, 3)}     # games on a bandit the expert has not played yet
@@ -38,7 +38,7 @@ def panel_weights(ax, analysis_dir: Path) -> None:
     try:
         fit = load_fit(analysis_dir, "Switch-8")
     except FileNotFoundError:
-        ax.text(0.5, 0.5, "Switch-8 fit not available\n(exploratory; did not converge within the compute budget)", ha="center", va="center", transform=ax.transAxes, fontsize=7, color="#666666")
+        ax.text(0.5, 0.5, "Switch-8 fit not available\n(exploratory; did not converge within the compute budget)", ha="center", va="center", transform=ax.transAxes, fontsize=plt.rcParams["legend.fontsize"], color="#666666")
         ax.set(xticks=[], yticks=[], ylabel="weight on the expert's belief")
         return
     om = omega8(fit)
@@ -48,17 +48,20 @@ def panel_weights(ax, analysis_dir: Path) -> None:
         x = np.arange(1, 5) + dx
         ax.plot(x, q[0], color="#8C8C8C", linestyle=ls, linewidth=1.0, zorder=1)   # the condition is the line style; the hue is who was just watched
         for g, (xi, w) in enumerate(zip(x, GAMES[cond]), 1):
-            ax.errorbar(xi, q[0, g - 1], yerr=[[q[0, g - 1] - q[1, g - 1]], [q[2, g - 1] - q[0, g - 1]]], marker="o", color=COLOR[WHO[w]], capsize=2, zorder=3,
+            ax.errorbar(xi, q[0, g - 1], yerr=[[q[0, g - 1] - q[1, g - 1]], [q[2, g - 1] - q[0, g - 1]]], marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color=COLOR[WHO[w]], capsize=2, zorder=3,
                         markeredgecolor=COLOR["human"] if g in UNSEEN[cond] else COLOR[WHO[w]], markeredgewidth=1.4 if g in UNSEEN[cond] else 0.0)
     ax.axhline(0.5, color="#BBBBBB", linewidth=0.8, zorder=0)
-    ax.set(xticks=range(1, 5), xticklabels=["P1", "P2"] * 2, xlim=(0.5, 4.5), ylim=(0, 1), ylabel="weight on the expert's belief")
+    ax.set(xticks=range(1, 5), xticklabels=["play"] * 4, xlim=(0.5, 4.5), ylim=(0, 1), ylabel="weight on the expert's belief")
     ax.axvline(2.5, color="#BBBBBB", linewidth=0.8, linestyle=(0, (2, 2)), zorder=0)
-    for x, lab in ((1.5, "round 1"), (3.5, "round 2")):   # the round under its two play games
-        ax.annotate(lab, (x, 0), xytext=(0, -22), textcoords="offset points", ha="center", va="top", annotation_clip=False)
     from matplotlib.lines import Line2D
+    from matplotlib.transforms import offset_copy
+    off = -(plt.rcParams["font.size"] * 2.0 + 6)
+    for x, lab in ((1.5, "round 1"), (3.5, "round 2")):   # the round under a bracket over its two play games, as in the session plot (Figure 2a)
+        ax.annotate(lab, (x, 0), xycoords=("data", "axes fraction"), xytext=(0, off), textcoords="offset points", ha="center", va="top", fontweight="bold", annotation_clip=False)
+        ax.add_line(Line2D([x - 0.8, x + 0.8], [0, 0], transform=offset_copy(ax.get_xaxis_transform(), fig=ax.figure, y=off + 3, units="points"), color=MUTED, linewidth=0.9, clip_on=False))
     handles = [Line2D([], [], color="#8C8C8C", linestyle=ls, linewidth=1.0, label=c) for c, ls in zip(ORDER[:2], ("-", "--"))]
-    handles += [Line2D([], [], linestyle="none", marker="o", color=COLOR[w], label=f"after the {w}") for w in ("expert", "novice")]
-    handles += [Line2D([], [], linestyle="none", marker="o", color="white", markeredgecolor=COLOR["human"], markeredgewidth=1.4, label="expert unseen")]
+    handles += [Line2D([], [], linestyle="none", marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color=COLOR[w], label=f"after the {w}") for w in ("expert", "novice")]
+    handles += [Line2D([], [], linestyle="none", marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color="white", markeredgecolor=COLOR["human"], markeredgewidth=1.4, label="expert unseen")]
     ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(-0.25, -0.3), ncol=5, handletextpad=0.3, handlelength=1.2, columnspacing=0.8)   # one line below the axis: the data fill the panel
 
 
@@ -69,7 +72,7 @@ def panel_readout(axes, analysis_dir: Path) -> None:
         for who, seen, col, ls, name in (("expert", False, COLOR["expert"], "--", "expert\nunseen"), ("expert", True, COLOR["expert"], "-", "expert\nseen"),
                                          ("novice", True, "#8C8C8C", "-", "novice")):   # the expert readout, with the expert unseen or seen; the novice readout
             r = t.loc[(who, seen)]
-            ax.errorbar([1, 2], r[(stat, "mean")], yerr=1.96 * r[(stat, "sem")], marker="o", color=col, linestyle=ls, capsize=2,
+            ax.errorbar([1, 2], r[(stat, "mean")], yerr=1.96 * r[(stat, "sem")], marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color=col, linestyle=ls, capsize=2,
                         markerfacecolor="white" if not seen else col, markeredgewidth=1.4)   # hollow = expert unseen, as the rings in (a)
             ax.annotate(name, (2, r[(stat, "mean")].iloc[-1]), xytext=(6, 0), textcoords="offset points", ha="left", va="center", color=col, fontsize=plt.rcParams["legend.fontsize"], annotation_clip=False)
         ax.set(xticks=[1, 2], xticklabels=["round 1", "round 2"], xlim=(0.6, 2.4), ylabel=lab)
@@ -96,7 +99,7 @@ def inset_readout(ax, T: TrialData, i1: int, i2: int) -> None:
     ax.set(xlim=(0, 1), ylim=(0, None), yticks=[], xlabel="P(success)", ylabel="belief density", xticks=sorted(PAYOFFS) + [1.0])
     from matplotlib.lines import Line2D
     ax.legend(handles=[Line2D([], [], color=COLOR["expert"], linestyle="--", label="expert unseen"), Line2D([], [], color=COLOR["expert"], label="expert seen")],
-              loc="upper left", handlelength=1.6, handletextpad=0.4, fontsize=plt.rcParams["legend.fontsize"] - 1)
+              loc="upper left", handlelength=1.6, handletextpad=0.4)
 
 
 def panel_exploit(ax, analysis_dir: Path) -> None:
@@ -104,7 +107,7 @@ def panel_exploit(ax, analysis_dir: Path) -> None:
     t = pd.read_csv(Path(analysis_dir) / "unseen" / "exploit.csv", header=[0, 1], index_col=[0, 1]).loc[False]
     for stat, (col, mk) in {"exploit": (COLOR["human"], "o"), "tried": (COLOR["novice"], "s"), "chance": ("#8C8C8C", "x")}.items():
         m, se = t[(stat, "mean")].to_numpy(), t[(stat, "sem")].to_numpy()
-        ax.errorbar([1, 2], m, yerr=1.96 * se, marker=mk, color=col, capsize=2, label={"exploit": "novice's successful arms", "tried": "arms the novice tried", "chance": "chance"}[stat])
+        ax.errorbar([1, 2], m, yerr=1.96 * se, marker=mk, markersize=plt.rcParams["lines.markersize"] * MARK, color=col, capsize=2, label={"exploit": "novice's successful arms", "tried": "arms the novice tried", "chance": "chance"}[stat])
     ax.set(xticks=[1, 2], xticklabels=["round 1", "round 2"], xlim=(0.6, 2.4), ylim=(0, 1), ylabel="share of shots")
     ax.legend(loc="upper left", handletextpad=0.3, handlelength=1.2)
 
@@ -118,8 +121,8 @@ def fig4(analysis_dir: Path, eval_dir: Path, version: str) -> list:
     apply()
     T = trial_data(load_sessions(eval_dir, version))
     i1, i2 = unseen_pair(T)
-    fig = plt.figure(figsize=(WIDTH["double"], 5.4))
-    gs = fig.add_gridspec(2, 2, height_ratios=[1.1, 1], hspace=0.85, wspace=0.42)
+    fig = plt.figure(figsize=(WIDTH["double"], 4.7))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.1, 1], hspace=0.62, wspace=0.3)
     ax_a, ax_b, ax_c1, ax_c2 = (fig.add_subplot(gs[i, j]) for i in (0, 1) for j in (0, 1))
     panel_omega(ax_a, analysis_dir)
     panel_weights(ax_b, analysis_dir)
@@ -127,10 +130,9 @@ def fig4(analysis_dir: Path, eval_dir: Path, version: str) -> list:
         handles = ax_b.get_legend().legend_handles
         ax_b.get_legend().remove()
         ax_a.get_legend().remove()
-        ax_a.legend(handles=handles, loc="upper center", bbox_to_anchor=(1.21, -0.3), ncol=5, handletextpad=0.3, handlelength=1.2, columnspacing=1.2)
+        ax_a.legend(handles=handles, loc="upper center", bbox_to_anchor=(1.15, -0.31), ncol=5, handletextpad=0.3, handlelength=1.2, columnspacing=1.2)
     panel_readout((ax_c1, ax_c2), analysis_dir)
-    for ax, letter in ((ax_a, "a"), (ax_b, "b  exploratory"), (ax_c1, "c  exploratory")):
-        ax.set_title(letter, loc="left", fontweight="bold")
+    panel_letters(fig, [("a", ax_a, 0, 0), ("b", ax_b, 0, 1), ("c", ax_c1, 1, 0)])   # b and c are exploratory: said in the caption
     paths = save(fig, "fig4_weights", analysis_dir)
     for panel, name, h in ((panel_weights, "weights_by_game", 2.6), (panel_exploit, "unseen_exploit", 2.4)):
         f, ax = plt.subplots(figsize=(WIDTH["single"], h))

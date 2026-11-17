@@ -7,6 +7,8 @@
 #         .../partner_choice/model.csv  one mixed logistic model, chose_expert ~ condition + (1 | participant), sum-to-zero
 #         coding. H4: its intercept, P(choose expert) > 0.5 averaged over the two conditions, two-sided alpha 0.05 with
 #         sign (confirmatory); the recency check (exploratory): its condition term, expected ~0 under expertise-following
+#         .../partner_choice/model_rates.csv  that model as probabilities with 95% intervals: both conditions (the H4
+#         intercept), expert-first, novice-first; what the figure draws
 #         .../partner_choice/numbers.json  H4 rate, interval, p, verdict, count and n; the recency term: keys as the report
 #         stage's manifest lists them (src/analysis/numbers.py)
 # Run:    VERSION=pilot_E Rscript src/r/partner_choice.R
@@ -57,6 +59,16 @@ model <- bind_rows(term_row("(Intercept)", "confirmatory", 1),    # H4: logit P(
                    term_row("condition1", "exploratory", NA))     # recency: expert-first minus grand mean
 model <- mutate(model, across(c(estimate, lower, upper), ~ ifelse(term == "(Intercept)", plogis(.x), NA), .names = "prob_{.col}"), .after = upper)
 write_csv(model, file.path(out_dir, "model.csv"))
+# The same model as probabilities, for the figure: the intercept (both conditions; the H4 row above) and each condition
+# (intercept ± the condition term), Wald 95% intervals on the logit scale from the fixed effects' covariance. These are
+# a typical participant's probabilities (random intercept at zero), not the raw rates of rates.csv.
+L <- rbind(all = c(1, 0), `expert-first` = c(1, 1), `novice-first` = c(1, -1))
+eta <- as.numeric(L %*% fixef(fit)); eta_se <- sqrt(diag(L %*% as.matrix(vcov(fit)) %*% t(L)))
+model_rates <- tibble(group = rownames(L), n = c(nrow(choices), as.integer(table(choices$condition)[rownames(L)[-1]])),
+                      p = plogis(eta), lo = plogis(eta - qnorm(0.975) * eta_se), hi = plogis(eta + qnorm(0.975) * eta_se))
+stopifnot(isTRUE(all.equal(unlist(model_rates[1, c("p", "lo", "hi")], use.names = FALSE),
+                           unlist(model[1, c("prob_estimate", "prob_lower", "prob_upper")], use.names = FALSE))))
+write_csv(model_rates, file.path(out_dir, "model_rates.csv"))
 h4 <- model[model$role == "confirmatory", ]; rc <- model[model$role == "exploratory", ]; all <- rates[rates$group == "all", ]
 numbers <- list(H4_choice_estimate = h4$prob_estimate, H4_choice_lo = h4$prob_lower, H4_choice_hi = h4$prob_upper, H4_choice_p = h4$p.value,
                 H4_choice_verdict = h4$verdict, H4_choice_count = all$k, H4_choice_n = all$n,

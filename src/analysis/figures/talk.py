@@ -2,7 +2,7 @@
 """Figures first drawn for talks, one message each. ``contrast_H1`` … ``_H5``, and all of them in one figure as
 ``contrast_levels``: the two levels behind each registered contrast, with the registered difference as the title (needs
 ``descriptive/contrast_levels.csv`` from ``src/r/contrast_levels.R``). They show what each change looks like; the
-differences themselves, point and whisker, are ``contrasts_forest``. ``partner_choice_slide``: H4 as bars. ``omega_by_condition``: the weight on the expert's
+differences themselves, point and whisker, are ``contrasts_forest``. ``partner_choice``: H4 as bars, the mixed model's probabilities. ``omega_by_condition``: the weight on the expert's
 belief by round, per session type, from the Switch-8 fit (exploratory; its table goes to
 ``unseen/omega_by_condition.csv``). ``readout_N_scatter``: the experience N the transformer reads out on simulated test
 sessions (needs ``eval/data/test_cutoff_model_predictions.csv``). ``exclusions_slide``: exclusions per rule without the
@@ -18,20 +18,19 @@ from matplotlib.lines import Line2D
 from matplotlib.transforms import offset_copy
 
 from analysis.figures.fits import load_fit
-from analysis.figures.style import COLOR, INK, MUTED, apply, save
+from analysis.figures.style import COLOR, INK, MARK, MUTED, apply, save
 
 EXPERT, NOVICE, SOLO = COLOR["expert"], COLOR["novice"], COLOR["solo"]
 WHISKER = "#3F3F4A"
 SIDES = {   # hypothesis: the level subtracted, then the other
-    "H1": [("after the\nnovice", NOVICE), ("after the\nexpert", EXPERT)],
+    "H1": [("after novice", NOVICE), ("after expert", EXPERT)],
     "H2": [("round 1", NOVICE), ("round 2", NOVICE)],
     "H3": [("round 1", INK), ("round 2", INK)],
-    "H5": [("solo,\nfinal game", SOLO), ("after the\nexpert", EXPERT)],
+    "H5": [("final solo", SOLO), ("after expert", EXPERT)],
 }
 CONTRASTS = [("H1", ["payoff", "entropy"], (5.58, 2.75)), ("H2", ["payoff", "entropy"], (5.83, 3.9)), ("H3", ["entropy"], (5.0, 3.9)), ("H5", ["payoff"], (3.2, 2.75))]
-LABEL = {"payoff": "chosen arm's payoff", "entropy": "choice entropy (bits)"}
-XLABEL = {"H2": "play right after the novice", "H3": "social play (after either demonstrator)"}
-XLABEL_WRAPPED = {"H2": "play right after\nthe novice", "H3": "social play (after\neither demonstrator)"}
+LABEL = {"payoff": "payoff", "entropy": "entropy (bits)"}
+XLABEL = {"H1": "by demonstrator", "H2": "play after novice", "H3": "play after demo", "H5": "solo vs expert"}
 EXCLUSION_NAME = {"colour_vision": "color vision"}
 
 
@@ -50,20 +49,20 @@ def contrast_tables(analysis_dir: Path):
 def panel_contrast_level(ax, lv: pd.DataFrame, reg_all: pd.DataFrame, hyp: str, outcome: str, name: bool = False, compact: bool = False) -> None:
     """The two levels behind one registered contrast: each side's mean with its 95% CI from the registered mixed model (a
     between-participant interval) joined by a line; the title is the registered within-participant difference and its CI
-    (under the hypothesis's name when ``name``). Marks scale with the font size; ``compact`` wraps the title and the axis
-    label for a narrow panel inside a composite figure."""
+    (under the hypothesis's name when ``name``). Marks scale with the font size; ``compact`` is for a narrow panel inside a
+    composite figure: a two-line title without the hypothesis's name."""
     font = plt.rcParams["font.size"]
     k = font / 11
     rows = [lv.loc[(hyp, outcome, s)] for s in ("left", "right")]
+    ms, cap, ew = (plt.rcParams["lines.markersize"] * MARK, 3 * font / 15, 1.4 * font / 15) if compact else (9 * k, 4 * k, 1.8 * k)   # compact: the session plot's marks
     for i, ((_, col), r) in enumerate(zip(SIDES[hyp], rows)):
-        ax.errorbar([i], [r["estimate"]], yerr=[[r["estimate"] - r["lower"]], [r["upper"] - r["estimate"]]], color=col, marker="o", markersize=9 * k, capsize=4 * k,
-                    elinewidth=1.8 * k, capthick=1.8 * k, linestyle="none", zorder=3)
+        ax.errorbar([i], [r["estimate"]], yerr=[[r["estimate"] - r["lower"]], [r["upper"] - r["estimate"]]], color=col, marker="o", markersize=ms, capsize=cap,
+                    elinewidth=ew, capthick=ew, linestyle="none", zorder=3)
     ax.plot([0, 1], [rows[0]["estimate"], rows[1]["estimate"]], color=MUTED, linewidth=1.2 * k, zorder=2)
     ax.set_xticks([0, 1], [s[0] for s in SIDES[hyp]])
     ax.set_xlim(-0.55, 1.55)
     ax.set_ylabel(LABEL[outcome])
-    if hyp in XLABEL:
-        ax.set_xlabel(XLABEL_WRAPPED[hyp] if compact else XLABEL[hyp])
+    ax.set_xlabel(XLABEL[hyp])
     lo, hi = min(r["lower"] for r in rows), max(r["upper"] for r in rows)
     pad = max(hi - lo, 0.02 if outcome == "payoff" else 0.08)
     ax.set_ylim(lo - 0.3 * pad, hi + 0.45 * pad)
@@ -72,9 +71,7 @@ def panel_contrast_level(ax, lv: pd.DataFrame, reg_all: pd.DataFrame, hyp: str, 
     unit = "" if outcome == "payoff" else " bits"
     est, interval = minus(f"Δ = {reg['estimate']:+.2f}{unit}"), minus(f"[{reg['lower.CL']:.2f}, {reg['upper.CL']:.2f}]")
     if compact:
-        ax.set_title(f"{hyp}:  {est}\n{interval}", fontsize=font, pad=6 * k, linespacing=1.25)
-        ax.tick_params(axis="x", labelsize=font - 2)
-        ax.set_xlim(-0.7, 1.7)
+        ax.set_title(f"{est}\n{interval}", fontsize=font, pad=6 * k, linespacing=1.25)
     else:
         ax.set_title(f"{hyp}\n{est}  {interval}" if name else f"{est}  {interval}", fontsize=font, pad=6 * k)
 
@@ -100,24 +97,43 @@ def fig_contrasts(analysis_dir: Path) -> list:
     return paths + save(whole, "contrast_levels", analysis_dir)
 
 
-def fig_partner(analysis_dir: Path) -> list:
-    """H4: the share of choice games in which the expert was picked (all sessions, novice-first, expert-first) with the 95%
-    intervals of ``partner_choice/rates.csv``, as bars; the mixed model is in ``partner_choice_paper``."""
-    apply(12)
-    r = pd.read_csv(Path(analysis_dir) / "partner_choice" / "rates.csv").set_index("group").loc[["all", "novice-first", "expert-first"]]
-    fig, ax = plt.subplots(figsize=(4.6, 3.9))
+def panel_partner(ax, analysis_dir: Path, compact: bool = False) -> bool:
+    """H4 as bars: the probability of picking the expert from the registered mixed logistic model, for both conditions (its
+    intercept, the H4 test, also the title) and for each condition, with 95% intervals (``partner_choice/model_rates.csv``).
+    Marks scale with the font size; ``compact`` angles the labels for a narrow panel. False when the table is absent."""
+    f = Path(analysis_dir) / "partner_choice" / "model_rates.csv"
+    if not f.exists():
+        ax.axis("off")
+        return False
+    r = pd.read_csv(f).set_index("group").loc[["all", "expert-first", "novice-first"]]
+    h4 = pd.read_csv(Path(analysis_dir) / "partner_choice" / "model.csv").query("role == 'confirmatory'").iloc[0]
+    assert abs(r.loc["all", "p"] - h4["prob_estimate"]) < 1e-3 and abs(r.loc["all", "lo"] - h4["prob_lower"]) < 1e-3, "model_rates.csv is not from the H4 model"
+    font = plt.rcParams["font.size"]
+    k = font / 12
     x = np.arange(3)
-    ax.bar(x, r["p"], width=0.62, color=[INK, NOVICE, EXPERT], zorder=2)
-    ax.errorbar(x, r["p"], yerr=[r["p"] - r["lo"], r["hi"] - r["p"]], color=WHISKER, linestyle="none", capsize=5, elinewidth=1.6, capthick=1.6, zorder=3)
-    ax.axhline(0.5, color=MUTED, linewidth=0.9, linestyle="--", zorder=1)
-    ax.set_xlim(-0.5, 2.95)
-    ax.text(2.93, 0.51, "chance", fontsize=10, color=MUTED, ha="right", va="bottom")
+    ax.bar(x, r["p"], width=0.62, color=[INK, EXPERT, NOVICE], zorder=2)
+    ax.errorbar(x, r["p"], yerr=[r["p"] - r["lo"], r["hi"] - r["p"]], color=WHISKER, linestyle="none", capsize=5 * k, elinewidth=1.6 * k, capthick=1.6 * k, zorder=3)
+    ax.axhline(0.5, color=MUTED, linewidth=0.9 * k, linestyle="--", zorder=1)
     for xi, row in zip(x, r.itertuples()):
-        ax.text(xi, row.hi + 0.025, f"{100 * row.p:.0f}%", ha="center", va="bottom", fontsize=12, fontweight="bold")
-    ax.set_xticks(x, [f"{n}\n{int(k)} of {int(m)}" for n, k, m in zip(["all sessions", "novice-first", "expert-first"], r["k"], r["n"])])
-    ax.set(ylim=(0, 1), yticks=[0, 0.25, 0.5, 0.75, 1.0], ylabel="share of choice games\nin which the expert was picked")
+        ax.text(xi, row.hi + 0.025, f"{row.p:.2f}", ha="center", va="bottom", fontsize=font - 1)
+    ax.set_xticks(x, ["overall", "expert-first", "novice-first"], **(dict(rotation=45, ha="right", rotation_mode="anchor") if compact else {}))
+    ax.set(xlim=(-0.6, 2.6), ylim=(0, 1), yticks=[0, 0.25, 0.5, 0.75, 1.0], ylabel="P(chose the expert)")
+    est, interval = f"{h4['prob_estimate']:.2f}", f"[{h4['prob_lower']:.2f}, {h4['prob_upper']:.2f}]"
+    if not compact:   # compact has no title: the first bar and its label are the H4 estimate
+        ax.set_title(f"H4:  P = {est}  {interval}", fontsize=font, pad=6 * k)
+    return True
+
+
+def fig_partner(analysis_dir: Path) -> list:
+    """``partner_choice``: H4 on its own (the panel of Figure 2c)."""
+    apply(12)
+    fig, ax = plt.subplots(figsize=(4.6, 3.9))
+    if not panel_partner(ax, analysis_dir):
+        print("partner choice plot skipped: partner_choice/model_rates.csv not present (the partner_choice stage writes it)")
+        plt.close(fig)
+        return []
     fig.tight_layout(pad=0.6)
-    return save(fig, "partner_choice_slide", analysis_dir)
+    return save(fig, "partner_choice", analysis_dir)
 
 
 def fig_omega_by_condition(analysis_dir: Path) -> list:
@@ -132,6 +148,7 @@ def fig_omega_by_condition(analysis_dir: Path) -> list:
     om = 1 / (1 + np.exp(-lo8))
     q = lambda v: np.percentile(v, [50, 2.5, 97.5])
     apply(12)
+    small = plt.rcParams["font.size"] - 1   # annotations, as the tick labels and the legend
     fig, axes = plt.subplots(1, 2, figsize=(10.4, 4.3), sharey=True)
     rows = []
     for ax, (cond, ef) in zip(axes, (("expert-first", 1), ("novice-first", 0))):
@@ -140,19 +157,19 @@ def fig_omega_by_condition(analysis_dir: Path) -> list:
             r1, r2 = q(om[:, i1]), q(om[:, i2])
             dw, dl = q(om[:, i2] - om[:, i1]), q(lo8[:, i2] - lo8[:, i1])
             unseen = cond == "novice-first" and who == "novice"   # that play game comes before the expert is seen on the bandit
-            ax.errorbar(np.array([1, 2]) + dx, [r1[0], r2[0]], yerr=[[r1[0] - r1[1], r2[0] - r2[1]], [r1[2] - r1[0], r2[2] - r2[0]]], marker="o", markersize=8, color=col,
+            ax.errorbar(np.array([1, 2]) + dx, [r1[0], r2[0]], yerr=[[r1[0] - r1[1], r2[0] - r2[1]], [r1[2] - r1[0], r2[2] - r2[0]]], marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, color=col,
                         capsize=4, linewidth=2, elinewidth=1.8, capthick=1.8, markeredgecolor=INK if unseen else col, markeredgewidth=1.6 if unseen else 0)
-            ax.text(2.22, 0.63 if who == "expert" else 0.55, minus(f"after the {who}:  Δ = {dw[0]:+.2f} [{dw[1]:+.2f}, {dw[2]:+.2f}]"), va="center", ha="left", color=col, fontsize=10)
+            ax.text(2.22, 0.63 if who == "expert" else 0.55, minus(f"after the {who}:  Δ = {dw[0]:+.2f} [{dw[1]:+.2f}, {dw[2]:+.2f}]"), va="center", ha="left", color=col, fontsize=small)
             rows.append(dict(session=cond, after=who, round1=r1[0], round1_lo=r1[1], round1_hi=r1[2], round2=r2[0], round2_lo=r2[1], round2_hi=r2[2], change=dw[0],
                              change_lo=dw[1], change_hi=dw[2], change_logit=dl[0], change_logit_lo=dl[1], change_logit_hi=dl[2], p_change_positive=float((om[:, i2] > om[:, i1]).mean())))
-        ax.text(2.22, 0.71, "change, round 2 − round 1", va="center", ha="left", color=MUTED, fontsize=9.5)
+        ax.text(2.22, 0.71, "change, round 2 − round 1", va="center", ha="left", color=MUTED, fontsize=small)
         ax.axhline(0.5, color="#BBBBBB", linewidth=0.8, zorder=0, xmax=0.56)
         ax.set(xticks=[1, 2], xticklabels=["round 1", "round 2"], xlim=(0.6, 3.75), ylim=(0, 1.06), yticks=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
-        ax.set_title(f"{cond} sessions", fontsize=12, loc="left")
+        ax.set_title(f"{cond} sessions", fontsize=plt.rcParams["font.size"], loc="left")
     axes[0].set_ylabel("weight on the expert's belief")
-    h = [Line2D([], [], color=EXPERT, marker="o", markersize=8, linewidth=2, label="play after the expert"), Line2D([], [], color=NOVICE, marker="o", markersize=8, linewidth=2, label="play after the novice"),
-         Line2D([], [], color=NOVICE, marker="o", markersize=8, markeredgecolor=INK, markeredgewidth=1.6, linestyle="none", label="expert not yet seen on this bandit")]
-    fig.legend(handles=h, ncol=3, loc="lower center", fontsize=10, handlelength=2.0, columnspacing=1.6)
+    h = [Line2D([], [], color=EXPERT, marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, linewidth=2, label="play after the expert"), Line2D([], [], color=NOVICE, marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, linewidth=2, label="play after the novice"),
+         Line2D([], [], color=NOVICE, marker="o", markersize=plt.rcParams["lines.markersize"] * MARK, markeredgecolor=INK, markeredgewidth=1.6, linestyle="none", label="expert not yet seen on this bandit")]
+    fig.legend(handles=h, ncol=3, loc="lower center", handlelength=2.0, columnspacing=1.6)
     fig.tight_layout(pad=0.6, w_pad=1.5, rect=(0, 0.07, 1, 1))
     pd.DataFrame(rows).to_csv(Path(analysis_dir) / "unseen" / "omega_by_condition.csv", index=False)
     return save(fig, "omega_by_condition", analysis_dir)
