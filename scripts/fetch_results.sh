@@ -9,7 +9,7 @@
 #
 # What the plain fetch brings (about 7 MB for the full study), enough to remake every figure and table that is drawn from
 # summaries or trial-level data:
-#   paper/            the report: results.tex (one macro per number), results.md, tables/*.tex
+#   paper_results/    the report: results.tex (one macro per number), results.md, tables/*.tex
 #   figures/          every figure as .pdf, .png and .svg (paper, slides, webpage)
 #   games/            play_games.csv, one row per play game (participant, session, condition, round, slot, play, demonstrator,
 #                     payoff, reward, entropy): the source of Fig 2a and of any per-game descriptive plot
@@ -67,7 +67,7 @@ SRC="$SUNET@dtn.sherlock.stanford.edu:/scratch/users/$SUNET/SocialBanditsProject
 DST="$OUTPUT_DATA_DIR/analysis/$VERSION"
 mkdir -p "$DST" ~/.ssh
 SSH="ssh -o ControlMaster=auto -o ControlPath=$HOME/.ssh/fetch-%r@%h:%p -o ControlPersist=600"
-# Excludes are anchored to the version folder, so paper/tables/ (hypotheses.tex, ladder.tex) is kept while the belief tables,
+# Excludes are anchored to the version folder, so paper_results/tables/ (hypotheses.tex, ladder.tex) is kept while the belief tables,
 # the fit pickles, the fallback refits, the simulated recovery datasets and the Slurm logs stay on scratch.
 LIGHT=(--exclude='/tables/' --exclude='/choice/fits/' --exclude='/choice/loso/' --exclude='/checks/*/fits/' --exclude='/checks/*/tables/' --exclude='*.pkl' --exclude='*.block*.npy')
 case "$ALL" in

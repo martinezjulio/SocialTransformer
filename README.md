@@ -93,7 +93,7 @@ pytest tests/                                            # invariants on what wa
 
 Data flows `TRAINING_DATA_ROOT_DIR/<dataset>` → `OUTPUT_DATA_DIR/training_runs/<run_id>/checkpoints/`
 → `OUTPUT_DATA_DIR/eval/[<version>/]` → `OUTPUT_DATA_DIR/analysis/<version>/` →
-`analysis/<version>/paper/`.
+`analysis/<version>/paper_results/`.
 
 ### Generate data
 
@@ -209,7 +209,7 @@ order — `games`, `descriptive`, `partner_choice`, `inference-check`, `choice`,
 ([`src/run_analysis.py`](src/run_analysis.py)) and R (`src/r/`). Each writes one
 folder under `$OUTPUT_DATA_DIR/analysis/<version>/`: `figures/` holds every figure
 (PDF, PNG and SVG, for the paper, the slides and the webpage), and `report` emits
-`paper/` (`results.tex` macros, `results.md`, tables) or fails naming any missing number.
+`paper_results/` (`results.tex` macros, `results.md`, tables) or fails naming any missing number.
 
 Belief tables and fits are cached by content hash, so reruns are cheap. But
 stages **overwrite their outputs unconditionally**, so a reduced run needs

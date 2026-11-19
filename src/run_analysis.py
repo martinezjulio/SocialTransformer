@@ -302,10 +302,10 @@ def run_figures(p: Paths) -> None:
 @stage("report")
 def run_report(p: Paths) -> None:
     """Last: every stage's numbers merged with the provenance block and checked against the manifest (stops naming any
-    missing or extra number), then paper/: results.tex, results.md, tables/. The figures stay in figures/."""
+    missing or extra number), then paper_results/: results.tex, results.md, tables/. The figures stay in figures/."""
     from analysis.data import load_sessions, trial_data
     from analysis.report import merge_numbers, provenance, write_results, write_tables
-    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "paper"
+    T, out = trial_data(load_sessions(p.eval_dir, p.version)), p.analysis_dir / "paper_results"
     numbers = merge_numbers(p.analysis_dir, provenance(p.preprocessed, p.eval_dir, int(T.part.max() + 1), len(set(T.session)), len(T.act)))
     paths = write_results(numbers, out) + write_tables(p.analysis_dir, out)
     print(f"report: {len(numbers)} numbers, {[q.name for q in paths]} under {out}")

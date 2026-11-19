@@ -83,7 +83,7 @@ Every supplementary item comes from a pipeline section; no hand-made figures.
 
 ## Where the numbers come from
 
-`$OUTPUT_DATA_DIR/analysis/<version>/paper/`: `results.tex` (one macro per number, composed CI
+`$OUTPUT_DATA_DIR/analysis/<version>/paper_results/`: `results.tex` (one macro per number, composed CI
 macros, provenance: commit, checkpoint sha256, run date, participants, sessions, trials, exclusion
 counts), `results.md`, `tables/*.tex` (hypothesis table, ladder), `figures/*.pdf|png`. The paper
 repository copies the folder; the manifest check fails the pipeline on any missing number [MP 9].

@@ -50,7 +50,7 @@ def test_results_and_tables_compile(tmp_path):
                  ).to_csv(tmp_path / "descriptive" / "contrasts.csv", index=False)
     pd.DataFrame([dict(role="confirmatory", term="(Intercept)", **{"p.value": 0.004}, prob_estimate=0.71, prob_lower=0.57, prob_upper=0.81, verdict="supported")]).to_csv(tmp_path / "partner_choice" / "model.csv", index=False)
     pd.DataFrame(dict(model=["ROS", "recent"], elpd=[-2673.9, -2762.2], n_bad_k=[0, 0], delta=[0.0, -88.3], se=[0.0, 18.4])).to_csv(tmp_path / "choice" / "ladder.csv", index=False)
-    paper = tmp_path / "paper"
+    paper = tmp_path / "paper_results"
     write_results(numbers, paper), write_tables(tmp_path, paper)
     (paper / "test.tex").write_text(r"\documentclass{article}\usepackage{booktabs}\input{results.tex}\begin{document}"
                                     r"\resSOneACI, \resHOnePayoffP, \resElpdROS, \resRecoveryCovered, \resCommit. \input{tables/hypotheses.tex}\input{tables/ladder.tex}\end{document}")

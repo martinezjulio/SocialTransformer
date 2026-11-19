@@ -1,8 +1,8 @@
 # %% report
 """The results document (meta-plan 9): every ``numbers.json`` merged with the provenance block, checked against the
-manifest, and written as ``paper/results.tex`` (one ``\\newcommand`` per number, a composed ``…CI`` macro per
-estimate/lo/hi triple) and ``paper/results.md`` (every macro, key and value by block, regenerated each run so a diff
-shows what changed), and the booktabs tables ``paper/tables/{hypotheses,ladder}.tex`` from pandas. The stage that calls this is
+manifest, and written as ``paper_results/results.tex`` (one ``\\newcommand`` per number, a composed ``…CI`` macro per
+estimate/lo/hi triple) and ``paper_results/results.md`` (every macro, key and value by block, regenerated each run so a diff
+shows what changed), and the booktabs tables ``paper_results/tables/{hypotheses,ladder}.tex`` from pandas. The stage that calls this is
 registered in 9.5.
 """
 

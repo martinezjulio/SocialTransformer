@@ -7,7 +7,7 @@
 # and the repo's .env. Run inside an sh_dev session in the clone (the installs are too heavy for a login node):
 #   sh_dev -c 4 -m 16GB -t 2:00:00; bash scripts/setup_sherlock.sh
 # Variables (all optional): ENV_ROOT (default $GROUP_HOME/$USER/SocialBanditsProject: persistent, 1 TB shared with the group; the env ~10 GB),
-# DATA_ROOT (default $SCRATCH/SocialBanditsProject: 100 TB, files untouched for 90 days are purged, so copy paper/ out after
+# DATA_ROOT (default $SCRATCH/SocialBanditsProject: 100 TB, files untouched for 90 days are purged, so copy paper_results/ out after
 # a run), CUDA_MAJOR (12, the build every current driver supports; 13 needs a driver >= 580 on the GPU nodes).
 # renv's package cache goes to $ENV_ROOT/renv-cache (RENV_PATHS_CACHE, also written to .env): Sherlock sets XDG_CACHE_HOME=/tmp,
 # node-local and wiped at job end, where renv would otherwise put the cache the project library links into.

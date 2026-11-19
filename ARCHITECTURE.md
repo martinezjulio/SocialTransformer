@@ -673,12 +673,12 @@ number from being typed by hand.
 3. `check_manifest`. The recovery checks are reported beside the claims and
    gate nothing (4 Nov); *not evaluable* arises only from a fit that failed the
    sampling diagnostics.
-4. Writes `paper/results.tex` (one `\newcommand` per number, plus a composed
+4. Writes `paper_results/results.tex` (one `\newcommand` per number, plus a composed
    `<stem>_CI` macro — "est [lo, hi]" — after each estimate/lo/hi triple;
    `tex()` routes minus signs and `<` through `\ensuremath` and the em dash to
-   `---`), `paper/results.md` (every macro/key/value grouped by manifest block,
+   `---`), `paper_results/results.md` (every macro/key/value grouped by manifest block,
    regenerated each run so a diff shows what changed),
-   `paper/tables/hypotheses.tex` and `paper/tables/ladder.tex` (booktabs via a
+   `paper_results/tables/hypotheses.tex` and `paper_results/tables/ladder.tex` (booktabs via a
    pandas Styler). The figures are not copied: `figures/` is the one folder
    the paper, the slides and the webpage take them from.
 
@@ -834,7 +834,7 @@ or via the array script:
 `SLURM_ARRAY_TASK_ID=<i> UNIT_LIST=<file> VERSION=<v> bash scripts/slurm/units.sbatch`.
 
 Preempted tasks resume from the atomic caches (§6). **`$SCRATCH` purges files
-untouched for 90 days**, so copy `analysis/<version>/paper/` — and the fits, if
+untouched for 90 days**, so copy `analysis/<version>/paper_results/` — and the fits, if
 wanted — to group storage after a run.
 
 ### Training on a cluster

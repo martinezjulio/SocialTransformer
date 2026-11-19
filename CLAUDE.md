@@ -43,7 +43,7 @@ Stages run in a fixed order (Python in `run_analysis.py`, R in `src/r/`) and eac
 `$OUTPUT_DATA_DIR/analysis/<version>/`. Belief tables and fits are cached by content hash and the
 simulation checks by unit, so reruns are cheap; stages overwrite their outputs unconditionally, so a
 reduced run needs `--dev`. The paper's numbers are never typed by hand: stages write `numbers.json`,
-`numbers.py` holds the manifest of every cited number, and the `report` stage emits `paper/`
+`numbers.py` holds the manifest of every cited number, and the `report` stage emits `paper_results/`
 (`results.tex` macros, `results.md`, tables) or fails naming any missing number. Every figure
 (paper, slides, webpage) comes from the `figures` stage into the one `figures/` folder; ΔELPD is
 drawn as model minus ROS there, while the numbers keep the registered ROS-minus-rival direction. Model names
